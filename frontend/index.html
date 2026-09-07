@@ -1,23 +1,335 @@
-<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>自用双色球</title><script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<style>body{font-family:system-ui;margin:0;background:#f6f7fb}nav{display:flex;gap:8px;padding:12px;background:#fff;position:sticky;top:0}button{padding:8px 14px;border:1px solid #ddd;border-radius:8px;background:#fff}button.on{background:#111;color:#fff}.wrap{padding:14px;max-width:900px;margin:auto}.card{background:#fff;border-radius:12px;padding:14px;margin:10px 0}.ball{display:inline-block;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;background:#e11;color:#fff;margin:2px}.ball.b{background:#06c}.muted{color:#666;font-size:12px}</style></head>
-<body><nav><button class="on" data-t="p">最新预测</button><button data-t="a">图表分析</button><button data-t="h">历史回溯</button></nav>
-<div class="wrap"><div id="cfg" class="card"><span class="muted">Worker地址</span> <input id="api" style="width:60%" placeholder="https://lottery-web.xxx.workers.dev"> <button id="go">加载</button> <span id="src" class="muted"></span></div>
-<div id="p" class="card"></div><div id="a" class="card" style="display:none"><div id="chart" style="height:300px"></div><div id="stats" class="muted"></div></div><div id="h" class="card" style="display:none"></div>
-<p class="muted">随机游戏，统计仅供娱乐，不保证中奖。数据：500主+cwl官+17500备交叉验证。</p></div>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="/manifest.json">
+<title>自用彩票 · 8 彩种</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+body{font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;margin:0;background:#f6f7fb;color:#111}
+header{position:sticky;top:0;z-index:9;background:#fff;padding:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+header b{margin-right:4px}
+select,button,input{padding:8px 10px;border:1px solid #ddd;border-radius:8px;background:#fff;font-size:14px}
+button{cursor:pointer}
+button.on{background:#111;color:#fff;border-color:#111}
+.wrap{max-width:980px;margin:auto;padding:12px}
+.card{background:#fff;border-radius:12px;padding:14px;margin:10px 0;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.ball{display:inline-block;min-width:28px;height:28px;line-height:28px;text-align:center;border-radius:50%;background:#e11;color:#fff;margin:2px;font-size:13px}
+.ball.b{background:#06c}
+.muted{color:#666;font-size:12px;line-height:1.7}
+table{border-collapse:collapse;width:100%;font-size:12px}
+td,th{border:1px solid #eee;padding:4px;text-align:center}
+th{background:#fafafa}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.kv{display:flex;justify-content:space-between;border-bottom:1px dashed #eee;padding:3px 0;font-size:13px;align-items:center}
+.warn{background:#fff7e6;border:1px solid #ffd591;border-radius:8px;padding:8px;font-size:12px;color:#874d00;margin:10px 0}
+.err{background:#fff1f0;border:1px solid #ffa39e;border-radius:8px;padding:8px;font-size:13px;color:#a8071a;white-space:pre-wrap;word-break:break-all;margin:8px 0}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
+</style>
+</head>
+<body>
+<header>
+  <b>自用彩票</b>
+  <select id="lot"></select>
+  <button class="on" data-t="p">预测</button>
+  <button data-t="a">分析</button>
+  <button data-t="h">历史</button>
+  <button data-t="v">验奖·矩阵</button>
+  <button data-t="f">收藏</button>
+</header>
+
+<div class="wrap">
+  <div class="card" id="cfg">
+    <div class="row">
+      <span class="muted">Worker 地址</span>
+      <input id="api" style="flex:1;min-width:220px" placeholder="https://lottery-web.xxx.workers.dev">
+      <input id="tok" style="width:170px" placeholder="API_TOKEN（可选）">
+      <button id="save">保存并加载</button>
+    </div>
+    <div class="muted" id="st">未加载</div>
+  </div>
+
+  <div class="warn">随机游戏，统计仅供娱乐，不保证中奖。数据来自 500 / cwl / 17500 多源交叉校验。</div>
+
+  <div id="p" class="card">加载中…</div>
+  <div id="a" class="card" style="display:none"><div id="chart" style="height:300px"></div><div id="stats" class="muted"></div></div>
+  <div id="h" class="card" style="display:none"></div>
+  <div id="v" class="card" style="display:none"></div>
+  <div id="f" class="card" style="display:none"></div>
+</div>
+
 <script>
-const $=s=>document.querySelector(s);
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');['p','a','h'].forEach(id=>document.getElementById(id).style.display=id===b.dataset.t?'':'none')});
-$('#go').onclick=load;
-async function load(){
-  const base=($('#api').value||'').replace(/\/$/,''); if(!base){alert('先填Worker地址');return}
-  const j=async p=> (await fetch(base+p)).json();
-  const latest=await j('/api/ssq/latest'); $('#src').textContent='源:'+(latest.sources||[]).join(',')+' 一致:'+latest.consistent+(latest.mock?' mock':'');
-  const rec=await j('/api/ssq/recommend'); const an=await j('/api/ssq/analyze?win=30'); const his=await j('/api/ssq/history?limit=30');
-  $('#p').innerHTML='<h3>'+latest.code+'期 '+latest.red.map(x=>'<span class=ball>'+x+'</span>').join('')+'<span class=\"ball b\">'+latest.blue+'</span></h3>'+rec.picks.map(p=>'<div><b>'+p.name+'</b> '+p.red.map(x=>'<span class=ball>'+x+'</span>').join('')+'<span class=\"ball b\">'+p.blue+'</span></div>').join('')+'<p class=muted>'+rec.disclaimer+'</p>';
-  $('#h').innerHTML=his.slice(0,30).map(d=>'<div>'+d.code+' '+d.red.join(' ')+' + '+d.blue+' <span class=muted>'+(d.date||'')+'</span></div>').join('');
-  const c=echarts.init(document.getElementById('chart')); const f=an.analysis.redFreq; const ks=Object.keys(f).sort();
-  c.setOption({title:{text:'红球频率30期'},xAxis:{type:'category',data:ks},yAxis:{type:'value'},series:[{type:'bar',data:ks.map(k=>f[k])}]});
-  $('#stats').textContent='热:'+an.analysis.hotRed.join(',')+' 冷:'+(an.analysis.coldRed.join(',')||'无')+' 奇偶:'+an.analysis.oddRatio+' 均和:'+an.analysis.avgSum+' 蓝Top:'+an.blue.top1;
+const $ = s => document.querySelector(s);
+const LOTS = [
+  {id:'ssq',name:'双色球',mode:'rb'},
+  {id:'dlt',name:'大乐透',mode:'rb'},
+  {id:'fc3d',name:'福彩3D',mode:'digits',n:3},
+  {id:'pl3',name:'排列3',mode:'digits',n:3},
+  {id:'pl5',name:'排列5',mode:'digits',n:5},
+  {id:'qlc',name:'七乐彩',mode:'qlc'},
+  {id:'qxc',name:'七星彩',mode:'digits',n:7},
+  {id:'kl8',name:'快乐8',mode:'nums',n:20}
+];
+const LOT = {}; LOTS.forEach(l => LOT[l.id] = l);
+const sel = $('#lot');
+LOTS.forEach(l => { const o = document.createElement('option'); o.value = l.id; o.textContent = l.name; sel.appendChild(o); });
+
+$('#api').value = localStorage.getItem('lw_api') || (location.origin.indexOf('http') === 0 ? location.origin : '');
+$('#tok').value = localStorage.getItem('lw_tok') || '';
+$('#save').onclick = () => {
+  localStorage.setItem('lw_api', $('#api').value.trim());
+  localStorage.setItem('lw_tok', $('#tok').value.trim());
+  load();
+};
+function base(){ return ($('#api').value || '').trim().replace(/\/+$/, ''); }
+function headers(){ const t = ($('#tok').value || '').trim(); return t ? { Authorization: 'Bearer ' + t } : {}; }
+async function api(path){
+  const b = base();
+  if (!b) throw new Error('请先填写 Worker 地址（保存后自动加载）');
+  const r = await fetch(b + path, { headers: headers() });
+  const txt = await r.text();
+  let j = null;
+  try { j = JSON.parse(txt); } catch (e) { throw new Error('响应不是 JSON（HTTP ' + r.status + '）：' + txt.slice(0, 200)); }
+  if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  return j;
 }
-</script></body></html>
+function pad2(x){ return String(x).padStart(2, '0'); }
+function balls(arr, cls){ return (arr || []).map(x => '<span class="ball ' + (cls || '') + '">' + x + '</span>').join(''); }
+function esc(s){ return String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function errBox(e, el){ el.innerHTML = '<div class="err">请求失败：' + esc(e.message || e) + '</div>'; }
+function renderNums(o){
+  if (!o) return '';
+  if (o.digits) return balls(o.digits);
+  if (o.nums) return o.nums.map(n => '<span class="ball">' + n + '</span>').join('');
+  if (o.main) return balls(o.main) + (o.special ? ' <span class="muted">特别</span>' + balls([o.special], 'b') : '');
+  if (o.front) return balls(o.front) + balls(o.back, 'b');
+  if (o.red) return balls(o.red) + balls(o.blue, 'b');
+  return '';
+}
+
+// ---------- 标签页 ----------
+document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('header button[data-t]').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  ['p','a','h','v','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
+  if (b.dataset.t === 'a' && window.__chart) setTimeout(() => window.__chart.resize(), 0);
+  if (b.dataset.t === 'f') loadFavs();
+});
+sel.onchange = load;
+
+// ---------- 主流程 ----------
+async function load(){
+  const id = sel.value;
+  $('#st').textContent = '加载中…';
+  try {
+    if (LOT[id].mode === 'rb') await loadRB(id); else await loadSmall(id);
+    $('#st').textContent = '已加载：' + LOT[id].name + ' · ' + new Date().toLocaleString();
+  } catch (e) {
+    $('#st').textContent = '加载失败';
+    errBox(e, $('#p'));
+  }
+  buildVerify(id);
+}
+
+async function loadRB(id){
+  const latest = await api('/api/' + id + '/latest');
+  let html = '<h3 style="margin:0 0 8px">' + esc(latest.code || '') + ' 期</h3>' + renderNums(latest);
+  html += '<div class="muted">' + esc(latest.date || '') + ' · 源 ' + esc(((latest.sources || [latest.src]).join(',') || '-')) + '</div>';
+  if (id === 'ssq') {
+    const rec = await api('/api/ssq/recommend');
+    html += '<h4 style="margin:14px 0 6px">6 组参考（含结构分）</h4>';
+    html += rec.picks.map(p =>
+      '<div class="kv"><span>' + esc(p.name) + ' <span class="muted">分 ' + esc(p.score) + '</span></span>' +
+      '<span>' + balls(p.red) + balls([p.blue], 'b') + '</span></div>').join('');
+    html += '<p class="muted">' + esc(rec.disclaimer) + '</p>';
+  } else {
+    html += '<h4 style="margin:14px 0 6px">随机参考（该彩种暂无推荐接口）</h4>';
+    for (let i = 0; i < 3; i++) html += '<div class="kv"><span>机选 ' + (i + 1) + '</span><span>' + renderNums(randPick(id)) + '</span></div>';
+    html += '<p class="muted">大乐透仅提供统计与验奖，不做号码推荐。</p>';
+  }
+  $('#p').innerHTML = html;
+  await loadAnalyzeRB(id);
+  await loadHistory(id);
+}
+
+async function loadSmall(id){
+  const latest = await api('/api/' + id + '/latest');
+  let html = '<h3 style="margin:0 0 8px">' + esc(latest.code || '') + ' 期</h3>' + renderNums(latest);
+  html += '<div class="muted">' + esc(latest.date || '') + '</div>';
+  html += '<h4 style="margin:14px 0 6px">随机参考（该彩种暂无推荐接口）</h4>';
+  for (let i = 0; i < 2; i++) html += '<div class="kv"><span>机选 ' + (i + 1) + '</span><span>' + renderNums(randPick(id)) + '</span></div>';
+  $('#p').innerHTML = html;
+  await loadAnalyzeSmall(id);
+  await loadHistory(id);
+}
+
+function randPick(id){
+  const l = LOT[id];
+  const pick = (pool, n) => { const s = new Set(); while (s.size < n) s.add(pool[Math.floor(Math.random() * pool.length)]); return [...s].sort(); };
+  const seq = n => Array.from({ length: n }, (_, i) => pad2(i + 1));
+  if (id === 'ssq') return { red: pick(seq(33), 6), blue: [pad2(1 + Math.floor(Math.random() * 16))] };
+  if (id === 'dlt') return { red: pick(seq(35), 5), blue: pick(seq(12), 2) };
+  if (l.mode === 'digits') return { digits: Array.from({ length: l.n }, () => String(Math.floor(Math.random() * 10))) };
+  if (l.mode === 'qlc') { const m = pick(seq(30), 8); return { main: m.slice(0, 7), special: m[7] }; }
+  return { nums: pick(seq(80), 20) };
+}
+
+// ---------- 分析 ----------
+function drawChart(title, cats, vals){
+  const el = document.getElementById('chart');
+  if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），下方统计数值仍可用。</div>'; return; }
+  if (!window.__chart) window.__chart = echarts.init(el);
+  window.__chart.setOption({
+    title: { text: title, textStyle: { fontSize: 14 } },
+    grid: { left: 40, right: 12, top: 40, bottom: 30 },
+    xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [{ type: 'bar', data: vals, itemStyle: { color: '#e11' } }]
+  }, true);
+}
+
+async function loadAnalyzeRB(id){
+  try {
+    const an = await api('/api/' + id + '/analyze?win=30');
+    const a = an.analysis || an;
+    if (id === 'ssq') {
+      const ks = Object.keys(a.redFreq).sort();
+      drawChart('红球频次（近 30 期）', ks, ks.map(k => a.redFreq[k]));
+      const om = a.omission || {};
+      $('#stats').innerHTML =
+        '热号 ' + esc(a.hotRed.join(',')) + '　冷号 ' + esc(a.coldRed.join(',')) + '<br>' +
+        '奇偶比 ' + esc(a.oddRatio) + '　质合比 ' + esc(a.primeRatio) + '　均和 ' + esc(a.avgSum) + '　平均AC ' + esc(a.avgAC) + '<br>' +
+        '012路 ' + esc(a.road012[0]) + '/' + esc(a.road012[1]) + '/' + esc(a.road012[2]) +
+        '　平均连号 ' + esc(a.avgConsec) + '　平均重号 ' + esc(a.avgRepeat) + '<br>' +
+        '蓝球首选 ' + esc(an.blue.top1) + '　候选池 ' + esc((an.blue.pool || []).join(',')) + '<br>' +
+        '历史最大遗漏 ' + esc(om.max ? Math.max.apply(null, Object.values(om.max)) : '-') + ' 期';
+    } else {
+      const ks = Object.keys(a.frontFreq || {}).sort();
+      drawChart('前区频次（近 30 期）', ks, ks.map(k => a.frontFreq[k]));
+      $('#stats').innerHTML = '热前区 ' + esc((a.hotFront || []).join(',')) + '　热后区 ' + esc((a.hotBack || []).join(',')) + '　窗口 ' + esc(a.count) + ' 期';
+    }
+  } catch (e) { errBox(e, $('#a')); }
+}
+
+async function loadAnalyzeSmall(id){
+  try {
+    const his = await api('/api/' + id + '/history?limit=60');
+    const f = {};
+    for (const d of his) for (const x of (d.digits || d.main || d.nums || [])) f[x] = (f[x] || 0) + 1;
+    const ks = Object.keys(f).sort();
+    drawChart(LOT[id].name + ' 号码频次（近 ' + his.length + ' 期）', ks, ks.map(k => f[k]));
+    const top = ks.slice().sort((a, b) => f[b] - f[a]).slice(0, 6);
+    $('#stats').innerHTML = '样本 ' + esc(his.length) + ' 期　出现最多：' + esc(top.join(',')) + '<br>注：数字型玩法各位独立，频次仅供参考。';
+  } catch (e) { errBox(e, $('#a')); }
+}
+
+// ---------- 历史 ----------
+async function loadHistory(id){
+  try {
+    const his = await api('/api/' + id + '/history?limit=30');
+    let h = '<h3 style="margin:0 0 8px">历史 30 期</h3><table><tr><th>期号</th><th>号码</th><th>日期</th></tr>';
+    for (const d of his) h += '<tr><td>' + esc(d.code) + '</td><td>' + renderNums(d) + '</td><td>' + esc(d.date || '') + '</td></tr>';
+    $('#h').innerHTML = h + '</table>';
+  } catch (e) { errBox(e, $('#h')); }
+}
+
+// ---------- 验奖 + 矩阵 ----------
+function buildVerify(id){
+  const l = LOT[id];
+  let h = '<h3 style="margin:0 0 8px">验奖</h3><div class="row">' +
+    '<input id="vc" placeholder="期号，如 2026103" style="width:150px">';
+  if (l.mode === 'rb') {
+    h += '<input id="vr" placeholder="' + (id === 'ssq' ? '红球 6 个' : '前区 5 个') + '，逗号分隔" style="flex:1;min-width:180px">' +
+         '<input id="vb" placeholder="' + (id === 'ssq' ? '蓝球 1 个' : '后区 2 个') + '" style="width:140px">';
+  } else {
+    h += '<input id="vn" placeholder="号码，逗号分隔" style="flex:1;min-width:220px">';
+  }
+  h += '<button id="vgo">验奖</button></div><div id="vo"></div>';
+  h += '<h3 style="margin:16px 0 8px">旋转矩阵（覆盖设计）</h3>' +
+    '<div class="row"><input id="mn" placeholder="自选 n" style="width:100px" value="12">' +
+    '<input id="mp" placeholder="每注 k" style="width:90px" value="6">' +
+    '<input id="mh" placeholder="保中 t" style="width:80px" value="4">' +
+    '<button id="mgo">生成</button></div><div id="mo" class="muted"></div>';
+  $('#v').innerHTML = h;
+
+  $('#vgo').onclick = async () => {
+    const out = $('#vo');
+    try {
+      const code = $('#vc').value.trim();
+      let path;
+      if (l.mode === 'rb') {
+        const r = $('#vr').value.trim(), b = $('#vb').value.trim();
+        path = '/api/' + id + '/verify?code=' + encodeURIComponent(code) +
+          '&' + (id === 'ssq' ? 'red=' : 'front=') + encodeURIComponent(r) +
+          '&' + (id === 'ssq' ? 'blue=' : 'back=') + encodeURIComponent(b);
+      } else {
+        path = '/api/' + id + '/verify?code=' + encodeURIComponent(code) + '&nums=' + encodeURIComponent($('#vn').value.trim());
+      }
+      const res = await api(path);
+      if (!res.hit) { out.innerHTML = '<div class="muted">' + esc(res.note || '未命中') + '</div>'; return; }
+      const bits = [];
+      if (res.hitRed !== undefined) bits.push('红球 ' + res.hitRed);
+      if (res.hitBlue !== undefined) bits.push('蓝球 ' + (res.hitBlue ? '中' : '未中'));
+      if (res.hitFront !== undefined) bits.push('前区 ' + res.hitFront);
+      if (res.hitBack !== undefined) bits.push('后区 ' + res.hitBack);
+      if (res.hitMain !== undefined) bits.push('基本号 ' + res.hitMain);
+      if (res.hitSpecial !== undefined) bits.push('特别号 ' + (res.hitSpecial ? '中' : '未中'));
+      if (res.hitNums !== undefined) bits.push('命中 ' + res.hitNums + ' 个');
+      if (res.posHit !== undefined) bits.push('按位 ' + res.posHit + '/' + res.total);
+      out.innerHTML = '<div class="card"><b>' + esc(res.prize || '已匹配') + '</b><div class="muted">' + esc(bits.join('　')) +
+        (res.note ? '<br>' + esc(res.note) : '') + '</div></div>';
+    } catch (e) { errBox(e, out); }
+  };
+
+  $('#mgo').onclick = async () => {
+    const out = $('#mo');
+    try {
+      const r = await api('/api/rotation?n=' + encodeURIComponent($('#mn').value.trim() || 12) +
+        '&pick=' + encodeURIComponent($('#mp').value.trim() || 6) +
+        '&hit=' + encodeURIComponent($('#mh').value.trim() || 4));
+      if (r.error) { out.innerHTML = '<div class="err">' + esc(r.error) + '</div>'; return; }
+      out.innerHTML = '<div><b>' + esc(r.blocks) + ' 注</b> · ' + esc(r.note) + '</div>' +
+        r.combos.map((c, i) => '<div class="kv"><span>第 ' + (i + 1) + ' 注</span><span>' + balls(c) + '</span></div>').join('');
+    } catch (e) { errBox(e, out); }
+  };
+}
+
+// ---------- 收藏 ----------
+async function loadFavs(){
+  const el = $('#f');
+  el.innerHTML = '<h3 style="margin:0 0 8px">收藏</h3>' +
+    '<div class="row"><input id="fn" placeholder="号码，逗号分隔" style="flex:1;min-width:200px">' +
+    '<input id="fno" placeholder="备注" style="width:140px">' +
+    '<button id="fadd">添加</button></div><div id="flist" class="muted">加载中…</div>';
+  $('#fadd').onclick = async () => {
+    try {
+      await fetch(base() + '/api/favs', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, headers()),
+        body: JSON.stringify({ kind: sel.value, numbers: $('#fn').value.trim(), note: $('#fno').value.trim() })
+      });
+      $('#fn').value = ''; $('#fno').value = '';
+      loadFavs();
+    } catch (e) { errBox(e, $('#flist')); }
+  };
+  try {
+    const list = await api('/api/favs');
+    $('#flist').innerHTML = list.length
+      ? list.map(x => '<div class="kv"><span>' + esc(x.kind) + ' · ' + esc(x.numbers) +
+          (x.note ? ' <span class="muted">' + esc(x.note) + '</span>' : '') + '</span>' +
+          '<button data-id="' + esc(x.id) + '" class="fdel">删除</button></div>').join('')
+      : '<div class="muted">暂无收藏（需在 Worker 配置 D1 与 API_TOKEN）</div>';
+    document.querySelectorAll('.fdel').forEach(b => b.onclick = async () => {
+      await fetch(base() + '/api/favs?id=' + b.dataset.id, { method: 'DELETE', headers: headers() });
+      loadFavs();
+    });
+  } catch (e) { errBox(e, $('#flist')); }
+}
+
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ($('#api').value) load();
+</script>
+</body>
+</html>

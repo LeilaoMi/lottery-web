@@ -1,15 +1,60 @@
-name: sync-ssq
+name: ci
+
 on:
+  push:
+    branches: [main]
+  pull_request:
   schedule:
-    - cron: "40 13 * * 2,4,0"
+    # 免费版 Cron 配额已满，改用 Actions 定时触发 Worker 落库（UTC 时间，北京时间 +8）
+    - cron: "40 13 * * 2,4,0"   # 双色球：周二/四/日 21:40
+    - cron: "20 13 * * 1,3,6"   # 大乐透：周一/三/六 21:20
+    - cron: "30 13 * * *"       # 每日小彩种（3D/排列3/5/快乐8 每日开奖）
   workflow_dispatch:
+
 jobs:
-  check:
+  test:
+    name: 单元测试
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - run: |
-          curl -s "https://datachart.500.com/ssq/history/newinc/history.php?limit=5" -A "Mozilla/5.0" -o /tmp/500.html
-          echo "500 bytes:"; wc -c /tmp/500.html
-          grep -o "<tr" /tmp/500.html | wc -l
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 运行单元测试（零依赖）
+        run: node --test worker/test/unit.test.mjs
+
+  sync:
+    name: 落库同步
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 触发 Worker 落库并校验
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKER_URL:-}" ] || [ -z "${API_TOKEN:-}" ]; then
+            echo "::error::未配置 secrets.WORKER_URL 或 secrets.API_TOKEN，跳过同步"
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/sync.json -w "%{http_code}" -X POST \
+            "$WORKER_URL/api/admin/sync" -H "Authorization: Bearer $API_TOKEN")
+          echo "HTTP $code"
+          cat /tmp/sync.json
+          if [ "$code" != "200" ]; then
+            echo "::error::同步接口返回 $code"
+            exit 1
+          fi
+          node -e '
+            const j = require("/tmp/sync.json");
+            const rs = j.results || {};
+            const bad = Object.entries(rs).filter(([, v]) => v && (v.error || !v.fetched));
+            if (bad.length) {
+              console.error("::error::以下彩种同步异常：" + JSON.stringify(bad));
+              process.exit(1);
+            }
+            if (!j.db) { console.error("::error::Worker 未绑定 D1，落库实际未生效"); process.exit(1); }
+            console.log("落库完成：" + Object.entries(rs).map(([k, v]) => k + "=" + v.inserted).join(" "));
+          '

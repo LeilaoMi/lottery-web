@@ -1,14 +1,19 @@
 import { fetch500, fetchCWL, fetch17500, analyze, blueScores, recommend, trend, verify } from "./ssq.js";
 import { fetchDLT, analyzeDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
-import { fetchSmall, prizeSSQ, prizeDLT, rotation } from "./small.js";
-import { saveSSQ, loadSSQ, logSync } from "./db.js";
+import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
+import { saveSSQ, loadSSQ, logSync, saveDLT, saveSmall, loadSmall } from "./db.js";
+import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method === "OPTIONS") return cors();
     if (url.pathname === "/" || url.pathname === "/index.html") return html();
     if (url.pathname === "/favicon.ico") return new Response("", { status: 204 });
-    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.4.0", lotteries: LOTS.map(x => x.id) });
+    if (url.pathname === "/sw.js") return new Response(SW, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" } });
+    if (url.pathname === "/manifest.json") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } });
+    if (url.pathname === "/icon.svg") return new Response(ICON, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800" } });
+    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.5.0", lotteries: LOTS.map(x => x.id) });
     if (url.pathname === "/api/meta") return json({ lotteries: LOTS, sources: ["500", "cwl", "17500", "d1"], disclaimer: "随机游戏，仅供娱乐，不保证中奖" });
     if (url.pathname === "/licenses") return htmlLicenses();
     if (url.pathname === "/api/rotation") {
@@ -66,17 +71,53 @@ async function dltRoute(request, env, url) {
 }
 async function smallRoute(request, env, url) {
   if (!checkAuth(request, env)) return json({ error: "unauthorized" }, 401);
-  const m = url.pathname.match(/^\/api\/(fc3d|pl3|pl5|qlc|qxc|kl8)\/(latest|history)$/);
+  const m = url.pathname.match(/^\/api\/(fc3d|pl3|pl5|qlc|qxc|kl8)\/(latest|history|verify)$/);
   if (!m) return json({ error: "not_found" }, 404);
+  const kind = m[1], act = m[2];
   try {
     const cache = caches.default, ck = new Request(url.toString());
     const hit = await cache.match(ck);
     if (hit) return hit;
-    const draws = await fetchSmall(m[1], 60);
-    const res = m[2] === "latest" ? json(draws[0], 200, 600) : json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
+    let draws = [], degraded = false;
+    try { draws = await fetchSmall(kind, 60); } catch (e) {
+      // 上游不可用时降级读 D1，避免直接 502
+      draws = await loadSmall(env.DB, kind, 60).catch(() => []);
+      if (!draws.length) throw e;
+      degraded = true;
+    }
+    let res;
+    if (act === "latest") res = json(draws[0], 200, 600);
+    else if (act === "history") res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
+    else {
+      const code = (url.searchParams.get("code") || "").trim();
+      const nums = (url.searchParams.get("nums") || "").split(/[ ,]+/).filter(Boolean);
+      res = json({ ...verifySmall(draws, kind, code, nums), degraded }, 200, 0);
+      return res;
+    }
+    if (degraded) res = json({ ...(await res.json()), degraded: true }, 200, 600);
     try { await cache.put(ck, res.clone()); } catch {}
     return res;
   } catch (e) { return json({ error: String(e.message || e) }, 502); }
+}
+// 小彩种验奖：数字型按位比对，七乐彩按基本号+特别号，快乐8只统计命中个数
+function verifySmall(draws, kind, code, nums) {
+  const d = draws.find(x => x.code === code);
+  if (!d) return { hit: false, note: "期号不存在（可先用 /history 确认）" };
+  const N = nums.map(s => (/^\d{1,2}$/.test(s) ? String(Number(s)).padStart(2, "0") : s));
+  if (kind === "qlc") {
+    const hm = N.filter(x => (d.main || []).includes(x)).length;
+    const hs = d.special && N.includes(d.special) ? 1 : 0;
+    return { hit: true, actual: d, hitMain: hm, hitSpecial: !!hs, prize: prizeQLC(hm, hs) };
+  }
+  if (kind === "kl8") {
+    const hn = N.filter(x => (d.nums || []).includes(x)).length;
+    return { hit: true, actual: d, hitNums: hn, note: "快乐8奖金随「选几」玩法而异，此处仅统计命中个数" };
+  }
+  const act = (d.digits || []).map(String);
+  let pos = 0;
+  for (let i = 0; i < act.length && i < N.length; i++) if (String(Number(act[i])) === String(Number(N[i]))) pos++;
+  const exact = pos === act.length && N.length === act.length;
+  return { hit: true, actual: d, posHit: pos, total: act.length, exact, prize: exact ? "直选" : "未中" };
 }
 function num(url, k, d, a, b) { const v = parseInt(url.searchParams.get(k) || d, 10); return Math.min(b, Math.max(a, isNaN(v) ? d : v)); }
 function withMeta(list, draws) { list._sources = draws._sources; list._consistent = draws._consistent; return list; }
@@ -98,6 +139,10 @@ async function getCustom(env) {
   out._sources = [env.DATA_SOURCE_OFFICIAL ? "official" : null, env.DATA_SOURCE_PUBLIC ? "public" : null].filter(Boolean); out._consistent = true; return out;
 }
 function json(o, s = 200, cache = 0) { const h = { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }; h["Cache-Control"] = cache ? `public, max-age=${cache}` : "no-store"; return new Response(JSON.stringify(o), { status: s, headers: h }); }
+// 预检：没有它，跨域调用 POST/DELETE /api/favs 会直接失败
+function cors() {
+  return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type,Authorization", "Access-Control-Max-Age": "86400" } });
+}
 async function adminSync(request, env) {
   if (!env.API_TOKEN || (request.headers.get("Authorization") || "") !== `Bearer ${env.API_TOKEN}`) return json({ error: "unauthorized admin" }, 401);
   const out = { ran: new Date().toISOString(), results: {} };
@@ -108,14 +153,26 @@ async function adminSync(request, env) {
     const cached = await loadSSQ(env.DB, 5);
     out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code };
   } catch (e) { out.results.ssq = { error: String(e.message || e) }; }
+  try {
+    let d = []; try { d = await fetchDLT(60); } catch {} if (!d.length) d = await fetch17500DLT();
+    out.results.dlt = { fetched: d.length, inserted: await saveDLT(env.DB, d), latest: d[0]?.code };
+  } catch (e) { out.results.dlt = { error: String(e.message || e) }; }
+  for (const k of LOTS.filter(x => x.id !== "ssq" && x.id !== "dlt").map(x => x.id)) {
+    try {
+      const d = await fetchSmall(k, 60);
+      out.results[k] = { fetched: d.length, inserted: await saveSmall(env.DB, k, d), latest: d[0]?.code };
+    } catch (e) { out.results[k] = { error: String(e.message || e) }; }
+  }
+  out.db = !!env.DB;
   return json(out);
 }
 async function favsRoute(request, env, url) {
   if (!env.DB) return json({ error: "no db" }, 501);
+  // 收藏是个人数据：只要配了 API_TOKEN，读操作也必须鉴权
+  if (env.API_TOKEN && (request.headers.get("Authorization") || "") !== `Bearer ${env.API_TOKEN}`) return json({ error: "unauthorized" }, 401);
   if (request.method === "GET") {
     try { const r = await env.DB.prepare("SELECT id,kind,numbers,note,created_at FROM favs ORDER BY id DESC LIMIT 100").all(); return json(r.results || []); } catch (e) { return json({ error: String(e) }, 500); }
   }
-  if (!env.API_TOKEN || (request.headers.get("Authorization") || "") !== `Bearer ${env.API_TOKEN}`) return json({ error: "unauthorized" }, 401);
   if (request.method === "POST") {
     try { const b = await request.json(); await env.DB.prepare("INSERT INTO favs(kind,numbers,note) VALUES(?,?,?)").bind(String(b.kind || "ssq"), String(b.numbers || ""), String(b.note || "").slice(0, 200)).run(); return json({ ok: true }); } catch (e) { return json({ error: String(e) }, 500); }
   }
@@ -130,6 +187,5 @@ function htmlLicenses() {
   return new Response(s, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 function html() {
-  const s = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>自用彩票全版</title><script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"><\/script><style>body{font-family:system-ui;margin:0;background:#f6f7fb}header{position:sticky;top:0;background:#fff;padding:10px;display:flex;gap:6px;flex-wrap:wrap}select,button,input{padding:8px 10px;border:1px solid #ddd;border-radius:8px;background:#fff}button.on{background:#111;color:#fff}.wrap{max-width:980px;margin:auto;padding:12px}.card{background:#fff;border-radius:12px;padding:12px;margin:8px 0}.ball{display:inline-block;min-width:28px;height:28px;line-height:28px;text-align:center;border-radius:50%;background:#e11;color:#fff;margin:2px}.ball.b{background:#06c}.muted{color:#666;font-size:12px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border:1px solid #eee;padding:3px;text-align:center}.hit{background:#ffe58f}</style></head><body><header><b>自用全版</b><select id="lot"><option value="ssq">双色球</option><option value="dlt">大乐透</option><option value="fc3d">福彩3D</option><option value="pl3">排列3</option><option value="pl5">排列5</option><option value="qlc">七乐彩</option><option value="qxc">七星彩</option><option value="kl8">快乐8</option></select><button class="on" data-t="p">预测</button><button data-t="a">分析</button><button data-t="h">历史</button><button data-t="v">验奖+矩阵</button></header><div class="wrap"><div id="p" class="card">加载中…</div><div id="a" class="card" style="display:none"><div id="chart" style="height:260px"></div><div id="stats" class="muted"></div></div><div id="h" class="card" style="display:none"></div><div id="v" class="card" style="display:none"><input id="vc" placeholder="期号"><input id="vr" placeholder="号码逗号分隔" style="width:50%"><button id="go">验奖</button> <input id="mn" placeholder="矩阵n如12" style="width:80px"><input id="mp" placeholder="选6" style="width:60px"><button id="go2">矩阵</button><div id="vo"></div></div><p class="muted">全8种+奖等+矩阵。随机娱乐。<a href="/health">health</a> <a href="/api/meta">meta</a></p></div><script>const $=s=>document.querySelector(s);let L='ssq';document.querySelectorAll('header button').forEach(b=>b.onclick=()=>{document.querySelectorAll('header button').forEach(x=>x.classList.remove('on'));b.classList.add('on');['p','a','h','v'].forEach(id=>document.getElementById(id).style.display=id===b.dataset.t?'':'none')});document.getElementById('lot').onchange=e=>{L=e.target.value;load()};document.getElementById('go').onclick=async()=>{let u='/api/'+L+'/verify?code='+document.getElementById('vc').value;const v=document.getElementById('vr').value;if(L==='ssq'){const a=v.split(/[ ,]+/);u+='&red='+a.slice(0,6).join(',')+'&blue='+(a[6]||'')}else if(L==='dlt'){const a=v.split(/[ ,]+/);u+='&front='+a.slice(0,5).join(',')+'&back='+a.slice(5,7).join(',')}document.getElementById('vo').textContent=JSON.stringify(await (await fetch(u)).json())};document.getElementById('go2').onclick=async()=>{document.getElementById('vo').textContent=JSON.stringify(await (await fetch('/api/rotation?n='+(document.getElementById('mn').value||12)+'&pick='+(document.getElementById('mp').value||6))).json())};async function load(){const j=async p=>(await fetch(p)).json();const latest=await j('/api/'+L+'/latest');const his=await j('/api/'+L+'/history?limit=20');document.getElementById('h').innerHTML=his.slice(0,20).map(d=>'<div>'+d.code+' '+JSON.stringify(d).slice(0,120)+'</div>').join('');if(L==='ssq'){const rec=await j('/api/ssq/recommend');const an=await j('/api/ssq/analyze?win=30');document.getElementById('p').innerHTML='<h3>'+latest.code+' '+latest.red.map(x=>'<span class=ball>'+x+'</span>').join('')+'<span class="ball b">'+latest.blue+'</span></h3>'+rec.picks.map(p=>'<div>'+p.name+'('+p.score+') '+p.red.join(' ')+' +'+p.blue+'</div>').join('');const c=echarts.init(document.getElementById('chart'));const f=an.analysis.redFreq;const ks=Object.keys(f).sort();c.setOption({xAxis:{type:'category',data:ks},yAxis:{type:'value'},series:[{type:'bar',data:ks.map(k=>f[k])}]});document.getElementById('stats').textContent='热:'+an.analysis.hotRed+' 蓝:'+an.blue.top1}else if(L==='dlt'){const an=await j('/api/dlt/analyze?win=30');document.getElementById('p').innerHTML='<h3>'+latest.code+' '+latest.front.join(' ')+' + '+latest.back.join(' ')+'</h3>';document.getElementById('stats').textContent='热前:'+an.hotFront}else{document.getElementById('p').innerHTML='<h3>'+latest.code+'</h3><pre>'+JSON.stringify(latest,null,1)+'</pre>'}}load()<\/script></body></html>`;
-  return new Response(s, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  return new Response(HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "X-Content-Type-Options": "nosniff" } });
 }

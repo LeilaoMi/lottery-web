@@ -1,1 +1,15 @@
-{"name":"自用彩票","short_name":"彩票","start_url":"/","display":"standalone","background_color":"#f6f7fb","theme_color":"#111111","icons":[]}
+{
+  "name": "自用彩票 · 8 彩种",
+  "short_name": "彩票",
+  "description": "双色球 / 大乐透 / 福彩3D / 排列3 / 排列5 / 七乐彩 / 七星彩 / 快乐8 开奖查询与统计，仅供娱乐",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f7fb",
+  "theme_color": "#111111",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

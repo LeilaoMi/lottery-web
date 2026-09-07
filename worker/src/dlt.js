@@ -1,3 +1,4 @@
+import { normNums } from "./small.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
 const D500 = (n) => `https://datachart.500.com/dlt/history/newinc/history.php?limit=${n}`;
 export async function fetchDLT(limit = 100) {
@@ -34,10 +35,13 @@ export function analyzeDLT(draws, win = 30) {
   return { window: win, count: s.length, hotFront: Object.entries(ff).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => x[0]), hotBack: Object.entries(bf).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]), frontFreq: ff, backFreq: bf };
 }
 export function verifyDLT(draws, code, front, back) {
-  const d = draws.find(x => x.code === String(code));
+  const d = draws.find(x => x.code === String(code || "").trim());
   if (!d) return { hit: false, note: "期号不存在" };
-  const hf = front.filter(x => d.front.includes(x)).length, hb = back.filter(x => d.back.includes(x)).length;
-  return { hit: true, actual: d, hitFront: hf, hitBack: hb };
+  // 归一化：用户输入的 "5" 必须能匹配库里的 "05"
+  const F = normNums(front), B = normNums(back);
+  const hf = new Set(F.filter(x => d.front.includes(x))).size;
+  const hb = new Set(B.filter(x => d.back.includes(x))).size;
+  return { hit: true, actual: d, hitFront: hf, hitBack: hb, input: { front: F, back: B } };
 }
 export async function fetch17500DLT() {
   const r = await fetch("http://data.17500.cn/dlt_asc.txt", { headers: { "User-Agent": UA } });

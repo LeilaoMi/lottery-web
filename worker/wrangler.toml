@@ -3,20 +3,24 @@ main = "src/index.js"
 compatibility_date = "2024-11-01"
 workers_dev = true
 
-# 自用域名：cp.leilaomi.cc.cd，需该zone已接CF
+# 自用域名：cp.leilaomi.cc.cd，需该 zone 已接入 Cloudflare
 routes = [
   { pattern = "cp.leilaomi.cc.cd/*", zone_name = "leilaomi.cc.cd" }
 ]
 
 [vars]
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
-# D1持久：lottery APAC
+# D1 持久化：数据库 lottery（APAC）
+# 注意：database_id 已脱敏，不进仓库。
+# 自建时复制为 wrangler.local.toml 并填入自己的 ID，部署用：
+#   npx wrangler deploy --config worker/wrangler.local.toml
 [[d1_databases]]
 binding = "DB"
 database_name = "lottery"
 database_id = "REPLACE_ME"
 
-# Cron免费账号已满5个，改走GitHub Actions兜底（.github/workflows/sync.yml）
+# Cron：免费账号 5 个配额已满，改用 GitHub Actions 定时触发落库
+# 见 .github/workflows/sync.yml（需配 secrets.WORKER_URL 与 secrets.API_TOKEN）
 # [triggers]
 # crons = ["30 13 * * 2", "30 13 * * 4", "30 13 * * 7"]

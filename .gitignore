@@ -1,3 +1,11 @@
 node_modules/
 .dev.vars
 .wrangler/
+# 本地部署配置：含真实 D1 database_id，不进仓库（用 wrangler.toml 复制后填 ID）
+worker/wrangler.local.toml
+# 构建产物：由 npm run build:ui 从 frontend/ 生成，不进仓库
+worker/src/ui.js
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db
