@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#111111">
-<link rel="manifest" href="/manifest.json">
+<html lang="zh-CN" data-page-node-id="wd4yABBOsdofOk6nl4OH4A">
+<head data-page-node-id="ZaWddcVd1Ih0MGgISpywo0">
+<meta charset="UTF-8" data-page-node-id="Dkd7V7klz1PQ8DjO64kRHF">
+<meta name="viewport" content="width=device-width,initial-scale=1" data-page-node-id="ENgSnMwnKSZ2Ub7J9SeaCY">
+<meta name="theme-color" content="#111111" data-page-node-id="7OwSOF90NbGtrITKjXLeqZ">
+<link rel="manifest" href="/manifest.json" data-page-node-id="yilnmjXX4RRGPdGUjyahNG">
 <title>自用彩票 · 8 彩种</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
@@ -29,35 +29,35 @@ th{background:#fafafa}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
 </style>
 </head>
-<body>
-<header>
-  <b>自用彩票</b>
-  <select id="lot"></select>
-  <button class="on" data-t="p">预测</button>
-  <button data-t="a">分析</button>
-  <button data-t="h">历史</button>
-  <button data-t="v">验奖·矩阵</button>
-  <button data-t="f">收藏</button>
+<body data-page-node-id="nXdeuJrfZVOvMweYUzyI8n">
+<header data-page-node-id="TVFfs5ASZ4VGzlZLadXPO4">
+  <b data-page-node-id="haMk2daY7MdytropLt59td">自用彩票</b>
+  <select id="lot" data-page-node-id="X9uymP9ZoqOgGHqrz0atjf"></select>
+  <button class="on" data-t="p" data-page-node-id="iPeYUGDGF6fq6ZeqXwYHWC">预测</button>
+  <button data-t="a" data-page-node-id="eErWbJuO3OQGIcMuAIfLs1">分析</button>
+  <button data-t="h" data-page-node-id="zZ87FxSiEg7fRNzsuqDYtH">历史</button>
+  <button data-t="v" data-page-node-id="IGGbA4so6NzuVLtkBBi2Qq">验奖·矩阵</button>
+  <button data-t="f" data-page-node-id="0SYdguSKBUjII2VXvQ5LyW">收藏</button>
 </header>
 
-<div class="wrap">
-  <div class="card" id="cfg">
-    <div class="row">
-      <span class="muted">Worker 地址</span>
-      <input id="api" style="flex:1;min-width:220px" placeholder="https://lottery-web.xxx.workers.dev">
-      <input id="tok" style="width:170px" placeholder="API_TOKEN（可选）">
-      <button id="save">保存并加载</button>
+<div class="wrap" data-page-node-id="KFzJ0qIgqJfDmIioc6tTwE">
+  <div class="card" id="cfg" data-page-node-id="g243c5lAFhFnjgGiAUtxDX">
+    <div class="row" data-page-node-id="BHuT2grZsqz5LFyo1PxDlJ">
+      <span class="muted" data-page-node-id="nNZ7BB8AaoaY58eCMFTaIW">Worker 地址</span>
+      <input id="api" style="flex:1;min-width:220px" placeholder="https://lottery-web.xxx.workers.dev" data-page-node-id="Jha7VcsNZugLb0fpjvYyAu">
+      <input id="tok" style="width:170px" placeholder="API_TOKEN（可选）" data-page-node-id="s6DEWIzfkWTV29qFbZnjkf">
+      <button id="save" data-page-node-id="gCbqPgehaMHj0SZhGF1j2v">保存并加载</button>
     </div>
-    <div class="muted" id="st">未加载</div>
+    <div class="muted" id="st" data-page-node-id="6beFFbZsZt4YM10QeGy6vK">未加载</div>
   </div>
 
-  <div class="warn">随机游戏，统计仅供娱乐，不保证中奖。数据来自 500 / cwl / 17500 多源交叉校验。</div>
+  <div class="warn" data-page-node-id="Gtoyy98xsGm6RspZaW7EKb">随机游戏，统计仅供娱乐，不保证中奖。数据来自 500 / cwl / 17500 多源交叉校验。</div>
 
-  <div id="p" class="card">加载中…</div>
-  <div id="a" class="card" style="display:none"><div id="chart" style="height:300px"></div><div id="stats" class="muted"></div></div>
-  <div id="h" class="card" style="display:none"></div>
-  <div id="v" class="card" style="display:none"></div>
-  <div id="f" class="card" style="display:none"></div>
+  <div id="p" class="card" data-page-node-id="O4IRRh453o6dSVKvLVSiQw">加载中…</div>
+  <div id="a" class="card" style="display:none" data-page-node-id="T8v3apBHXKeL6vElBOz29a"><div id="chart" style="height:300px" data-page-node-id="F94RLhn7RTFlIxGwDpco5w"></div><div id="stats" class="muted" data-page-node-id="KLERzjPJDsyMYezfGpHd5W"></div></div>
+  <div id="h" class="card" style="display:none" data-page-node-id="hD65Rjrk4hCm83ucPXhI0t"></div>
+  <div id="v" class="card" style="display:none" data-page-node-id="E73QkA8micfJzuqG5tcuLv"></div>
+  <div id="f" class="card" style="display:none" data-page-node-id="CvLNRGaVhm4i9UchgUEV5q"></div>
 </div>
 
 <script>
@@ -96,7 +96,10 @@ async function api(path){
   return j;
 }
 function pad2(x){ return String(x).padStart(2, '0'); }
-function balls(arr, cls){ return (arr || []).map(x => '<span class="ball ' + (cls || '') + '">' + x + '</span>').join(''); }
+// 后端字段类型不统一：双色球的 blue 是字符串 "15"，大乐透的 back 是数组。
+// 统一在这里收敛，避免 "(arr || []).map is not a function"。
+function asArr(x){ if (x == null) return []; return Array.isArray(x) ? x : [x]; }
+function balls(arr, cls){ return asArr(arr).map(x => '<span class="ball ' + (cls || '') + '">' + x + '</span>').join(''); }
 function esc(s){ return String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
 function errBox(e, el){ el.innerHTML = '<div class="err">请求失败：' + esc(e.message || e) + '</div>'; }
 function renderNums(o){
