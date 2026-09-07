@@ -1,0 +1,15 @@
+name: sync-ssq
+on:
+  schedule:
+    - cron: "40 13 * * 2,4,0"
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: |
+          curl -s "https://datachart.500.com/ssq/history/newinc/history.php?limit=5" -A "Mozilla/5.0" -o /tmp/500.html
+          echo "500 bytes:"; wc -c /tmp/500.html
+          grep -o "<tr" /tmp/500.html | wc -l

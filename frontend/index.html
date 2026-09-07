@@ -1,0 +1,23 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自用双色球</title><script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>body{font-family:system-ui;margin:0;background:#f6f7fb}nav{display:flex;gap:8px;padding:12px;background:#fff;position:sticky;top:0}button{padding:8px 14px;border:1px solid #ddd;border-radius:8px;background:#fff}button.on{background:#111;color:#fff}.wrap{padding:14px;max-width:900px;margin:auto}.card{background:#fff;border-radius:12px;padding:14px;margin:10px 0}.ball{display:inline-block;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;background:#e11;color:#fff;margin:2px}.ball.b{background:#06c}.muted{color:#666;font-size:12px}</style></head>
+<body><nav><button class="on" data-t="p">最新预测</button><button data-t="a">图表分析</button><button data-t="h">历史回溯</button></nav>
+<div class="wrap"><div id="cfg" class="card"><span class="muted">Worker地址</span> <input id="api" style="width:60%" placeholder="https://lottery-web.xxx.workers.dev"> <button id="go">加载</button> <span id="src" class="muted"></span></div>
+<div id="p" class="card"></div><div id="a" class="card" style="display:none"><div id="chart" style="height:300px"></div><div id="stats" class="muted"></div></div><div id="h" class="card" style="display:none"></div>
+<p class="muted">随机游戏，统计仅供娱乐，不保证中奖。数据：500主+cwl官+17500备交叉验证。</p></div>
+<script>
+const $=s=>document.querySelector(s);
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');['p','a','h'].forEach(id=>document.getElementById(id).style.display=id===b.dataset.t?'':'none')});
+$('#go').onclick=load;
+async function load(){
+  const base=($('#api').value||'').replace(/\/$/,''); if(!base){alert('先填Worker地址');return}
+  const j=async p=> (await fetch(base+p)).json();
+  const latest=await j('/api/ssq/latest'); $('#src').textContent='源:'+(latest.sources||[]).join(',')+' 一致:'+latest.consistent+(latest.mock?' mock':'');
+  const rec=await j('/api/ssq/recommend'); const an=await j('/api/ssq/analyze?win=30'); const his=await j('/api/ssq/history?limit=30');
+  $('#p').innerHTML='<h3>'+latest.code+'期 '+latest.red.map(x=>'<span class=ball>'+x+'</span>').join('')+'<span class=\"ball b\">'+latest.blue+'</span></h3>'+rec.picks.map(p=>'<div><b>'+p.name+'</b> '+p.red.map(x=>'<span class=ball>'+x+'</span>').join('')+'<span class=\"ball b\">'+p.blue+'</span></div>').join('')+'<p class=muted>'+rec.disclaimer+'</p>';
+  $('#h').innerHTML=his.slice(0,30).map(d=>'<div>'+d.code+' '+d.red.join(' ')+' + '+d.blue+' <span class=muted>'+(d.date||'')+'</span></div>').join('');
+  const c=echarts.init(document.getElementById('chart')); const f=an.analysis.redFreq; const ks=Object.keys(f).sort();
+  c.setOption({title:{text:'红球频率30期'},xAxis:{type:'category',data:ks},yAxis:{type:'value'},series:[{type:'bar',data:ks.map(k=>f[k])}]});
+  $('#stats').textContent='热:'+an.analysis.hotRed.join(',')+' 冷:'+(an.analysis.coldRed.join(',')||'无')+' 奇偶:'+an.analysis.oddRatio+' 均和:'+an.analysis.avgSum+' 蓝Top:'+an.blue.top1;
+}
+</script></body></html>
