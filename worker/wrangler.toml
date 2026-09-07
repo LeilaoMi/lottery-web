@@ -15,7 +15,7 @@ VERSION = "0.4.0"
 [[d1_databases]]
 binding = "DB"
 database_name = "lottery"
-database_id = "caca26fb-50ce-42a3-9ea6-157054b0c3e7"
+database_id = "REPLACE_ME"
 
 # Cron免费账号已满5个，改走GitHub Actions兜底（.github/workflows/sync.yml）
 # [triggers]
