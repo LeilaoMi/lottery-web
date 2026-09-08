@@ -158,7 +158,7 @@ export function killList(kind, draws, opts = {}) {
   const main = pool.map(k => ({ n: k, votes: +votes[k].toFixed(2), reasons: [...new Set(why[k])] }))
     .filter(x => x.votes > 0).sort((a, b) => b.votes - a.votes || Number(a.n) - Number(b.n));
   const aux = s.aux ? killAux(kind, draws) : [];
-  const out = { main, aux, threshold: killThreshold(main) };
+  const out = { main, aux, threshold: killThreshold(main, opts.thFrac) };
   if (opts.perFormula) {
     out.byFormula = {};
     for (const key of Object.keys(FORMULAS)) {
@@ -168,10 +168,11 @@ export function killList(kind, draws, opts = {}) {
   }
   return out;
 }
-function killThreshold(list) {
+function killThreshold(list, frac = 0.3) {
   if (!list.length) return 99;
+  const f = Math.min(0.5, Math.max(0.05, Number(frac) || 0.3)); // 投票分位截断：默认杀票数前 30%
   const v = list.map(x => x.votes).sort((a, b) => b - a);
-  return +(v[Math.min(v.length - 1, Math.floor(v.length * 0.3))] || 0).toFixed(2);
+  return +(v[Math.min(v.length - 1, Math.floor(v.length * f))] || 0).toFixed(2);
 }
 function killAux(kind, draws) {
   const s = specOf(kind), pool = poolOf(s.aux), votes = {};
@@ -539,7 +540,7 @@ export function backtest(kind, draws, opts = {}) {
     hot.hit += hHit; cold.hit += cHit; dan.hit += dHit;
     // killAux 的遗漏统计窗口封顶 100 期：600 期跨度时历史数组很长，不封顶 CPU 会失控
     // opts.weights：校准权重（来自 calibrate）——传入后回测的就是「加权杀号」的真实命中率
-    const kl = killList(kind, hist.slice(0, 100), { perFormula: true, weights: opts.weights }), th = kl.threshold ?? 99;
+    const kl = killList(kind, hist.slice(0, 100), { perFormula: true, weights: opts.weights, thFrac: opts.thFrac }), th = kl.threshold ?? 99;
     const killed = (kl.main || []).filter(x => x.votes >= th).map(x => x.n);
     const kHit = killed.filter(k => actual.has(k)).length;
     kill.killed += killed.length;
@@ -694,6 +695,39 @@ export function calibrate(kind, draws, opts = {}) {
   const res = { weights: weightsFrom(bt), periods: bt.periods, formulas: (bt.kill && bt.kill.formulas) || [] };
   if (hFrac > 0 && s.type === "digit") res.holdout = { note: "数字型无加权杀号聚合，holdout 不适用" };
   return res;
+}
+
+// ---------- 杀号阈值寻优：默认「杀票数前 30%」是不是最优分位？ ----------
+// 方法：旧 70% 段上对 5 个分位分别回测找 train 最优 → 所有分位在新 30% 段上评估。
+// 诚实判据：train 最优阈值在 test 上与 test oracle（事后最优）差距小 → 阈值有意义；
+// 差距大 / 各分位差不多 → 说明命中率对阈值不敏感，默认 30% 即可（大概率是噪音，别调）。
+export function thresholdTune(kind, draws, opts = {}) {
+  const s = specOf(kind);
+  if (s.type !== "pool") return { kind, name: s && s.name, note: "数字型不支持阈值寻优", disclaimer: DISCLAIMER };
+  const N = draws.length;
+  const m = Math.max(30, Math.floor(N * 0.3));
+  if (N - m < 40) return { kind, name: s.name, note: "样本不足（新段 < 40 期）", disclaimer: DISCLAIMER };
+  const fitPart = draws.slice(m), evalPart = draws.slice(0, m); // 同 holdout 口径：旧段拟合、新段验证
+  const FRACS = [0.2, 0.25, 0.3, 0.35, 0.4];
+  const run = part => FRACS.map(f => {
+    // periods 可由调用方降档（免费版 10ms CPU：10 次 backtest 是重计算，线上实测超限时降 20）
+    const bt = backtest(kind, part, { periods: opts.periods || 40, warmup: 30, win: 30, thFrac: f });
+    return { frac: f, hitRate: bt.kill.hitRate, killedTotal: bt.kill.killedTotal, tested: bt.tested };
+  });
+  const train = run(fitPart), test = run(evalPart);
+  const trainBest = train.reduce((a, b) => (b.hitRate < a.hitRate ? b : a));
+  const oracle = test.reduce((a, b) => (b.hitRate < a.hitRate ? b : a));
+  const atTrainBest = test.find(x => x.frac === trainBest.frac);
+  const gap = +(atTrainBest.hitRate - oracle.hitRate).toFixed(4);
+  return {
+    kind, name: s.name, tested: { train: fitPart.length, test: evalPart.length },
+    train, test, trainBest, oracle, gap,
+    verdict: gap <= 0.005
+      ? "train 最优阈值在 test 上接近事后最优——阈值有信息量"
+      : "train 最优在 test 上明显逊于事后最优——阈值不敏感/过拟合，默认 30% 即可",
+    note: "分位 = 杀掉票数排名前 N% 的号；回测各 40 期（抽样封顶），差异在小样本内未必显著",
+    disclaimer: DISCLAIMER
+  };
 }
 
 // ---------- 胆拖投注单：胆 = 评分最高 D 个（剔除杀号），拖 = 次高 T 个，副区取胆码前 pick 个 ----------

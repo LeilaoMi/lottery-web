@@ -34,6 +34,7 @@ th{background:#fafafa}
   <b data-page-node-id="haMk2daY7MdytropLt59td">自用彩票</b>
   <select id="lot" data-page-node-id="X9uymP9ZoqOgGHqrz0atjf"></select>
   <button class="on" data-t="p" data-page-node-id="iPeYUGDGF6fq6ZeqXwYHWC">预测</button>
+  <button data-t="d" data-page-node-id="dTabToday00000000000001">今日</button>
   <button data-t="a" data-page-node-id="eErWbJuO3OQGIcMuAIfLs1">分析</button>
   <button data-t="h" data-page-node-id="zZ87FxSiEg7fRNzsuqDYtH">历史</button>
   <button data-t="v" data-page-node-id="IGGbA4so6NzuVLtkBBi2Qq">验奖·矩阵</button>
@@ -55,6 +56,7 @@ th{background:#fafafa}
   <div class="warn" data-page-node-id="Gtoyy98xsGm6RspZaW7EKb">随机游戏，统计仅供娱乐，不保证中奖。数据来自 500 / cwl / 17500 多源交叉校验。</div>
 
   <div id="p" class="card" data-page-node-id="O4IRRh453o6dSVKvLVSiQw">加载中…</div>
+  <div id="d" class="card" style="display:none" data-page-node-id="dCardToday00000000000002">加载中…</div>
   <div id="a" class="card" style="display:none" data-page-node-id="T8v3apBHXKeL6vElBOz29a"><div id="chart" style="height:300px" data-page-node-id="F94RLhn7RTFlIxGwDpco5w"></div><div id="stats" class="muted" data-page-node-id="KLERzjPJDsyMYezfGpHd5W"></div></div>
   <div id="h" class="card" style="display:none" data-page-node-id="hD65Rjrk4hCm83ucPXhI0t"></div>
   <div id="v" class="card" style="display:none" data-page-node-id="E73QkA8micfJzuqG5tcuLv"></div>
@@ -118,9 +120,10 @@ function renderNums(o){
 document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () => {
   document.querySelectorAll('header button[data-t]').forEach(x => x.classList.remove('on'));
   b.classList.add('on');
-  ['p','a','h','v','t','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
+  ['d','p','a','h','v','t','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
   if (b.dataset.t === 'a' && window.__chart) setTimeout(() => window.__chart.resize(), 0);
   if (b.dataset.t === 'a' && window.__chart2) setTimeout(() => window.__chart2.resize(), 0);
+  if (b.dataset.t === 'd') loadDaily();
   if (b.dataset.t === 'f') loadFavs();
 });
 sel.onchange = load;
@@ -136,8 +139,92 @@ async function load(){
     $('#st').textContent = '加载失败';
     errBox(e, $('#p'));
   }
+  loadStale();
   buildVerify(id);
   buildTools(id);
+}
+
+// 数据新鲜度保险丝：/api/meta 的 stale 显示 D1 最新一期距今天数，任一彩种 ≥4 天 → 黄条提醒
+// （Actions 定时同步停摆 / 上游改版时，用户不至于拿过期数据当最新预测）
+let __staleSig = '';
+async function loadStale(){
+  try {
+    const m = await api('/api/meta');
+    const bad = (m.stale || []).filter(x => x.days >= 4);
+    const old = document.getElementById('stalebar');
+    if (!bad.length) { if (old) old.remove(); return; }
+    const sig = bad.map(x => x.kind + x.days).join(',');
+    if (old && sig === __staleSig) return;
+    __staleSig = sig;
+    const bar = document.createElement('div');
+    bar.className = 'warn'; bar.id = 'stalebar';
+    bar.style.cssText = 'background:#fff1b8;border-color:#e6c35c;color:#6d4c00;font-weight:600';
+    bar.innerHTML = '⚠️ 数据可能过期（同步任务停摆？）：' +
+      bad.map(x => esc(x.name) + ' 最新 ' + esc(x.date) + '（' + x.days + ' 天前）').join('、') +
+      '。以下预测请谨慎参考。';
+    const anchor = document.querySelector('.warn');
+    if (anchor) anchor.parentNode.insertBefore(bar, anchor);
+  } catch (e) { /* meta 失败不影响主流程 */ }
+}
+
+// ---------- 今日日报：开奖日历 + 上期对账 + 下期快照 + 破纪录遗漏 ----------
+const WEEK = '日一二三四五六';
+const LOT_DAYS = { ssq: '二四日', dlt: '一三六', fc3d: '每日', pl3: '每日', pl5: '每日', qlc: '一三五', qxc: '二五日', kl8: '每日' };
+async function loadDaily(){
+  const el = $('#d');
+  const today = new Date(), w = WEEK[today.getDay()];
+  el.innerHTML = '<h3 style="margin:0 0 8px">今日日报（' + today.toLocaleDateString() + ' 周' + w + '）</h3><div class="muted">加载中…</div>';
+  const drawing = LOTS.filter(l => (LOT_DAYS[l.id] || '').includes(w) || LOT_DAYS[l.id] === '每日');
+  const chips = LOTS.map(l => {
+    const on = drawing.includes(l);
+    return '<span class="ball' + (on ? '' : ' b') + '" style="min-width:0;border-radius:6px;padding:0 8px;' + (on ? '' : 'background:#bbb;text-decoration:line-through') + '">' + esc(l.name) + '</span>';
+  }).join('');
+  let h = '<div class="row">' + chips + '<span class="muted">红=今日开奖 · 灰=休市</span></div>';
+  const box = sec => '<div class="muted">加载中…</div>';
+  h += '<h3 style="margin:14px 0 6px">破纪录遗漏预警</h3><div id="drec">' + box() + '</div>';
+  h += '<h3 style="margin:14px 0 6px">上期对账（最新已开奖快照）</h3><div id="drev">' + box() + '</div>';
+  h += '<h3 style="margin:14px 0 6px">下期快照（待开奖）</h3><div id="dsnap">' + box() + '</div>';
+  el.innerHTML = h;
+  // ① 破纪录遗漏：/api/records 全彩种，破纪录红标、逼近黄标
+  api('/api/records').then(r => {
+    const rec = r.records || {};
+    let t = '<table><tr><th>彩种</th><th>破纪录</th><th>逼近纪录（≥80%）</th><th>当前遗漏最深</th></tr>';
+    for (const l of LOTS) {
+      const x = rec[l.id];
+      if (!x) { t += '<tr><td>' + esc(l.name) + '</td><td colspan="3" class="muted">无数据</td></tr>'; continue; }
+      const fmt = arr => (arr || []).map(i => '<b style="color:#c00">' + esc(i.label) + '</b>(' + i.cur + '/' + i.best + ')').join('、') || '<span class="muted">—</span>';
+      const fmtN = arr => (arr || []).map(i => '<b style="color:#b60">' + esc(i.label) + '</b>(' + i.cur + '/' + i.best + ')').join('、') || '<span class="muted">—</span>';
+      t += '<tr><td>' + esc(l.name) + '<div class="muted">' + esc(x.scanned) + '期</div></td><td>' + fmt(x.breaking) + '</td><td>' + fmtN(x.near) + '</td><td class="muted">' +
+        (x.top || []).map(i => esc(i.label) + ' ' + i.cur).join(' · ') + '</td></tr>';
+    }
+    const e1 = document.getElementById('drec');
+    if (e1) e1.innerHTML = t + '</table><div class="muted">' + esc(r.note || '') + '</div>';
+  }).catch(e => { const x = document.getElementById('drec'); if (x) errBox(e, x); });
+  // ②③ 复盘：上期对账（最新 checked）+ 下期快照（最新 unchecked），一次 /api/review 拿全
+  api('/api/review').then(r => {
+    const rows = r.rows || [], summary = r.summary || {};
+    const checkedRow = rows.find(x => x.checked && x.hit);
+    const snapRow = rows.find(x => !x.checked);
+    const e2 = document.getElementById('drev');
+    if (e2) {
+      if (checkedRow) {
+        const s = summary[checkedRow.kind];
+        e2.innerHTML = '<div class="kv"><span>' + esc(LOT[checkedRow.kind] ? LOT[checkedRow.kind].name : checkedRow.kind) + ' 期 ' + esc(checkedRow.code) + '</span><span>开奖 ' + esc(checkedRow.hit.actual) + '</span></div>' +
+          '<div class="kv"><span>各策略命中</span><span>' + esc((checkedRow.hit.picks || []).map(p => p.name + ' ' + p.hit).join(' / ')) + '</span></div>' +
+          '<div class="kv"><span>胆 ' + esc(checkedRow.hit.danHit || 0) + ' · 杀错 ' + esc((checkedRow.hit.killWrong || []).join(' ') || '无') + '</span><span class="muted">滚动 ' + (s ? s.checked + ' 期' : '') + '</span></div>';
+      } else e2.innerHTML = '<div class="muted">暂无已对账快照：每日同步后逐期累积。</div>';
+    }
+    const e3 = document.getElementById('dsnap');
+    if (e3) {
+      if (snapRow) {
+        const p = snapRow.payload || {};
+        e3.innerHTML = '<div class="kv"><span>' + esc(LOT[snapRow.kind] ? LOT[snapRow.kind].name : snapRow.kind) + ' 期 ' + esc(snapRow.code) + '（基于 ' + esc(p.basedOn || '') + '）</span><span></span></div>' +
+          '<div class="kv"><span>推荐</span><span>' + esc((p.picks || []).map(x => x.name + ' ' + (x.main || []).join(' ')).join(' / ') || '—') + '</span></div>' +
+          '<div class="kv"><span>胆</span><span>' + esc((p.dan || []).join(' ') || '—') + '</span></div>' +
+          '<div class="kv"><span>杀</span><span>' + esc((p.kill || []).join(' ') || '—') + '</span></div>';
+      } else e3.innerHTML = '<div class="muted">暂无待开奖快照：同步任务运行后自动生成。</div>';
+    }
+  }).catch(e => { const x2 = document.getElementById('drev'); if (x2) errBox(e, x2); const x3 = document.getElementById('dsnap'); if (x3) x3.innerHTML = '<span class="muted">复盘数据不可用</span>'; });
 }
 
 // 8 个彩种共用一套展示：后端 /api/{kind}/predict 返回统一结构 {picks:[{name,main,aux|digits,score}],kill,dan}
@@ -364,17 +451,59 @@ async function loadBacktest(id, periods){
         (kr.length ? ' / 首位杀号命中率 ' + ((kr.reduce((a, r) => a + r.killRate, 0) / kr.length) * 100).toFixed(1) + '%' : '');
     }
     if (bt.note) extra += '<br><span>' + esc(bt.note) + '</span>';
+    if (bt.eras && bt.eras.length > 1) extra += '<div id="btchart" style="height:220px;margin-top:8px"></div>';
     extra += '<div class="row" style="margin-top:6px"><input id="btp" placeholder="回测期数（≤600，>60 自动抽样）" style="width:200px"><button id="btgo">按期数重算</button>' +
-      '<button id="btho">校准外推检验</button><span id="hoout" class="muted"></span></div>';
+      '<button id="btho">校准外推检验</button><button id="btkt">杀号阈值寻优</button><span id="hoout" class="muted"></span><span id="ktout" class="muted"></span></div>';
     // insertAdjacentHTML + 先移除旧块：重算时不会丢失走势图的按钮事件
     const old = document.getElementById('btout');
     if (old) old.remove();
     $('#stats').insertAdjacentHTML('beforeend', '<div id="btout" style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee" class="muted">' + extra + '</div>');
+    // 分年柱图：热号/杀号命中率逐年对比 + 随机基线参考线（一眼看出策略是稳定还是靠某一年撑的）
+    if (bt.eras && bt.eras.length > 1 && typeof echarts !== 'undefined') {
+      const bcel = document.getElementById('btchart');
+      if (bcel) {
+        if (!window.__btchart) window.__btchart = echarts.init(bcel);
+        window.__btchart.clear();
+        window.__btchart.setOption({
+          grid: { left: 44, right: 12, top: 30, bottom: 24 },
+          legend: { top: 0, textStyle: { fontSize: 11 } },
+          tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
+          xAxis: { type: 'category', data: bt.eras.map(e => e.era), axisLabel: { fontSize: 11 } },
+          yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => (v * 100).toFixed(0) + '%' } },
+          series: [
+            { name: '热号命中率', type: 'bar', data: bt.eras.map(e => e.hotRate), itemStyle: { color: '#c0392b' } },
+            { name: '杀号命中率', type: 'bar', data: bt.eras.map(e => e.killRate), itemStyle: { color: '#2980b9' } },
+            { name: '随机基线', type: 'line', data: bt.eras.map(() => bt.baseline), lineStyle: { type: 'dashed', color: '#888' }, itemStyle: { color: '#888' }, symbol: 'none' }
+          ]
+        });
+      }
+    }
     const go = document.getElementById('btgo');
     if (go) go.onclick = () => { const v = parseInt(document.getElementById('btp').value, 10); if (v > 0) loadBacktest(id, Math.min(600, v)); };
     const ho = document.getElementById('btho');
     if (ho) ho.onclick = () => loadHoldout(id);
+    const kt = document.getElementById('btkt');
+    if (kt) kt.onclick = () => loadKillTune(id);
   } catch (e2) { /* 回测接口失败时保持主统计展示 */ }
+}
+
+// 杀号阈值寻优：默认「杀票数前 30%」对不对？5 个分位旧段拟合 → 新段验证，gap 小 = 阈值有信息量
+async function loadKillTune(id){
+  const el = document.getElementById('ktout');
+  if (el) el.innerHTML = '阈值寻优计算中（10 次回测，全站最重端点，约几秒）…';
+  try {
+    const r = await api('/api/kill-tune?kind=' + id);
+    if (r.note && !r.train) { if (el) el.innerHTML = esc(r.note); return; }
+    const row = arr => arr.map(x => '<td>' + (x.frac * 100).toFixed(0) + '%<br><b>' + (x.hitRate * 100).toFixed(1) + '%</b></td>').join('');
+    const atFrac = f => r.test.find(x => x.frac === f) || { hitRate: NaN };
+    if (el) el.innerHTML = '<br><b>杀号阈值寻优</b>（旧 ' + esc(r.tested.train) + ' 期拟合 → 新 ' + esc(r.tested.test) + ' 期验证，杀号命中率越低越好）' +
+      '<table><tr><th>分位</th>' + r.train.map(x => '<th>' + (x.frac * 100).toFixed(0) + '%</th>').join('') + '</tr>' +
+      '<tr><td>train</td>' + row(r.train) + '</tr>' +
+      '<tr><td>test</td>' + row(r.test) + '</tr></table>' +
+      '<div>train 最优 ' + (r.trainBest.frac * 100).toFixed(0) + '% → test 上 ' + (atFrac(r.trainBest.frac).hitRate * 100).toFixed(1) + '%；test 事后最优 ' +
+      (r.oracle.frac * 100).toFixed(0) + '% → ' + (r.oracle.hitRate * 100).toFixed(1) + '%，gap=' + r.gap.toFixed(4) + '</div>' +
+      '<div><b>' + esc(r.verdict || '') + '</b></div>';
+  } catch (e) { if (el) el.innerHTML = '<span class="err">阈值寻优失败：' + esc(e.message || e) + '</span>'; }
 }
 
 // 校准外推检验：权重只用旧段拟合，在新段对比「加权 vs 未加权」杀号命中率（防过拟合的直接证据）
@@ -462,9 +591,10 @@ function buildTools(id){
       const s = (r.summary || {})[id];
       let h = s
         ? '<div class="card"><b>已对账 ' + esc(s.checked) + ' 期</b>' +
-          (s.pickHitRate != null ? '<div>推荐号命中率 ' + (s.pickHitRate * 100).toFixed(1) + '%（随机基线 ' + (s.pickBaseline * 100).toFixed(1) + '%）</div>' : '') +
-          (s.danHitRate != null ? '<div>定胆命中率 ' + (s.danHitRate * 100).toFixed(1) + '%</div>' : '') +
-          (s.killWrongRate != null ? '<div>杀号杀错率 ' + (s.killWrongRate * 100).toFixed(1) + '%（越低越好）</div>' : '') + '</div>'
+          (s.pickHitRate != null ? '<div>推荐号命中率 ' + (s.pickHitRate * 100).toFixed(1) + '%（随机基线 ' + (s.pickBaseline * 100).toFixed(1) + '%）' + pTag(s.pickP) + '</div>' : '') +
+          (s.danHitRate != null ? '<div>定胆命中率 ' + (s.danHitRate * 100).toFixed(1) + '%' + pTag(s.danP) + '</div>' : '') +
+          (s.killWrongRate != null ? '<div>杀号杀错率 ' + (s.killWrongRate * 100).toFixed(1) + '%（越低越好，低于基线才有价值）' + pTag(s.killP) + '</div>' : '') +
+          '<div id="revchart" style="height:200px;margin-top:8px"></div>' + '</div>'
         : '<div class="muted">暂无已对账记录：同步任务运行后逐期累积。</div>';
       const rows = (r.rows || []).filter(x => x.checked && x.hit).slice(0, 8);
       if (rows.length) {
@@ -474,6 +604,25 @@ function buildTools(id){
             esc((x.hit.picks || []).map(p => p.hit).join('/') + '，胆' + (x.hit.danHit || 0) + '，杀错' + (x.hit.killWrong || []).length) + '</td></tr>').join('') + '</table>';
       }
       $('#rout').innerHTML = h || '<div class="muted">暂无数据</div>';
+      // 复盘小图：推荐命中 / 杀号错杀 各自对照随机基线（p<0.05 的项标题栏标绿）
+      if (s && typeof echarts !== 'undefined') {
+        const rc = document.getElementById('revchart');
+        if (rc) {
+          if (!window.__revchart) window.__revchart = echarts.init(rc);
+          window.__revchart.clear();
+          window.__revchart.setOption({
+            grid: { left: 44, right: 12, top: 30, bottom: 24 },
+            legend: { top: 0, textStyle: { fontSize: 11 } },
+            tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
+            xAxis: { type: 'category', data: ['推荐命中', '杀号错杀'], axisLabel: { fontSize: 11 } },
+            yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => (v * 100).toFixed(0) + '%' } },
+            series: [
+              { name: '实际', type: 'bar', data: [s.pickHitRate, s.killWrongRate], itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 10, formatter: p => p.value == null ? '' : (p.value * 100).toFixed(1) + '%' } },
+              { name: '随机基线', type: 'bar', data: [s.pickBaseline, s.pickBaseline], itemStyle: { color: '#bbb' } }
+            ]
+          });
+        }
+      }
     } catch (e) { errBox(e, $('#rout')); }
   };
 }

@@ -23,6 +23,42 @@ jobs:
       - name: 运行单元测试（零依赖，含统一预测引擎）
         run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs
 
+  smoke:
+    name: 线上冒烟
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 部署冒烟（push / 定时同步后验证线上端点仍健康）
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKER_URL:-}" ]; then
+            echo "::warning::未配置 secrets.WORKER_URL，跳过冒烟"
+            exit 0
+          fi
+          check() { # 名称 路径 node断言（可空）
+            local name="$1" path="$2" expect="$3"
+            code=$(curl -sS -m 30 -o /tmp/smoke.json -w "%{http_code}" "$WORKER_URL$path")
+            if [ "$code" != "200" ]; then
+              echo "::error::冒烟失败 $name：HTTP $code"
+              exit 1
+            fi
+            if [ -n "$expect" ] && ! node -e "const j=require('/tmp/smoke.json'); if(!($expect)) process.exit(1)"; then
+              echo "::error::冒烟失败 $name：断言不通过"
+              cat /tmp/smoke.json
+              exit 1
+            fi
+            echo "ok: $name"
+          }
+          check health      /health            "j.status === 'ok'"
+          check meta        /api/meta          "Array.isArray(j.lotteries) && j.lotteries.length === 8"
+          check ssq-latest  /api/ssq/latest    "j.code && (j.red || j.front || j.main)"
+          check dlt-analyze /api/dlt/analyze   "j.kind === 'dlt' && Array.isArray(j.picks) && j.picks.length > 0"
+          check review      /api/review        "typeof j.summary === 'object'"
+          echo "线上冒烟 5 端点全部通过"
+
   sync:
     name: 落库同步
     needs: test

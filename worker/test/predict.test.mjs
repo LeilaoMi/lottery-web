@@ -365,3 +365,32 @@ test("shapeTrans：确定性交替数据的转移矩阵与 next 概率", () => {
   const dg = shapeTrans("fc3d", synth("fc3d", 20));
   assert.ok(dg.note, "数字型应给说明");
 });
+
+// ---------- v0.11.0：杀号阈值参数化与阈值寻优 ----------
+
+test("killThreshold：thFrac 参数生效，分位越高阈值越低（杀得越多）", () => {
+  const d = synth("ssq");
+  const k20 = killList("ssq", d, { thFrac: 0.2 });
+  const k40 = killList("ssq", d, { thFrac: 0.4 });
+  assert.ok(typeof k20.threshold === "number" && typeof k40.threshold === "number", "缺 threshold");
+  assert.ok(k20.threshold >= k40.threshold, "0.2 分位阈值应 ≥ 0.4 分位（票数降序取分位点）: " + k20.threshold + " vs " + k40.threshold);
+  // 越界分位被钳位到 [0.05, 0.5]，不会崩
+  const kExtreme = killList("ssq", d, { thFrac: 9 });
+  assert.ok(kExtreme.threshold > 0, "异常分位应钳位而非崩溃");
+});
+
+test("thresholdTune：5 分位 train/test 对称输出，holdout 方向锁死", async () => {
+  const { thresholdTune } = await import("../src/predict.js");
+  const r = thresholdTune("ssq", synth("ssq", 200), { periods: 10 });
+  assert.ok(r.train && r.test && r.train.length === 5 && r.test.length === 5, "缺 train/test 或分位数不为 5");
+  for (const x of [...r.train, ...r.test]) {
+    assert.ok(x.frac >= 0.2 && x.frac <= 0.4, "分位越界: " + x.frac);
+    assert.ok(x.hitRate >= 0 && x.hitRate <= 1, "hitRate 越界: " + x.hitRate);
+  }
+  assert.ok(r.tested.train > r.tested.test, "拟合段（旧70%）应大于评估段（新30%）——holdout 方向锁死");
+  assert.ok(typeof r.gap === "number" && r.gap >= 0, "gap 应非负（trainBest 在 test 上不可能优于事后最优）");
+  assert.ok(typeof r.verdict === "string" && r.verdict.length > 0, "缺 verdict");
+  // 数字型明确拒绝；样本不足给说明而非崩溃
+  assert.ok(thresholdTune("fc3d", synth("fc3d", 200)).note, "数字型应给说明");
+  assert.ok(thresholdTune("ssq", synth("ssq", 60)).note, "小样本应给说明");
+});

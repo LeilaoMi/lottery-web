@@ -1,4 +1,18 @@
-# progress · lottery-web v0.10.0 完成
+# progress · lottery-web v0.11.0 完成
+
+## v0.11.0：工程韧性 + 使用体验（继续琢磨轮）
+- **CI 部署冒烟**：sync.yml 新增 smoke job（push/定时后对线上 health/meta/ssq-latest/dlt-analyze/review 5 端点断言 200+关键字段）；smoke 与 sync 都依赖 secrets.WORKER_URL/API_TOKEN
+- **dlt 交叉校验**：adminSync 的 dlt 段拉 fetchDLT+fetch17500DLT 最近 30 期逐期比对（`crossCheck` 助手与 ssq 复用，`drawPair` 归一各彩种号型字段），不一致期号拒绝落库
+- **staleness 保险丝**：/api/meta 带 stale[]（8 彩种 D1 最新期距今天数，loadDraws×8 并行 + 10min 内存缓存 META_MEM）；前端 loadStale() 任一 kind ≥4 天顶部黄条
+- **复盘显著性**：/api/review summary 挂 pickP/danP/killP（binomP 对照随机单号基线）；前端复盘卡片 pTag
+- **阈值寻优**：predict.js `thresholdTune`（5 分位 FRACS × 旧70%/新30%，trainBest vs oracle 的 gap 判据）；/api/kill-tune 接入（periods 默认 20 抽样防 CPU 超限，结果 stashCache 缓存 6h）；前端分析页「杀号阈值寻优」按钮。**线上实测 ssq：train 最优 30% → test 20.2% vs oracle 40%/18.4%，gap=0.018 → 诚实判定「默认 30% 即可」**
+- **缓存**：drawsDeep 加 DEEP_MEM（TTL 30min，key=kind+probe 最新期号，新开奖自动失效）；kill-calibrated 缓存写回抽 `stashCache` 与 kill-tune 共用
+- **今日日报页**：前端新 tab（data-t=d）——开奖日历（LOT_DAYS 红灰标）/ 破纪录遗漏（/api/records breaking/near）/ 上期对账 / 下期快照
+- **/api/records**：pool 型逐号 + digit 型逐位遗漏（O(N×pool) 单扫式，8 彩种并行，REC_MEM 缓存 30min）；breaking=当前遗漏≥样本内纪录，near=≥80% 且纪录≥10
+- **可视化**：回测 eras 柱图（btchart：热/杀命中率×基线参考线）、复盘 revchart 小图（实际 vs 随机基线）
+- **线上发现并修复 P2**：review-job 只取 8 期喂 analyzeAll(win=30) → 快照 picks/dan 全空；改 60 期；D1 清掉 checked=0 且 picks 空的 bug 快照（ON CONFLICT DO NOTHING 不会覆盖旧快照），今晚 cron 重建
+- 测试 60 全过（+2：killThreshold 分位参数化 / thresholdTune 结构与 holdout 方向）；版本 0.11.0；部署 Version a8a1cb57；README/接口表同步
+- **线上验证记录**：health 0.11.0 ✓ / meta stale 数值合理（ssq 2 天）✓ / records 三型正常 ✓ / kill-tune 200（5.9s 冷，CPU 达标）✓ / dlt predict picks6 kill25 dan8 ✓ / kill-calibrated weights10 ✓ / backtest 600 期 200 ✓
 
 ## v0.10.0：统计诚实性 + 预测记忆闭环 + 数据可靠性（反复琢磨轮）
 - **指导思想**：彩票近似独立随机，「更玄的公式」不会带来真实提升；打磨方向 = 让「有效」有统计背书 + 预测可回看 + 数据链路防翻车

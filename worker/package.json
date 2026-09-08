@@ -1,6 +1,6 @@
 {
   "name": "lottery-web-worker",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "private": true,
   "type": "module",
   "description": "lottery-web Cloudflare Worker：8 彩种开奖数据 / 统计 / 验奖 / 旋转矩阵",
