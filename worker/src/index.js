@@ -1,7 +1,7 @@
 import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
 import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
 import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
-import { SPECS, analyzeAll, killList, danList, recommendAll, backtest } from "./predict.js";
+import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, saveSmall, loadSmall } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
@@ -25,7 +25,7 @@ export default {
     if (url.pathname === "/api/specs") return json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600);
     if (url.pathname === "/api/calc") return calcRoute(url);
     if (url.pathname === "/api/prize") return prizeRoute(url);
-    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest") return predictRoute(request, env, url);
+    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest" || url.pathname === "/api/kill-calibrated" || url.pathname === "/api/ticket") return predictRoute(request, env, url);
     if (url.pathname === "/api/admin/sync") return adminSync(request, env);
     if (url.pathname.startsWith("/api/favs")) return favsRoute(request, env, url);
     if (url.pathname.startsWith("/api/ssq/")) return ssqRoute(request, env, url);
@@ -81,7 +81,7 @@ async function dltRoute(request, env, url) {
   return json({ error: "not_found" }, 404);
 }
 async function smallRoute(request, env, url) {
-  const m = url.pathname.match(/^\/api\/(fc3d|pl3|pl5|qlc|qxc|kl8)\/(latest|history|verify|analyze|kill|dan|predict)$/);
+  const m = url.pathname.match(/^\/api\/(fc3d|pl3|pl5|qlc|qxc|kl8)\/(latest|history|verify|analyze|kill|dan|predict|trend)$/);
   if (!m) return json({ error: "not_found" }, 404);
   const kind = m[1], act = m[2];
   try {
@@ -102,6 +102,7 @@ async function smallRoute(request, env, url) {
     else if (act === "kill") res = json({ kind, ...killList(kind, draws), degraded }, 200, 300);
     else if (act === "dan") res = json({ kind, ...danList(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
     else if (act === "predict") res = json({ ...recommendAll(kind, draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), degraded }, 200, 0);
+    else if (act === "trend") res = json({ kind, rows: trendPool(kind, draws, num(url, "limit", 30, 5, 60)), degraded }, 200, 600);
     else {
       const code = (url.searchParams.get("code") || "").trim();
       const nums = (url.searchParams.get("nums") || "").split(/[ ,]+/).filter(Boolean);
@@ -162,14 +163,28 @@ async function predictRoute(request, env, url) {
   if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
   const win = num(url, "win", 30, 5, 100);
   try {
-    // 回测需要 warmup+periods 期历史（最多 60+40），多取一些
-    const draws = await drawsOf(env, kind, url.pathname.endsWith("/backtest") ? 150 : Math.max(60, win));
+    // 回测/校准/胆拖单需要更长的历史（warmup+periods 最多约 70 期，多取冗余）
+    const heavy = url.pathname.endsWith("/backtest") || url.pathname.endsWith("/kill-calibrated") || url.pathname.endsWith("/ticket");
+    const draws = await drawsOf(env, kind, heavy ? 320 : Math.max(60, win));
     const act = url.pathname.split("/").pop();
     if (act === "analyze") return json({ kind, ...analyzeAll(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
     if (act === "kill") return json({ kind, ...killList(kind, draws), degraded: !!draws._degraded }, 200, 300);
     if (act === "dan") return json({ kind, ...danList(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
     if (act === "backtest") return json({ ...backtest(kind, draws, { win, periods: num(url, "periods", 15, 1, 40), warmup: num(url, "warmup", 30, 10, 60) }), degraded: !!draws._degraded }, 200, 3600);
-    return json({ ...recommendAll(kind, draws, { win, n: optN(url) }), degraded: !!draws._degraded }, 200, 0);
+    if (act === "kill-calibrated") {
+      // 先用近 N 期回测算出各公式的真实命中率 → 生成动态权重 → 再出校准后的杀号
+      const cal = calibrate(kind, draws, { periods: num(url, "periods", 12, 1, 30), win });
+      const kl = killList(kind, draws, { weights: cal.weights });
+      return json({ kind, ...kl, weights: cal.weights, formulas: cal.formulas, periods: cal.periods, degraded: !!draws._degraded }, 200, 1800);
+    }
+    if (act === "ticket") {
+      // dan/tuo 只在用户显式传入时生效，缺省走引擎默认（避免 num() 把 0 钳位成 1）
+      const p = {};
+      if (url.searchParams.get("dan")) p.dan = num(url, "dan", 2, 1, 5);
+      if (url.searchParams.get("tuo")) p.tuo = num(url, "tuo", 1, 1, 30);
+      return json({ ...ticket(kind, draws, p), degraded: !!draws._degraded }, 200, 300);
+    }
+    return json({ ...recommendAll(kind, draws, { win, n: optN(url), filter: url.searchParams.get("filter") === "1" }), degraded: !!draws._degraded }, 200, 0);
   } catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
 // 注数/金额/追号计算器

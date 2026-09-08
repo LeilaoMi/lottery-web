@@ -154,9 +154,14 @@ async function loadPredict(id){
       (isDigit ? balls(p.digits) : balls(p.main) + balls(p.aux, 'b')) + '</span></div>';
   }
   html += '<p class="muted">' + esc(rec.disclaimer || '') + '</p>';
-  const kl = rec.kill || {}, dl = rec.dan || {};
+  const dl = rec.dan || {};
+  let kl = rec.kill || {}, killTag = '';
+  try {
+    const ck = await api('/api/kill-calibrated?kind=' + id);
+    if (ck.main && ck.main.length) { kl = ck; killTag = '（已按回测校准公式权重）'; }
+  } catch (e2) { /* 校准失败退回普通杀号 */ }
   if (kl.main && kl.main.length) {
-    html += '<h4 style="margin:14px 0 6px">杀号（票数越高越该杀）</h4><div class="muted">' +
+    html += '<h4 style="margin:14px 0 6px">杀号' + killTag + '</h4><div class="muted">' +
       kl.main.slice(0, 12).map(x => esc(x.n) + '(' + esc(x.votes) + ')').join(' ') + '</div>';
   } else if (kl.perPos) {
     html += '<h4 style="margin:14px 0 6px">分位杀号</h4><div class="muted">' +
@@ -169,9 +174,25 @@ async function loadPredict(id){
     html += '<h4 style="margin:14px 0 6px">分位胆码</h4><div class="muted">' +
       dl.perPos.map(pp => '第' + pp.pos + '位 ' + pp.dan.slice(0, 3).map(x => esc(x.n)).join(',')).join('　') + '</div>';
   }
+  html += '<h4 style="margin:14px 0 6px">胆拖投注单</h4><div class="row">' +
+    '<input id="tkd" placeholder="胆数" style="width:70px" value="2">' +
+    '<input id="tkt" placeholder="拖数" style="width:70px" value="6">' +
+    '<button id="tkgo">生成胆拖单</button></div><div id="tkout" class="muted"></div>';
   if (rec.formHint) html += '<div class="muted">近 ' + esc(rec.count) + ' 期形态：组三 ' + esc(rec.formHint['组三']) +
     ' / 组六 ' + esc(rec.formHint['组六']) + ' / 豹子 ' + esc(rec.formHint['豹子']) + '</div>';
   $('#p').innerHTML = html;
+  const tkgo = document.getElementById('tkgo');
+  if (tkgo) tkgo.onclick = async () => {
+    const out = document.getElementById('tkout');
+    try {
+      const r = await api('/api/ticket?kind=' + id + '&dan=' + encodeURIComponent($('#tkd').value.trim() || 2) + '&tuo=' + encodeURIComponent($('#tkt').value.trim() || 6));
+      out.innerHTML = r.dan
+        ? '<div>胆 ' + balls(r.dan) + '　拖 ' + balls(r.tuo) + (r.aux && r.aux.length ? '　副区 ' + balls(r.aux, 'b') : '') + '</div>' +
+          '<div><b>' + esc(r.bets) + ' 注 / ' + esc(r.amount) + ' 元</b>　<span class="muted">已剔除 ' + esc(r.excluded) + ' 个杀号</span></div>' +
+          '<div class="muted">' + esc(r.note) + '</div>'
+        : '<div class="muted">' + esc(r.note || '该彩种不支持胆拖') + '</div>';
+    } catch (e) { errBox(e, out); }
+  };
   await loadAnalyze(id);
   await loadHistory(id);
 }
@@ -232,6 +253,9 @@ async function loadBacktest(id){
         esc(bt.strategies.dan.avgHit) + '（胆基线 ' + esc(bt.strategies.dan.baseline) + '）<br>杀号命中率 ' +
         (bt.kill.hitRate * 100).toFixed(1) + '% vs 随机基线 ' + (bt.kill.baseline * 100).toFixed(1) + '% → <b>' + esc(bt.kill.verdict) + '</b>';
       if (bt.aux) extra += '　副区热号命中 ' + (bt.aux.hot.hitRate * 100).toFixed(1) + '%（基线 ' + (bt.aux.hot.baseline * 100).toFixed(1) + '%）';
+      const fs = (bt.kill.formulas || []).filter(f => f.killed > 0);
+      if (fs.length) extra += '<br><b>杀号公式校准</b>（基线 ' + (bt.kill.baseline * 100).toFixed(1) + '%，√=低于基线）：' +
+        fs.map(f => esc(f.label) + ' ' + (f.rate * 100).toFixed(1) + '%' + (f.verdict === '有效' ? '√' : '—')).join('　');
     } else if (bt.perPos) {
       const avgOf = key => bt.perPos.reduce((a, r) => a + (r[key] || 0), 0) / bt.perPos.length;
       const kr = bt.perPos.filter(r => r.killRate != null);

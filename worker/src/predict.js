@@ -80,14 +80,24 @@ function zonesOf(zone) {
 function zoneIdx(zones, v) { for (const z of zones) if (v >= z.from && v <= z.to) return z.i; return zones.length - 1; }
 
 // ---------- 杀号：市面常见公式加权投票，票数越高越该杀 ----------
-export function killList(kind, draws) {
+// 10 类公式带稳定 key：回测按 key 统计各自命中率（backtest.kill.formulas），
+// calibrate() 据此生成动态权重，无效公式自动降权——这就是「校准杀号」。
+export const FORMULAS = {
+  last: "上期出号", neighbor: "邻号", sumtail: "和值尾", span: "跨度", extreme: "极号",
+  hottail: "热尾", coldroad: "冷012路", prime: "质合偏态", hotzone: "热区", prev2: "上上期号"
+};
+export function killList(kind, draws, opts = {}) {
   const s = specOf(kind);
   if (s.type === "digit") return killDigits(kind, draws);
-  const pool = poolOf(s.main), votes = {}, why = {};
-  for (const k of pool) { votes[k] = 0; why[k] = []; }
-  const add = (k, v, r) => {
+  const pool = poolOf(s.main), votes = {}, raw = {}, why = {};
+  for (const k of pool) { votes[k] = 0; raw[k] = {}; why[k] = []; }
+  const w = opts.weights || {};
+  const add = (k, v, key, label) => {
     if (votes[k] === undefined) return;
-    votes[k] += v; why[k].push(r);
+    raw[k][key] = (raw[k][key] || 0) + v;          // 原始票：分公式统计用，不受权重影响
+    const wv = w[key] !== undefined ? w[key] : 1;
+    votes[k] += v * wv;
+    if (v * wv > 0) why[k].push(label);            // 权重为 0 的公式不算实际贡献，不进 reasons
   };
   const last = draws[0], prev = draws[1];
   if (!last) return { main: [], aux: [] };
@@ -95,35 +105,43 @@ export function killList(kind, draws) {
   const sum = N.reduce((a, b) => a + b, 0), span = N[N.length - 1] - N[0];
   const zones = zonesOf(s.main);
 
-  for (const x of N) add(pad2(x), 1, "上期出号");                                  // 1 上期号
-  for (const x of N) { add(pad2(x + 1), 0.5, "邻号"); add(pad2(x - 1), 0.5, "邻号"); } // 2 邻号
+  for (const x of N) add(pad2(x), 1, "last", "上期出号");                              // 1 上期号
+  for (const x of N) { add(pad2(x + 1), 0.5, "neighbor", "邻号"); add(pad2(x - 1), 0.5, "neighbor", "邻号"); } // 2 邻号
   const st = freqStats(draws, pool, d => mainOf(d, kind));
   const tail = sum % 10;
-  for (const k of pool) if (Number(k) % 10 === tail) add(k, 1, "和值尾" + tail);   // 3 和值尾
-  for (const v of [span - 1, span, span + 1]) add(pad2(v), 1, "跨度" + span);      // 4 跨度
-  add(pad2(N[N.length - 1] + 1), 1, "极号+1");                                     // 5 极大+1
-  add(pad2(N[0] - 1), 1, "极号-1");                                                // 5 极小-1
+  for (const k of pool) if (Number(k) % 10 === tail) add(k, 1, "sumtail", "和值尾" + tail);   // 3 和值尾
+  for (const v of [span - 1, span, span + 1]) add(pad2(v), 1, "span", "跨度" + span);          // 4 跨度
+  add(pad2(N[N.length - 1] + 1), 1, "extreme", "极号+1");                                      // 5 极大+1
+  add(pad2(N[0] - 1), 1, "extreme", "极号-1");                                                 // 5 极小-1
   const tailCnt = {};
   for (const x of N) tailCnt[x % 10] = (tailCnt[x % 10] || 0) + 1;
   const hotTail = +Object.entries(tailCnt).sort((a, b) => b[1] - a[1])[0][0];
-  for (const k of pool) if (Number(k) % 10 === hotTail) add(k, 0.5, "热尾" + hotTail); // 6 热尾
+  for (const k of pool) if (Number(k) % 10 === hotTail) add(k, 0.5, "hottail", "热尾" + hotTail); // 6 热尾
   const road = [0, 0, 0];
   for (const x of N) road[x % 3]++;
   const coldRoad = road.indexOf(Math.min(...road));
-  for (const k of pool) if (Number(k) % 3 === coldRoad) add(k, 0.5, "冷路" + coldRoad);  // 7 冷012路
+  for (const k of pool) if (Number(k) % 3 === coldRoad) add(k, 0.5, "coldroad", "冷路" + coldRoad);  // 7 冷012路
   const primeCnt = N.filter(x => PRIMES.has(x)).length;
-  if (primeCnt >= Math.ceil(N.length * 2 / 3)) { for (const k of pool) if (PRIMES.has(Number(k))) add(k, 0.5, "质数过多"); }
-  else if (primeCnt <= Math.floor(N.length / 3)) { for (const k of pool) if (!PRIMES.has(Number(k)) && Number(k) > 1) add(k, 0.5, "合数过多"); } // 8 质合
+  if (primeCnt >= Math.ceil(N.length * 2 / 3)) { for (const k of pool) if (PRIMES.has(Number(k))) add(k, 0.5, "prime", "质数过多"); }
+  else if (primeCnt <= Math.floor(N.length / 3)) { for (const k of pool) if (!PRIMES.has(Number(k)) && Number(k) > 1) add(k, 0.5, "prime", "合数过多"); } // 8 质合
   const zc = [0, 0, 0];
   for (const x of N) zc[zoneIdx(zones, x)]++;
   const hotZone = zc.indexOf(Math.max(...zc));
-  for (const k of pool) if (zoneIdx(zones, Number(k)) === hotZone) add(k, 0.5, "热区" + (hotZone + 1)); // 9 热区
-  if (prev) for (const x of mainOf(prev, kind)) add(pad2(Number(x)), 0.3, "上上期号");                 // 10 上上期
+  for (const k of pool) if (zoneIdx(zones, Number(k)) === hotZone) add(k, 0.5, "hotzone", "热区" + (hotZone + 1)); // 9 热区
+  if (prev) for (const x of mainOf(prev, kind)) add(pad2(Number(x)), 0.3, "prev2", "上上期号");   // 10 上上期
 
   const main = pool.map(k => ({ n: k, votes: +votes[k].toFixed(2), reasons: [...new Set(why[k])] }))
     .filter(x => x.votes > 0).sort((a, b) => b.votes - a.votes || Number(a.n) - Number(b.n));
   const aux = s.aux ? killAux(kind, draws) : [];
-  return { main, aux, threshold: killThreshold(main) };
+  const out = { main, aux, threshold: killThreshold(main) };
+  if (opts.perFormula) {
+    out.byFormula = {};
+    for (const key of Object.keys(FORMULAS)) {
+      out.byFormula[key] = pool.filter(k => raw[k][key] > 0)
+        .sort((a, b) => raw[b][key] - raw[a][key] || Number(a) - Number(b));
+    }
+  }
+  return out;
 }
 function killThreshold(list) {
   if (!list.length) return 99;
@@ -246,11 +264,33 @@ export function analyzeAll(kind, draws, win = 30) {
     if (i + 1 < w.length) { const prev = new Set(mainOf(w[i + 1], kind)); repeat += mainOf(d, kind).filter(x => prev.has(x)).length; }
   });
   const cnt = Math.max(1, w.length), pick = s.main.pick;
+  // 副区转移矩阵：上期副区号 → 下期副区号 的历史转移频次（七乐彩同池 30×30 噪声大，跳过）
+  let auxTransition = null;
+  if (auxSt && s.aux && !(s.aux.min === s.main.min && s.aux.max === s.main.max)) {
+    const tc = {};
+    for (let i = 0; i + 1 < w.length; i++) {
+      const from = auxOf(w[i + 1], kind), to = auxOf(w[i], kind); // w 由新到旧：w[i+1] 是更早一期
+      for (const f of from) for (const t of to) tc[f + ">" + t] = (tc[f + ">" + t] || 0) + 1;
+    }
+    const curFrom = auxOf(draws[0] || {}, kind)[0] || null;
+    let top = Object.entries(tc).filter(([k]) => k.startsWith(curFrom + ">"))
+      .sort((a, b) => b[1] - a[1] || Number(a[0].split(">")[1]) - Number(b[0].split(">")[1]))
+      .slice(0, 6).map(([k, v]) => ({ to: k.split(">")[1], count: v }));
+    let note = "";
+    if (!top.length) {
+      // 上期副区号在窗口内没有转移样本（出现 0/1 次），退回全窗口高频转移
+      top = Object.entries(tc).sort((a, b) => b[1] - a[1]).slice(0, 6)
+        .map(([k, v]) => ({ to: k.split(">")[1], count: v }));
+      note = "上期副区号在窗口内无转移样本，以下为全窗口高频转移";
+    }
+    auxTransition = { from: curFrom, top, total: w.length - 1, ...(note ? { note } : {}) };
+  }
   return {
     window: win, count: w.length,
     hot: byFreq.slice(0, pick), cold: byFreq.slice(-pick).reverse(),
     freq: st.freq, omission: { cur: st.cur, avg: st.avg, max: st.max },
     auxFreq: auxSt ? auxSt.freq : {}, auxOmission: auxSt ? { cur: auxSt.cur, avg: auxSt.avg, max: auxSt.max } : {},
+    auxTransition,
     oddRatio: odd + ":" + (w.length * pick - odd),
     bigRatio: big + ":" + (w.length * pick - big),
     avgSum: Math.round(sum / cnt), avgAC: +(acSum / cnt).toFixed(2),
@@ -286,6 +326,15 @@ function analyzeDigits(kind, draws, win) {
 }
 
 // ---------- 结构打分：和值/奇偶/大小/区间/跨度/AC ----------
+// 形态过滤：和值落理想区 ±1.3tol、跨度在区间的 50%~98%
+function shapeOk(main, zone) {
+  const n = main.map(Number).sort((a, b) => a - b);
+  if (n.length < 2) return true;
+  const sum = n.reduce((a, b) => a + b, 0);
+  const ideal = zone.pick * (zone.min + zone.max) / 2, tol = zone.pick * (zone.max - zone.min) / 6;
+  const span = n[n.length - 1] - n[0], range = zone.max - zone.min;
+  return Math.abs(sum - ideal) <= tol * 1.3 && span >= range * 0.5 && span <= range * 0.98;
+}
 export function structScore(nums, zone) {
   const n = nums.map(Number).sort((a, b) => a - b);
   if (n.length < 2) return 0;
@@ -315,6 +364,7 @@ export function recommendAll(kind, draws, opts = {}) {
   const win = Math.min(100, Math.max(5, opts.win || 30));
   // 数字型没有号码池，先分流，不要触碰 s.main
   if (s.type === "digit") return recommendDigits(kind, draws, win);
+  const filter = !!opts.filter;
   const n = Math.min(s.main.max - s.main.min + 1, Math.max(1, opts.n || s.suggest));
   const an = analyzeAll(kind, draws, win);
   const kl = killList(kind, draws), dl = danList(kind, draws, win);
@@ -339,10 +389,21 @@ export function recommendAll(kind, draws, opts = {}) {
     return p.sort();
   };
   const mk = (name, arr, note, auxIdx = 0, auxOverride = null) => {
-    const main = pickN(arr.filter(x => !isNaN(Number(x))), n).slice(0, n);
+    // filter=1 时做形态过滤（和值落理想区、跨度合理），最多重抽 12 次
+    let main = [];
+    for (let t = 0; t < 12; t++) {
+      main = pickN(arr.filter(x => !isNaN(Number(x))), n).slice(0, n);
+      if (!filter || shapeOk(main, s.main)) break;
+    }
     // 结构分按「实际选号个数」评估：快乐8 选 8 个时不能用开奖 20 个号的基准
     const aux = (auxOverride && !auxOverride.some(x => main.includes(x))) ? auxOverride : auxPick(auxIdx, main);
-    return { name, main, aux, score: structScore(main, { ...s.main, pick: main.length }), note };
+    const nums = main.map(Number);
+    return {
+      name, main, aux,
+      score: structScore(main, { ...s.main, pick: main.length }),
+      sum: nums.reduce((a, b) => a + b, 0), span: Math.max(...nums) - Math.min(...nums),
+      note
+    };
   };
   const picks = [
     mk("稳健·热号", byFreqDesc.slice(0, Math.max(n + 4, 10)), "近" + win + "期高频号为主", 0),
@@ -433,6 +494,7 @@ export function backtest(kind, draws, opts = {}) {
   const guessN = Math.min(s.suggest, size), danK = 8, base = pick / size;
   const hot = { hit: 0 }, cold = { hit: 0 }, dan = { hit: 0 };
   const kill = { killed: 0, hit: 0 };
+  const killAgg = {};
   const aux = s.aux ? { pick: s.aux.pick, size: s.aux.max - s.aux.min + 1, hot: { hit: 0 }, kill: { killed: 0, hit: 0 } } : null;
   let tested = 0;
   // draws 由新到旧：测试最近的 periods 期，即 i = periods-1 .. 0，历史为 draws[i+1..]
@@ -448,10 +510,17 @@ export function backtest(kind, draws, opts = {}) {
     hot.hit += hotTop.filter(k => actual.has(k)).length;
     cold.hit += coldTop.filter(k => actual.has(k)).length;
     dan.hit += danTop.filter(k => actual.has(k)).length;
-    const kl = killList(kind, hist), th = kl.threshold ?? 99;
+    const kl = killList(kind, hist, { perFormula: true }), th = kl.threshold ?? 99;
     const killed = (kl.main || []).filter(x => x.votes >= th).map(x => x.n);
     kill.killed += killed.length;
     kill.hit += killed.filter(k => actual.has(k)).length;
+    if (kl.byFormula) {
+      for (const [key, arr] of Object.entries(kl.byFormula)) {
+        const a = killAgg[key] || (killAgg[key] = { killed: 0, hit: 0 });
+        a.killed += arr.length;
+        a.hit += arr.filter(k => actual.has(k)).length;
+      }
+    }
     if (aux) {
       const aPool = poolOf(s.aux);
       const aSt = freqStats(hist.slice(0, win), aPool, d => auxOf(d, kind));
@@ -477,7 +546,13 @@ export function backtest(kind, draws, opts = {}) {
     kill: {
       killedTotal: kill.killed, killedHit: kill.hit,
       hitRate: rate(kill.hit, kill.killed), baseline: +base.toFixed(4),
-      verdict: kill.killed === 0 ? "无杀号样本" : (kill.hit / kill.killed < base ? "有效（低于随机基线）" : "无信息（不低于随机基线）")
+      verdict: kill.killed === 0 ? "无杀号样本" : (kill.hit / kill.killed < base ? "有效（低于随机基线）" : "无信息（不低于随机基线）"),
+      formulas: Object.entries(FORMULAS).map(([key, label]) => {
+        const a = killAgg[key] || { killed: 0, hit: 0 };
+        const r = a.killed > 0 ? +(a.hit / a.killed).toFixed(4) : null;
+        return { key, label, killed: a.killed, hit: a.hit, rate: r, baseline: +base.toFixed(4),
+          verdict: a.killed === 0 ? "无样本" : (r < base ? "有效" : "无信息") };
+      })
     },
     note, disclaimer: DISCLAIMER
   };
@@ -524,4 +599,66 @@ function backtestDigit(kind, draws, cfg) {
     })),
     note: "各位独立 0-9，单位随机基线 10%；killRate 为首位杀号命中开奖的比例，越低越好", disclaimer: DISCLAIMER
   };
+}
+
+// ---------- 校准：按分公式回测命中率生成动态权重 ----------
+// rate 越高于基线，权重越低（无效公式自动降权）；权重区间 [0.2, 2]
+export function calibrate(kind, draws, opts = {}) {
+  const bt = backtest(kind, draws, { periods: opts.periods || 12, warmup: opts.warmup || 30, win: opts.win || 30 });
+  const weights = {};
+  if (bt.kill && bt.kill.formulas) {
+    for (const f of bt.kill.formulas) {
+      weights[f.key] = (f.killed === 0 || f.rate == null)
+        ? 1
+        : Math.max(0.2, Math.min(2, +(2 - f.rate / f.baseline).toFixed(3)));
+    }
+  }
+  return { weights, periods: bt.periods, formulas: (bt.kill && bt.kill.formulas) || [] };
+}
+
+// ---------- 胆拖投注单：胆 = 评分最高 D 个（剔除杀号），拖 = 次高 T 个，副区取胆码前 pick 个 ----------
+import { C, PRICE } from "./calc.js";
+export function ticket(kind, draws, opts = {}) {
+  const s = specOf(kind);
+  // 只有双色球 / 大乐透 / 七乐彩有标准胆拖玩法；快乐8 的胆拖是「选几中几」另一套规则，不硬套
+  if (s.type === "digit" || !["ssq", "dlt", "qlc"].includes(kind)) {
+    return { kind, name: s.name, note: "该彩种无标准胆拖玩法：数字型用分位推荐组合定位单，快乐8 用 /api/calc 的选几复式", disclaimer: DISCLAIMER };
+  }
+  const win = Math.max(10, Math.min(opts.win || 30, 60));
+  const pool = poolOf(s.main), pick = s.main.pick, size = pool.length;
+  const D = Math.max(1, Math.min(opts.dan || 2, pick - 1));
+  const T = Math.max(pick - D, Math.min(opts.tuo || pick - D + 3, size - D));
+  const st = freqStats(draws.slice(0, win), pool, d => mainOf(d, kind));
+  const ranked = scorePool(st, pool, mainOf(draws[0] || {}, kind)).map(x => x.n);
+  const kl = killList(kind, draws), th = kl.threshold ?? 99;
+  const killed = new Set((kl.main || []).filter(x => x.votes >= th).map(x => x.n));
+  const cand = ranked.filter(n => !killed.has(n));
+  for (const k of ranked) { if (cand.length >= D + T) break; if (!cand.includes(k)) cand.push(k); } // 杀号过多时按评分兜底
+  const dan = cand.slice(0, D).sort();
+  const tuo = cand.slice(D, D + T).sort();
+  const aux = s.aux ? (danList(kind, draws, win).aux || []).slice(0, s.aux.pick).map(x => x.n).sort() : [];
+  const bets = C(T, pick - D);
+  return {
+    kind, name: s.name,
+    dan, tuo, aux, danCount: D, tuoCount: T,
+    bets, amount: bets * PRICE,
+    excluded: killed.size,
+    note: "胆 " + D + " + 拖 " + T + "，每注 " + (pick - D) + " 个主区号" +
+      (s.aux ? " + " + s.aux.pick + " 个副区号" : "") + "；共 " + bets + " 注 / " + (bets * PRICE).toFixed(0) + " 元（按每注 2 元估算）",
+    disclaimer: DISCLAIMER
+  };
+}
+
+// ---------- 通用遗漏走势（号码池型）：旧→新逐期给出各号当期遗漏 ----------
+export function trendPool(kind, draws, win = 30) {
+  const s = specOf(kind);
+  if (s.type !== "pool") return [];
+  const pool = poolOf(s.main), miss = {};
+  for (const k of pool) miss[k] = 0;
+  return draws.slice(0, win).reverse().map(d => {
+    const nums = new Set(mainOf(d, kind));
+    const row = { code: d.code, main: mainOf(d, kind), aux: auxOf(d, kind), miss: {} };
+    for (const k of pool) { if (nums.has(k)) miss[k] = 0; else miss[k]++; row.miss[k] = miss[k]; }
+    return row;
+  });
 }

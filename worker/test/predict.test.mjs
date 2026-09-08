@@ -204,3 +204,90 @@ test("回测：恒定开奖的确定性校验（杜绝未来函数的烟雾测�
   assert.equal(short.periods, 0);
   assert.match(short.note, /样本不足/);
 });
+
+test("杀号权重：last 权重清零后其独占号不再出现，分公式名单可用", async () => {
+  const { killList, FORMULAS } = await import("../src/predict.js");
+  const d = synth("ssq");
+  const base = killList("ssq", d);
+  const cal = killList("ssq", d, { weights: { last: 0 } });
+  for (const m of cal.main) assert.ok(!m.reasons.includes("上期出号"), "last 权重 0 后不应再有上期出号原因");
+  const pf = killList("ssq", d, { perFormula: true });
+  assert.deepEqual(Object.keys(pf.byFormula).sort(), Object.keys(FORMULAS).sort());
+  for (const arr of Object.values(pf.byFormula)) assert.equal(new Set(arr).size, arr.length, "分公式名单重复");
+});
+
+test("回测分公式命中率：10 个公式全覆盖，rate 合法", async () => {
+  const { backtest, FORMULAS } = await import("../src/predict.js");
+  const bt = backtest("ssq", synth("ssq", 60), { periods: 5, warmup: 10, win: 20 });
+  assert.equal(bt.kill.formulas.length, Object.keys(FORMULAS).length);
+  for (const f of bt.kill.formulas) {
+    assert.ok(f.killed >= 0 && f.hit >= 0 && f.hit <= f.killed, f.key + " killed/hit 非法");
+    if (f.rate !== null) assert.ok(f.rate >= 0 && f.rate <= 1, f.key + " rate 越界");
+    assert.ok(["有效", "无信息", "无样本"].includes(f.verdict), f.key + " verdict 异常");
+  }
+});
+
+test("calibrate：权重全部落在 [0.2, 2]", async () => {
+  const { calibrate } = await import("../src/predict.js");
+  const c = calibrate("ssq", synth("ssq", 60), { periods: 5, warmup: 10, win: 20 });
+  for (const [k, w] of Object.entries(c.weights)) {
+    assert.ok(w >= 0.2 && w <= 2, k + " 权重越界: " + w);
+  }
+  assert.equal(Object.keys(c.weights).length, 10);
+});
+
+test("ticket：胆拖单结构合法，注数等于 C(拖, pick-胆)", async () => {
+  const { ticket } = await import("../src/predict.js");
+  for (const k of ["ssq", "dlt", "qlc"]) {
+    const t = ticket(k, synth(k, 40), { dan: 2, tuo: 6 });
+    assert.equal(t.dan.length, 2, k + " 胆数");
+    assert.equal(t.tuo.length, 6, k + " 拖数");
+    assert.ok(t.dan.every(x => !t.tuo.includes(x)), k + " 胆拖重叠");
+    const pick = specOf(k).main.pick;
+    const expect = t.tuo.length >= pick - 2 ? C2(t.tuo.length, pick - 2) : 0;
+    assert.equal(t.bets, expect, k + " 注数");
+    assert.ok(t.amount === t.bets * 2, k + " 金额");
+    assert.ok(t.note.length > 0, k);
+  }
+  // kl8 / 数字型明确拒绝并给替代指引
+  for (const k of ["kl8", "fc3d", "pl5", "qxc"]) {
+    const t = ticket(k, synth(k, 40));
+    assert.ok(/无标准胆拖/.test(t.note), k + " 应拒绝胆拖");
+  }
+});
+function C2(n, k) { if (k < 0 || k > n) return 0; let r = 1; for (let i = 1; i <= k; i++) r = (r * (n - i + 1)) / i; return Math.round(r); }
+
+test("analyzeAll：双色球蓝球转移矩阵口径正确", async () => {
+  const { analyzeAll } = await import("../src/predict.js");
+  const d = synth("ssq", 40);
+  const a = analyzeAll("ssq", d, 30);
+  const tr = a.auxTransition;
+  assert.ok(tr && tr.from !== null, "缺转移矩阵");
+  assert.equal(tr.from, d[0].blue, "from 应为最新一期蓝球");
+  assert.ok(tr.total === 29, "转移样本应为窗口期数-1");
+  assert.ok(tr.top.length > 0, "转移矩阵不应为空（有 fallback 兜底）");
+  for (const t of tr.top) { assert.ok(t.count >= 1 && t.count <= tr.total, "转移计数越界"); }
+  assert.ok(tr.top.length <= 6);
+});
+
+test("ticket：缺省参数用引擎默认拖数（dlt=6），不被钳位", async () => {
+  const { ticket } = await import("../src/predict.js");
+  const t = ticket("dlt", synth("dlt", 40));
+  assert.equal(t.danCount, 2);
+  assert.equal(t.tuoCount, 6, "dlt 默认拖数应为 pick-胆+3=6");
+  const t2 = ticket("qlc", synth("qlc", 40));
+  assert.equal(t2.tuoCount, 8, "qlc 默认拖数应为 8");
+});
+
+test("filter=1：全部推荐的和值/跨度落在合理形态区", async () => {
+  const { recommendAll, specOf } = await import("../src/predict.js");
+  const r = recommendAll("ssq", synth("ssq", 60), { win: 30, filter: true });
+  const s = specOf("ssq");
+  const ideal = s.main.pick * (s.main.min + s.main.max) / 2;
+  const tol = s.main.pick * (s.main.max - s.main.min) / 6;
+  for (const p of r.picks) {
+    assert.ok(typeof p.sum === "number" && typeof p.span === "number", "缺和值/跨度");
+    assert.ok(Math.abs(p.sum - ideal) <= tol * 1.3, "和值越界: " + p.sum);
+    assert.ok(p.span >= (s.main.max - s.main.min) * 0.5 && p.span <= (s.main.max - s.main.min) * 0.98, "跨度越界: " + p.span);
+  }
+});

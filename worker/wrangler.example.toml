@@ -11,7 +11,7 @@ routes = [
 ]
 
 [vars]
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 # D1：先执行 npx wrangler d1 create lottery，把返回的 database_id 填到这里
 [[d1_databases]]

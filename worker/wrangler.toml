@@ -9,7 +9,7 @@ routes = [
 ]
 
 [vars]
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 # D1 持久化：数据库 lottery（APAC）
 # 注意：database_id 已脱敏，不进仓库。

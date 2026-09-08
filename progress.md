@@ -1,6 +1,15 @@
-# progress · lottery-web v0.7.0 完成
+# progress · lottery-web v0.8.0 完成
 
-## v0.7.0：回测引擎（打磨轮）
+## v0.8.0：校准杀号 + 胆拖单 + 转移矩阵（打磨轮 2）
+- `killList` 重构：10 类公式带稳定 key（FORMULAS），支持 `weights` 动态权重与 `perFormula` 分公式名单；零权重公式不计入 reasons
+- `calibrate()`：按分公式回测命中率生成 [0.2,2] 权重（rate=基线→1，越高越降权）；`/api/kill-calibrated`（缓存 1800s）
+- `ticket()`：胆拖投注单（ssq/dlt/qlc），胆=校准评分 top-D（剔除杀号），注数=C(拖, pick-胆)；`/api/ticket`
+- `analyze` 新增 `auxTransition`（副区转移 Top6 + 无样本 fallback）；`picks[]` 带 sum/span；`predict?filter=1` 形态过滤（shapeOk）
+- `/api/{qlc|kl8}/trend` 逐期遗漏走势；历史样本取数扩到 320 期（回测/校准/胆拖单）
+- 自测抓到 3 个自产 bug：零权重公式仍进 reasons、胆拖缺省拖数被钳位成 1、转移字典 `tc` 被期数常量 `cnt` 遮蔽恒为空
+- 测试 53 passed + live 12 passed；部署 Version 6552edaf；线上 5 接口实测全 200
+
+## v0.7.0：回测引擎（打磨轮 1）
 - `predict.js` 新增 `backtest()` / `backtestDigit()`：逐期「用当期之前的数据预测 → 与真实开奖比对」，热/冷/胆复用 scorePool 同一打分，杀号直接复用 killList（线上给什么就验什么）
 - 输出全部带随机基线（单号 = pick/poolSize；数字型单位 = 10%），并给出「有效 / 无信息」诚实结论
 - 修自产 bug：回测循环方向写反（测了最旧几期、历史窗口为空）→ 改为从最新往回测 periods 期
