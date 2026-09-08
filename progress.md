@@ -1,4 +1,16 @@
-# progress · lottery-web v0.8.0 完成
+# progress · lottery-web v0.9.0 完成（已部署，已推送）
+
+## v0.9.0：回测 600 期 + 走势图 + 胆拖单导出 + 缓存三级化（做到位轮）
+- **600 期回测**：`backtest` maxP 60→600；免费版 Workers CPU 10ms 限制 → 跨度 >60 期自动步长抽样（tested 封顶 60，返回 `tested/stride`）；killList 回测历史窗口封顶 100 期；`drawsDeep`(650 期) 接入 backtest/kill-calibrated/ticket
+- **freqStats 性能重写**：当前遗漏由 lastSeen O(1) 推导（语义等价），消除 O(pool×draws) 次重复 getNums；600 期基准 ssq/kl8 33→25ms
+- **线上实测 600 期通过**：ssq/qxc/kl8 全 200（periods=600/tested=60/stride=10）；ssq 杀号 16.7%<基线 18.2% 判「有效」，10 公式全有样本
+- **遗漏走势图**：统一 `/api/trend?kind=`（号码池型全通），前端 ECharts 折线（默认最冷 4 号可自选 ≤8 个，dataZoom）；分析页自动加载
+- **胆拖单保存/导出**：生成后可「保存到收藏」（POST /api/favs→D1）/复制/导出 TXT；线上 POST+GET+DELETE 冒烟闭环
+- **kill-calibrated 三级缓存**：isolate 内存（x-cache: MEM，TTL 6h）→ caches.default（自定义域生效；workers.dev 上 no-op 是平台行为）→ 现算；缓存检查**前置到取数之前**（省 2.5s 上游拉取）
+- **同步预热**：adminSync 完成后 waitUntil 自 fetch 8 彩种校准端点（各自独立请求 CPU 独立）；线上 sync 5.3s 返回 warm=[8 彩种]，预热后 ssq 即 MEM 命中
+- 版本 0.9.0（package.json / wrangler*.toml / health）；部署 Version 8102b906；53 单测全过
+- **过程教训（重要）**：同一文件多个 Edit 并行发送会互相覆盖（last-writer-wins），必须串行编辑 + 事后 grep 复验落盘；本机代理 57015 会故障（监听但上游断），workers.dev 可 `curl --noproxy '*'` 直连
+- **推送完成（2026-09-08）**：代理恢复后 `git -c http.sslVerify=false -c http.proxy/https.proxy=127.0.0.1:57015 push origin main` 一次通过；GitHub MCP connector token 只读（403），不可用作推送通路（备用结论保留）
 
 ## v0.8.0：校准杀号 + 胆拖单 + 转移矩阵（打磨轮 2）
 - `killList` 重构：10 类公式带稳定 key（FORMULAS），支持 `weights` 动态权重与 `perFormula` 分公式名单；零权重公式不计入 reasons
