@@ -202,7 +202,6 @@ async function loadAnalyze(id){
         '<br>平均和值 ' + esc(an.avgSum) + '　平均大数个数 ' + esc(an.avgBigSmall) +
         (an.form ? '<br>近 ' + esc(an.count) + ' 期形态：组三 ' + esc(an.form.group3) +
           ' / 组六 ' + esc(an.form.group6) + ' / 豹子 ' + esc(an.form.bail) : '');
-      return;
     }
     const ks = Object.keys(an.freq || {}).sort();
     drawChart(LOT[id].name + ' 号码频次（近 ' + an.count + ' 期）', ks, ks.map(k => an.freq[k]));
@@ -215,8 +214,34 @@ async function loadAnalyze(id){
       '奇偶比 ' + esc(an.oddRatio) + '　大小比 ' + esc(an.bigRatio) + '　质合比 ' + esc(an.primeRatio) + '<br>' +
       '均和 ' + esc(an.avgSum) + '　平均AC ' + esc(an.avgAC) + '　平均连号 ' + esc(an.avgConsec) + '　平均重号 ' + esc(an.avgRepeat) + '<br>' +
       '012路 ' + esc((an.road012 || []).join('/')) + '　区间分布 ' + esc((an.zoneDist || []).join('/')) + '<br>' +
-      '历史最大遗漏 ' + esc(maxOm) + ' 期' + (auxTop ? '<br>副区高频 ' + esc(auxTop) : '');
+      '历史最大遗漏 ' + esc(maxOm) + ' 期' + (auxTop ? '<br>副区高频 ' + esc(auxTop) : '') +
+      '<br><b>当前遗漏 Top10</b>　' + Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
+        .map(([k, v]) => esc(k) + '(' + v + '期·均值' + esc(om.avg[k] != null ? om.avg[k] : '-') + ')').join(' ');
+    await loadBacktest(id);
   } catch (e) { errBox(e, $('#a')); }
+}
+
+// 回测摘要：策略/杀号历史表现 vs 随机基线（失败不影响主统计展示）
+async function loadBacktest(id){
+  try {
+    const bt = await api('/api/backtest?kind=' + id);
+    let extra = '';
+    if (bt.strategies) {
+      extra = '<b>回测</b>（近 ' + esc(bt.periods) + ' 期 · 单号基线 ' + (bt.baseline * 100).toFixed(1) + '%）：热号均中 ' +
+        esc(bt.strategies.hot.avgHit) + ' / 冷号均中 ' + esc(bt.strategies.cold.avgHit) + ' / 胆码均中 ' +
+        esc(bt.strategies.dan.avgHit) + '（胆基线 ' + esc(bt.strategies.dan.baseline) + '）<br>杀号命中率 ' +
+        (bt.kill.hitRate * 100).toFixed(1) + '% vs 随机基线 ' + (bt.kill.baseline * 100).toFixed(1) + '% → <b>' + esc(bt.kill.verdict) + '</b>';
+      if (bt.aux) extra += '　副区热号命中 ' + (bt.aux.hot.hitRate * 100).toFixed(1) + '%（基线 ' + (bt.aux.hot.baseline * 100).toFixed(1) + '%）';
+    } else if (bt.perPos) {
+      const avgOf = key => bt.perPos.reduce((a, r) => a + (r[key] || 0), 0) / bt.perPos.length;
+      const kr = bt.perPos.filter(r => r.killRate != null);
+      extra = '<b>回测</b>（近 ' + esc(bt.periods) + ' 期 · 单位基线 10%）：各位热号均中率 ' + (avgOf('hotRate') * 100).toFixed(1) +
+        '% / 冷号均中率 ' + (avgOf('coldRate') * 100).toFixed(1) + '%' +
+        (kr.length ? ' / 首位杀号命中率 ' + ((kr.reduce((a, r) => a + r.killRate, 0) / kr.length) * 100).toFixed(1) + '%' : '');
+    }
+    if (bt.note) extra += '<br><span>' + esc(bt.note) + '</span>';
+    if (extra) $('#stats').innerHTML += '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee" class="muted">' + extra + '</div>';
+  } catch (e2) { /* 回测接口失败时保持主统计展示 */ }
 }
 
 // ---------- 历史 ----------

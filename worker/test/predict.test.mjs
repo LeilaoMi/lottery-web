@@ -164,3 +164,43 @@ test("n 参数可控制推荐个数（快乐8 选号）", () => {
   const r2 = recommendAll("kl8", synth("kl8"), { win: 30, n: 12 });
   for (const p of r2.picks) assert.equal(p.main.length, 12);
 });
+
+test("回测：8 彩种结构与取值范围合法", async () => {
+  const { backtest } = await import("../src/predict.js");
+  for (const k of KINDS) {
+    const d = synth(k, 60);
+    const bt = backtest(k, d, { periods: 5, warmup: 10, win: 20 });
+    assert.equal(bt.periods, 5, k + " 回测期数");
+    assert.ok(bt.note && bt.disclaimer, k + " 缺声明");
+    if (bt.strategies) {
+      for (const key of ["hot", "cold", "dan"]) {
+        const st = bt.strategies[key];
+        assert.ok(st.hitRate >= 0 && st.hitRate <= 1, k + " " + key + " hitRate 越界");
+        assert.ok(st.baseline > 0, k + " " + key + " baseline 异常");
+        if (key !== "dan") assert.ok(st.baseline < 1, k + " " + key + " baseline 应为比率");
+        assert.ok(st.avgHit >= 0, k + " " + key + " avgHit 负数");
+      }
+      assert.ok(bt.kill.hitRate >= 0 && bt.kill.hitRate <= 1, k + " killRate 越界");
+      assert.ok(typeof bt.kill.verdict === "string" && bt.kill.verdict.length > 0, k + " 缺 kill verdict");
+      if (bt.aux) assert.ok(bt.aux.hot.hitRate >= 0 && bt.aux.hot.hitRate <= 1, k + " aux 越界");
+    } else {
+      assert.equal(bt.perPos.length, specOf(k).digits, k + " 数字型分位数量");
+      for (const r of bt.perPos) {
+        for (const f of ["hotRate", "coldRate"]) assert.ok(r[f] >= 0 && r[f] <= 1, k + " " + f + " 越界");
+        if (r.killRate !== null) assert.ok(r.killRate >= 0 && r.killRate <= 1, k + " killRate 越界");
+      }
+    }
+  }
+});
+
+test("回测：恒定开奖的确定性校验（杜绝未来函数的烟雾测试）", async () => {
+  const { backtest } = await import("../src/predict.js");
+  // fc3d 恒出 1,2,3：窗口稳定后热号必为 1/2/3，各位 hotRate 应为 1
+  const d = Array.from({ length: 30 }, (_, i) => ({ code: String(2026000 + i), digits: ["1", "2", "3"], date: "", src: "t" }));
+  const bt = backtest("fc3d", d, { periods: 5, warmup: 10, win: 20 });
+  for (const r of bt.perPos) assert.equal(r.hotRate, 1, "恒定开奖下热号应 100% 命中");
+  // 样本不足时明确拒绝，而不是编造数字
+  const short = backtest("ssq", synth("ssq", 8), { periods: 5 });
+  assert.equal(short.periods, 0);
+  assert.match(short.note, /样本不足/);
+});

@@ -163,16 +163,12 @@ function killDigits(kind, draws) {
 }
 
 // ---------- 定胆：频率 + 遗漏回归 + 邻号 + 重号 ----------
-export function danList(kind, draws, win = 30) {
-  const s = specOf(kind);
-  if (s.type === "digit") return danDigits(kind, draws, win);
-  const w = draws.slice(0, win), pool = poolOf(s.main);
-  const st = freqStats(w, pool, d => mainOf(d, kind));
-  const last = draws[0] || { }, lastN = mainOf(last, kind);
+// 胆码打分（danList 与回测共用，保证口径一致）
+function scorePool(st, pool, lastN) {
   const near = new Set();
   for (const x of lastN) { near.add(pad2(Number(x) + 1)); near.add(pad2(Number(x) - 1)); }
   const maxF = Math.max(1, ...Object.values(st.freq));
-  const sc = pool.map(k => {
+  return pool.map(k => {
     const n = Number(k), f = st.freq[k], c = st.cur[k], a = st.avg[k];
     let v = (f / maxF) * 2;                                   // 频率
     if (a > 0 && c >= a * 0.8 && c <= a * 1.4) v += 1.2;      // 遗漏到达均值区（该出）
@@ -181,6 +177,15 @@ export function danList(kind, draws, win = 30) {
     if (lastN.includes(k) && f / maxF > 0.6) v += 0.8;        // 热重号
     return { n: k, score: +v.toFixed(3), freq: f, cur: c, avg: a, max: st.max[k] };
   }).sort((a, b) => b.score - a.score);
+}
+
+export function danList(kind, draws, win = 30) {
+  const s = specOf(kind);
+  if (s.type === "digit") return danDigits(kind, draws, win);
+  const w = draws.slice(0, win), pool = poolOf(s.main);
+  const st = freqStats(w, pool, d => mainOf(d, kind));
+  const lastN = mainOf(draws[0] || {}, kind);
+  const sc = scorePool(st, pool, lastN);
   const aux = s.aux ? danAux(kind, draws, win) : [];
   return { main: sc.slice(0, 8), aux };
 }
@@ -359,7 +364,7 @@ function zoneCover(kind, pool, byFreqDesc, n, s) {
   const order = [...byFreqDesc];
   for (let r = 0; r < Math.ceil(n / 2) + 2; r++) {
     for (const z of zones) {
-      const cand = order.find(k => !out.includes(k) && Number(k) >= z.from && Number(k) <= z.to && (!kind || true));
+      const cand = order.find(k => !out.includes(k) && Number(k) >= z.from && Number(k) <= z.to);
       if (cand) { out.push(cand); if (out.length >= n) break; }
     }
     if (out.length >= n) break;
@@ -406,4 +411,117 @@ function digitScore(digits, an) {
     s += (f[d] || 0) / maxF;
   });
   return +(s / digits.length).toFixed(3);
+}
+
+// ---------- 回测：把「经验权重」变成有数据背书的指标 ----------
+// 设计要点（与线上引擎同一口径）：
+//  - 每个测试点 i 只用 draws[i+1..]（即当期之前）的历史统计做预测，与真实开奖比对，杜绝未来函数
+//  - 热号/冷号/胆码复用 scorePool 的同一打分；杀号直接复用 killList，保证「线上给什么、回测验什么」
+//  - 输出均带随机基线：单号命中率 = pick/poolSize；命中低于基线才有信息量（尤其杀号）
+export function backtest(kind, draws, opts = {}) {
+  const s = specOf(kind);
+  const N = Array.isArray(draws) ? draws.length : 0;
+  const warmup = Math.max(10, Math.min(opts.warmup || 30, Math.max(1, N - 1)));
+  const win = Math.max(10, Math.min(opts.win || 30, 60));
+  const maxP = Math.max(0, Math.min(40, N - warmup));
+  const periods = Math.max(0, Math.min(opts.periods || 15, maxP));
+  const note = "纯统计对照，不构成任何预测保证；某项长期优于基线也不代表未来有效";
+  if (N < warmup + 1 || periods <= 0) return { kind, name: s.name, type: s.type, periods: 0, note: "样本不足，无法回测", disclaimer: DISCLAIMER };
+  if (s.type === "digit") return backtestDigit(kind, draws, { warmup, win, periods, note });
+
+  const pool = poolOf(s.main), size = pool.length, pick = s.main.pick;
+  const guessN = Math.min(s.suggest, size), danK = 8, base = pick / size;
+  const hot = { hit: 0 }, cold = { hit: 0 }, dan = { hit: 0 };
+  const kill = { killed: 0, hit: 0 };
+  const aux = s.aux ? { pick: s.aux.pick, size: s.aux.max - s.aux.min + 1, hot: { hit: 0 }, kill: { killed: 0, hit: 0 } } : null;
+  let tested = 0;
+  // draws 由新到旧：测试最近的 periods 期，即 i = periods-1 .. 0，历史为 draws[i+1..]
+  for (let i = Math.min(periods, N) - 1; i >= 0; i--) {
+    const hist = draws.slice(i + 1);
+    if (hist.length < warmup) continue;
+    const actual = new Set(mainOf(draws[i], kind));
+    const st = freqStats(hist.slice(0, win), pool, d => mainOf(d, kind));
+    const lastN = mainOf(hist[0] || {}, kind);
+    const hotTop = pool.slice().sort((a, b) => st.freq[b] - st.freq[a] || Number(a) - Number(b)).slice(0, guessN);
+    const coldTop = pool.slice().sort((a, b) => st.cur[b] - st.cur[a] || Number(a) - Number(b)).slice(0, guessN);
+    const danTop = scorePool(st, pool, lastN).slice(0, danK).map(x => x.n);
+    hot.hit += hotTop.filter(k => actual.has(k)).length;
+    cold.hit += coldTop.filter(k => actual.has(k)).length;
+    dan.hit += danTop.filter(k => actual.has(k)).length;
+    const kl = killList(kind, hist), th = kl.threshold ?? 99;
+    const killed = (kl.main || []).filter(x => x.votes >= th).map(x => x.n);
+    kill.killed += killed.length;
+    kill.hit += killed.filter(k => actual.has(k)).length;
+    if (aux) {
+      const aPool = poolOf(s.aux);
+      const aSt = freqStats(hist.slice(0, win), aPool, d => auxOf(d, kind));
+      const aAct = new Set(auxOf(draws[i], kind));
+      const aHot = aPool.slice().sort((x, y) => aSt.freq[y] - aSt.freq[x] || Number(x) - Number(y)).slice(0, aux.pick);
+      aux.hot.hit += aHot.filter(k => aAct.has(k)).length;
+      const aKilled = (kl.aux || []).filter(x => x.votes >= (killThreshold(kl.aux) ?? 99)).map(x => x.n);
+      aux.kill.killed += aKilled.length;
+      aux.kill.hit += aKilled.filter(k => aAct.has(k)).length;
+    }
+    tested++;
+  }
+  if (!tested) return { kind, name: s.name, type: s.type, periods: 0, note: "样本不足，无法回测", disclaimer: DISCLAIMER };
+  const rate = (a, b) => +(a / Math.max(1, b)).toFixed(3);
+  const out = {
+    kind, name: s.name, type: s.type, periods: tested, warmup, win,
+    guessN, pick, poolSize: size, baseline: +base.toFixed(4),
+    strategies: {
+      hot: { avgHit: +(hot.hit / tested).toFixed(3), hitRate: rate(hot.hit, tested * guessN), baseline: +base.toFixed(4), note: "预测 " + guessN + " 个，单号基线 " + base.toFixed(4) },
+      cold: { avgHit: +(cold.hit / tested).toFixed(3), hitRate: rate(cold.hit, tested * guessN), baseline: +base.toFixed(4) },
+      dan: { k: danK, avgHit: +(dan.hit / tested).toFixed(3), hitRate: rate(dan.hit, tested * danK), baseline: +(danK * base).toFixed(4) }
+    },
+    kill: {
+      killedTotal: kill.killed, killedHit: kill.hit,
+      hitRate: rate(kill.hit, kill.killed), baseline: +base.toFixed(4),
+      verdict: kill.killed === 0 ? "无杀号样本" : (kill.hit / kill.killed < base ? "有效（低于随机基线）" : "无信息（不低于随机基线）")
+    },
+    note, disclaimer: DISCLAIMER
+  };
+  if (aux) {
+    const aBase = aux.pick / aux.size;
+    out.aux = {
+      pick: aux.pick, poolSize: aux.size, baseline: +aBase.toFixed(4),
+      hot: { hitRate: rate(aux.hot.hit, tested * aux.pick), baseline: +aBase.toFixed(4) },
+      kill: { killedTotal: aux.kill.killed, hitRate: rate(aux.kill.hit, aux.kill.killed), baseline: +aBase.toFixed(4) }
+    };
+  }
+  return out;
+}
+
+function backtestDigit(kind, draws, cfg) {
+  const s = specOf(kind), N = draws.length, DIG = Array.from({ length: 10 }, (_, i) => String(i));
+  const perPos = Array.from({ length: s.digits }, (_, p) => ({ pos: p + 1, hotHits: 0, coldHits: 0, killTotal: 0, killHit: 0, tested: 0 }));
+  for (let i = Math.min(cfg.periods, N) - 1; i >= 0; i--) {
+    const hist = draws.slice(i + 1);
+    if (hist.length < cfg.warmup) continue;
+    const actual = mainOf(draws[i], kind);
+    for (let p = 0; p < s.digits; p++) {
+      const st = freqStats(hist.slice(0, cfg.win), DIG, d => { const a = mainOf(d, kind); return a[p] !== undefined ? [String(a[p])] : []; });
+      const row = perPos[p];
+      const hot1 = DIG.slice().sort((a, b) => st.freq[b] - st.freq[a] || Number(a) - Number(b))[0];
+      const cold1 = DIG.slice().sort((a, b) => st.cur[b] - st.cur[a] || Number(a) - Number(b))[0];
+      row.hotHits += hot1 === String(actual[p]) ? 1 : 0;
+      row.coldHits += cold1 === String(actual[p]) ? 1 : 0;
+      const kl = killList(kind, hist);
+      const k1 = (kl.perPos[p].kill || [])[0];
+      if (k1 && k1.votes > 0) { row.killTotal++; row.killHit += k1.n === String(actual[p]) ? 1 : 0; }
+      row.tested++;
+    }
+  }
+  return {
+    kind, name: s.name, type: s.type, periods: cfg.periods, warmup: cfg.warmup, win: cfg.win,
+    baseline: 0.1,
+    perPos: perPos.map(r => ({
+      pos: r.pos,
+      hotRate: +(r.hotHits / Math.max(1, r.tested)).toFixed(3),
+      coldRate: +(r.coldHits / Math.max(1, r.tested)).toFixed(3),
+      killRate: r.killTotal ? +(r.killHit / r.killTotal).toFixed(3) : null,
+      tested: r.tested
+    })),
+    note: "各位独立 0-9，单位随机基线 10%；killRate 为首位杀号命中开奖的比例，越低越好", disclaimer: DISCLAIMER
+  };
 }

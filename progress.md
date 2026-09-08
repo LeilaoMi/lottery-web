@@ -1,8 +1,16 @@
-# progress · lottery-web v0.6.0 完成
+# progress · lottery-web v0.7.0 完成
+
+## v0.7.0：回测引擎（打磨轮）
+- `predict.js` 新增 `backtest()` / `backtestDigit()`：逐期「用当期之前的数据预测 → 与真实开奖比对」，热/冷/胆复用 scorePool 同一打分，杀号直接复用 killList（线上给什么就验什么）
+- 输出全部带随机基线（单号 = pick/poolSize；数字型单位 = 10%），并给出「有效 / 无信息」诚实结论
+- 修自产 bug：回测循环方向写反（测了最旧几期、历史窗口为空）→ 改为从最新往回测 periods 期
+- 小彩种样本 60 → 150 期；`/api/backtest` 缓存 3600s
+- 前端分析页：回测摘要（策略/杀号命中率 vs 基线 + 结论）+ 当前遗漏 Top10
+- 测试 46 passed；线上 5 彩种回测实测（详见 README v0.7.0 节）
 
 ## 部署
-- Version `fd696b4a-c19e-4db0-89ec-4f34eb7b686a`，91.32 KiB / gzip 26.08 KiB
-- https://lottery-web.horjane.workers.dev ，cp.leilaomi.cc.cd/* 路由已绑定（zone leilaomi.cc.cd）
+- Version `2d862c1c-d587-4983-8c1b-e9824df08b77`
+- https://lottery-web.horjane.workers.dev ，cp.leilaomi.cc.cd/* 路由已绑定
 - D1 `lottery` APAC（NRT）已绑定；API_TOKEN secret 已配置（fail-closed 鉴权模型）
 
 ## v0.6.0 核心：统一预测引擎

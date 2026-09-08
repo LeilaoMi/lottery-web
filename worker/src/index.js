@@ -1,7 +1,7 @@
 import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
 import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
 import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
-import { SPECS, analyzeAll, killList, danList, recommendAll } from "./predict.js";
+import { SPECS, analyzeAll, killList, danList, recommendAll, backtest } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, saveSmall, loadSmall } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
@@ -25,7 +25,7 @@ export default {
     if (url.pathname === "/api/specs") return json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600);
     if (url.pathname === "/api/calc") return calcRoute(url);
     if (url.pathname === "/api/prize") return prizeRoute(url);
-    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan") return predictRoute(request, env, url);
+    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest") return predictRoute(request, env, url);
     if (url.pathname === "/api/admin/sync") return adminSync(request, env);
     if (url.pathname.startsWith("/api/favs")) return favsRoute(request, env, url);
     if (url.pathname.startsWith("/api/ssq/")) return ssqRoute(request, env, url);
@@ -89,9 +89,9 @@ async function smallRoute(request, env, url) {
     // 预测结果带随机性，不能进缓存，否则同一窗口内所有人拿到同一组号
     if (act !== "predict") { const hit = await cache.match(ck); if (hit) return hit; }
     let draws = [], degraded = false;
-    try { draws = await fetchSmall(kind, 60); } catch (e) {
+    try { draws = await fetchSmall(kind, 150); } catch (e) {
       // 上游不可用时降级读 D1，避免直接 502
-      draws = await loadSmall(env.DB, kind, 60).catch(() => []);
+      draws = await loadSmall(env.DB, kind, 150).catch(() => []);
       if (!draws.length) throw e;
       degraded = true;
     }
@@ -162,11 +162,13 @@ async function predictRoute(request, env, url) {
   if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
   const win = num(url, "win", 30, 5, 100);
   try {
-    const draws = await drawsOf(env, kind, Math.max(60, win));
+    // 回测需要 warmup+periods 期历史（最多 60+40），多取一些
+    const draws = await drawsOf(env, kind, url.pathname.endsWith("/backtest") ? 150 : Math.max(60, win));
     const act = url.pathname.split("/").pop();
     if (act === "analyze") return json({ kind, ...analyzeAll(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
     if (act === "kill") return json({ kind, ...killList(kind, draws), degraded: !!draws._degraded }, 200, 300);
     if (act === "dan") return json({ kind, ...danList(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
+    if (act === "backtest") return json({ ...backtest(kind, draws, { win, periods: num(url, "periods", 15, 1, 40), warmup: num(url, "warmup", 30, 10, 60) }), degraded: !!draws._degraded }, 200, 3600);
     return json({ ...recommendAll(kind, draws, { win, n: optN(url) }), degraded: !!draws._degraded }, 200, 0);
   } catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
@@ -239,7 +241,7 @@ async function adminSync(request, env) {
   } catch (e) { out.results.dlt = { error: String(e.message || e) }; }
   for (const k of LOTS.filter(x => x.id !== "ssq" && x.id !== "dlt").map(x => x.id)) {
     try {
-      const d = await fetchSmall(k, 60);
+      const d = await fetchSmall(k, 150);
       out.results[k] = { fetched: d.length, inserted: await saveSmall(env.DB, k, d), latest: d[0]?.code };
     } catch (e) { out.results[k] = { error: String(e.message || e) }; }
   }
