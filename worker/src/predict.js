@@ -667,13 +667,15 @@ export function calibrate(kind, draws, opts = {}) {
   const s = specOf(kind);
   if (hFrac > 0 && s.type !== "digit") {
     const N = draws.length;
-    const m = Math.max(opts.warmup || 30, Math.floor(N * (1 - hFrac)));
-    const evalN = N - m;
+    // draws 新→旧：新段 = 最近 hFrac 比例（slice(0,m)），旧段 = 其余（slice(m)）用于拟合
+    // （验证代理抓出的反转 bug：原实现 m=N*(1-hFrac) 导致拟合只剩最旧 hFrac 段）
+    const m = Math.max(opts.warmup || 30, Math.floor(N * hFrac));
+    const evalN = m;
     if (evalN < 20) {
       const bt0 = backtest(kind, draws, { periods: opts.periods || 12, warmup: opts.warmup || 30, win: opts.win || 30 });
       return { weights: weightsFrom(bt0), periods: bt0.periods, formulas: (bt0.kill && bt0.kill.formulas) || [], holdout: { note: "样本不足：新段 < 20 期，未做外推检验" } };
     }
-    const fitPart = draws.slice(m), evalPart = draws.slice(0, m); // evalPart=新段（含最新），fitPart=旧段
+    const fitPart = draws.slice(m), evalPart = draws.slice(0, m); // fitPart=旧段（N-m 期）拟合，evalPart=新段（m 期，含最新）评估
     const fitBt = backtest(kind, fitPart, { periods: opts.periods || 12, warmup: opts.warmup || 30, win: opts.win || 30 });
     const weights = weightsFrom(fitBt);
     const withW = backtest(kind, evalPart, { periods: opts.evalPeriods || 60, warmup: opts.warmup || 30, win: opts.win || 30, weights });

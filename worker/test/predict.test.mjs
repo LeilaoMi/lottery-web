@@ -333,6 +333,7 @@ test("calibrate holdout：旧段拟合 / 新段外推，输出 calibrated vs raw
   const c = calibrate("ssq", draws, { periods: 12, holdout: 0.3 });
   assert.ok(c.holdout && c.holdout.calibrated && c.holdout.raw, "缺 holdout 块");
   assert.ok(c.holdout.evalN >= 20, "新段应 ≥20 期");
+  assert.ok(c.holdout.fitN > c.holdout.evalN, "拟合段（旧70%）应大于评估段（新30%）——holdout 方向锁死");
   assert.ok(c.holdout.calibrated.hitRate >= 0 && c.holdout.calibrated.hitRate <= 1, "calibrated.hitRate 越界");
   assert.ok(c.holdout.raw.hitRate >= 0 && c.holdout.raw.hitRate <= 1, "raw.hitRate 越界");
   assert.equal(c.holdout.calibrated.baseline, c.holdout.raw.baseline, "两段基线应一致");
