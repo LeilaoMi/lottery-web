@@ -1,324 +1,272 @@
-# lottery-web · 自用彩票网页端 v0.11.0
+<div align="center">
 
-8 个彩种的开奖查询 / 统计 / 杀号定胆 / 预测 / 验奖 / 注数与中奖计算。Cloudflare Worker + D1，零运行时依赖，单文件前端。
+# 🎱 lottery-web · 自用彩票分析站
 
-**8 个彩种共用同一套预测引擎**（`worker/src/predict.js`），接口返回结构完全一致，不存在「双色球有推荐、其他彩种只有统计」的割裂。
+**8 个彩种 · 统一预测引擎 · 统计诚实性优先**
 
-> 随机游戏，统计仅供娱乐，不保证中奖。
+[![CI](https://github.com/LeilaoMi/lottery-web/actions/workflows/sync.yml/badge.svg)](https://github.com/LeilaoMi/lottery-web/actions/workflows/sync.yml)
+![version](https://img.shields.io/badge/version-0.11.0-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+![deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
 
-## 支持彩种
+Cloudflare Workers + D1 · 零运行时依赖 · 单页 PWA 前端
+
+*开奖查询 · 统计分析 · 杀号定胆 · 历史回测 · 预测复盘 · 注数与中奖计算*
+
+</div>
+
+> ⚠️ **随机游戏，统计仅供娱乐，不保证中奖。** 本项目的设计目标是让每个「有效」结论都有统计背书，而不是承诺中奖。
+
+---
+
+## ✨ 功能特性
+
+### 🎯 统一预测引擎
+
+- **8 个彩种共用同一套引擎**（`worker/src/predict.js`），接口返回结构完全一致——不存在「双色球有推荐、其他彩种只有统计」的割裂
+- **6 套策略推荐**：稳健·热号 / 进取·遗漏 / 均衡 / 区间覆盖 / 杀号缩水 / 随机基准，均带结构分（和值 / 奇偶 / 大小 / 区间 / 跨度 / AC）
+- **杀号**：10 类公式加权投票（票数 + 命中原因），支持按分公式回测结果自动校准权重；`/api/kill-tune` 可检验「杀票数前 30%」这一默认阈值是否真的最优
+- **定胆**：频率 + 遗漏回归 + 邻号 + 重号
+- **胆拖投注单**：一键生成注数金额，可保存收藏 / 复制 / 导出 TXT
+
+### 📊 统计诚实性（本项目的灵魂）
+
+- **历史回测**：逐期用「当期之前」的数据预测再与真实开奖比对（杜绝未来函数），600 期跨度自动抽样，全部结论对照**随机基线**
+- **显著性检验**：回测与复盘输出二项检验 p 值（正态近似），样本不足如实返回 null——杜绝把噪音当规律
+- **外推检验（holdout）**：校准权重只用旧 70% 数据拟合、新 30% 验证——检验「同一段数据既调权又报成绩」的过拟合
+- **分年稳定性**：回测按年分桶，策略是长期有效还是最近退化一眼可见（附柱状图）
+- **形态转移**：和值 / 奇偶 / 大小 / 012路 一阶转移矩阵（拉普拉斯平滑），下期形态 Top3
+
+### 🔁 预测复盘闭环
+
+每日同步自动**快照**下一期推荐 → 开奖后自动**对账** → `/api/review` 公开滚动命中率（推荐 / 定胆 / 杀错率 + 显著性）。预测从「说完就忘」变成可回看的记录。
+
+### 🛡️ 数据可靠性
+
+- **多源交叉校验**：双色球（500 + cwl）、大乐透（500 + 17500）最近 30 期逐期比对，不一致的期号**拒绝落库**
+- **数据新鲜度保险丝**：D1 最新期距今天数暴露在 `/api/meta`，前端任一彩种 ≥4 天自动亮黄条
+- **上游故障降级**：小彩种上游不可用时自动读 D1 缓存，响应标记 `degraded`
+- **CI 部署冒烟**：push / 定时同步后自动对线上 5 端点断言，线上异常 CI 直接红
+
+---
+
+## 🎫 支持彩种
 
 | id | 彩种 | 规则 | 开奖 |
 |---|---|---|---|
-| `ssq` | 双色球 | 红 6/33 + 蓝 1/16 | 二四日 |
-| `dlt` | 大乐透 | 前 5/35 + 后 2/12 | 一三六 |
+| `ssq` | 双色球 | 红 6/33 + 蓝 1/16 | 周二·四·日 |
+| `dlt` | 大乐透 | 前 5/35 + 后 2/12 | 周一·三·六 |
 | `fc3d` | 福彩 3D | 3 位 0-9 | 每日 |
 | `pl3` | 排列 3 | 3 位 0-9 | 每日 |
 | `pl5` | 排列 5 | 5 位 0-9 | 每日 |
-| `qlc` | 七乐彩 | 基本 7/30 + 特别号 | 一三五 |
-| `qxc` | 七星彩 | 7 位 0-9 | 二五 |
+| `qlc` | 七乐彩 | 基本 7/30 + 特别号 | 周一·三·五 |
+| `qxc` | 七星彩 | 7 位 0-9 | 周二·五 |
 | `kl8` | 快乐 8 | 20/80 | 每日 |
 
-## 数据源
+## 🛠 技术栈
 
-| 彩种 | 主源 | 备源 |
+| 层 | 选型 | 说明 |
 |---|---|---|
-| 双色球 | 500.com、中彩联 cwl.gov.cn（双源交叉比对） | 17500 |
-| 大乐透 | 500.com | 17500 |
-| 其余 6 种 | 17500 文本源 | — |
+| 运行时 | [Cloudflare Workers](https://workers.cloudflare.com/) | 纯 JS，`fetch(request, env, ctx)` 路由，零 npm 依赖 |
+| 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
+| 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
+| 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
+| 测试 | `node --test` | 60 项单元测试（零依赖离线可跑）+ 真实数据源连通性测试 |
 
-双色球拉取时并行请求 500 与 cwl，比对最新一期期号与号码后给出 `consistent` 标记。
+---
 
-## 接口
+## 🚀 快速开始
 
-所有响应均为 JSON，带 `Access-Control-Allow-Origin: *`，支持 `OPTIONS` 预检。
+### 前置要求
 
-### 通用
+- Node.js ≥ 20（无需 `npm install`——项目零依赖，wrangler 用 `npx` 临时拉起）
+- 一个 Cloudflare 账号（免费版即可）
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/health` | `{status,version,lotteries}` |
-| GET | `/api/meta` | 彩种列表与数据源；绑定 D1 时附带 `stale[]`（各彩种 D1 最新一期距今天数，前端 ≥4 天亮黄条的数据新鲜度保险丝） |
-| GET | `/api/records` | 破纪录遗漏预警：各彩种每号当前遗漏 vs 样本内（≤400 期）历史最大遗漏，`breaking`（≥100% 纪录）与 `near`（≥80% 且纪录 ≥10 期）；纯提醒，仅供娱乐 |
-| GET | `/` | 单页前端（由 `frontend/` 构建内联） |
-| GET | `/manifest.json` `/sw.js` `/icon.svg` | PWA 资源 |
-| GET | `/licenses` | 第三方思路声明 |
-| GET | `/api/rotation?n=12&pick=6&hit=4` | 旋转矩阵（覆盖设计） |
-| GET/POST/DELETE | `/api/favs` | 收藏（需 D1，读写均需鉴权） |
-| POST | `/api/admin/sync` | 触发 8 彩种落库（需鉴权） |
+### 1. 建库
 
-### 统一预测（8 彩种口径一致）
+```bash
+npx wrangler d1 create lottery          # 记下返回的 database_id
+npx wrangler d1 execute lottery --file=db/schema.sql
+```
 
-`kind` = `ssq` / `dlt` / `qlc` / `kl8` / `fc3d` / `pl3` / `pl5` / `qxc`，也可写成 `/api/{kind}/{analyze|kill|dan|predict}`。
+### 2. 部署配置
+
+```bash
+cp worker/wrangler.toml worker/wrangler.local.toml
+# 编辑 worker/wrangler.local.toml：把 database_id 的 REPLACE_ME 换成第 1 步的 ID
+# 不需要自定义域名就删掉 routes 整段
+```
+
+> `wrangler.local.toml` 含真实 ID，已在 `.gitignore` 中，不会进仓库。
+
+### 3. 部署
+
+```bash
+npm --prefix worker run deploy -- --config worker/wrangler.local.toml
+# deploy 脚本会自动先构建前端（frontend/ → worker/src/ui.js），无需单独 build
+```
+
+部署成功会输出 `https://lottery-web.<你的子域>.workers.dev`。
+
+### 4. （可选）鉴权
+
+```bash
+npx wrangler secret put API_TOKEN
+```
+
+鉴权模型：**开奖数据是公开信息，读接口一律免鉴权**；只有写操作与个人数据（`/api/favs` 全部方法、`/api/admin/sync`）要求 `Authorization: Bearer <API_TOKEN>`。未设置 `API_TOKEN` 时写接口一律拒绝（fail-closed）。
+
+### 5. （可选）定时落库
+
+`.github/workflows/sync.yml` 在 CI 通过后按开奖日触发落库（双色球 / 大乐透 / 每日小彩种），并在同步后自动预热校准缓存、生成复盘快照。需在仓库 *Settings → Secrets and variables → Actions* 配置：
+
+| Secret | 值 |
+|---|---|
+| `WORKER_URL` | 如 `https://lottery-web.xxx.workers.dev` |
+| `API_TOKEN` | 与 Worker 的 secret 一致（未设置鉴权则无法同步落库） |
+
+## 💻 本地开发
+
+```bash
+cd worker
+npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
+npm test             # 单元测试（60 项，零依赖，离线可跑）
+npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
+npm run dev          # wrangler dev 本地起服务
+```
+
+## 📖 使用说明
+
+前端是一个 7 tab 单页（PWA，手机可安装、弱网有 Service Worker 兜底）：
+
+| Tab | 内容 |
+|---|---|
+| **预测** | 6 套策略推荐 + 杀号 + 定胆 + 胆拖单生成/导出 |
+| **今日** | 今日开奖日历、破纪录遗漏预警、上期对账、下期快照 |
+| **分析** | 频次/冷热/遗漏/形态转移可视化、遗漏走势图、回测摘要（分年柱图 + 外推检验 + 阈值寻优按钮） |
+| **历史** | 最近 30 期开奖 |
+| **验奖·矩阵** | 按期号验奖、旋转矩阵（覆盖设计） |
+| **工具** | 注数/追号计算器、中奖计算器、预测复盘 |
+| **收藏** | 自选号管理（需 D1） |
+
+首次打开在顶部填入 Worker 地址（部署后访问首页会自动带入 origin）。
+
+## 🔌 API 速览
+
+所有响应均为 JSON，带 `Access-Control-Allow-Origin: *`，支持 `OPTIONS` 预检。`kind` 取值见「支持彩种」，也可写成路径形式 `/api/ssq/predict`。
+
+### 核心
 
 | 路径 | 参数 | 说明 |
 |---|---|---|
 | `/api/predict` | `kind=`, `win=5..100`, `n=` | 6 套策略推荐 + 杀号 + 定胆 + 分析，一次返回 |
-| `/api/backtest` | `kind=`, `periods=1..600`, `win=`, `warmup=` | 历史回测：各策略/杀号的真实命中率 vs 随机基线；跨度 >60 期自动抽样（免费版 CPU 限制），返回 `tested/stride`；带二项检验 `p` 值与 `eras` 分年稳定性 |
-| `/api/kill-calibrated` | `kind=`, `periods=`, `holdout=0..0.5` | 校准杀号：按分公式回测命中率生成动态权重后重新投票（killed<10 的公式不参与加权、按样本量收缩）；`holdout=0.3` 触发外推检验（旧段拟合→新段验证 加权 vs 未加权）；结果进边缘缓存 6h，`/api/admin/sync` 完成后自动预热 |
-| `/api/kill-tune` | `kind=`, `periods=10..60` | 杀号阈值寻优：5 个分位（20%~40%）× 旧 70%/新 30% 两段共 10 次回测——train 最优阈值在 test 上与事后最优（oracle）差距 `gap` 小 → 阈值有信息量，大 → 默认 30% 即可（防「调参过拟合」）；结果缓存 6h |
-| `/api/ticket` | `kind=`, `dan=`, `tuo=` | 胆拖投注单（ssq/dlt/qlc）：胆拖号码 + 注数金额；前端支持保存到收藏 / 复制 / 导出 TXT |
-| `/api/trend` | `kind=`, `limit=5..60` | 逐期遗漏走势（统一引擎，号码池型通用；前端 ECharts 折线渲染） |
-| `/api/review` | `kind=`（可选） | 预测复盘：每日同步自动快照下一期推荐、开奖后自动对账；返回各彩种滚动命中率（推荐/定胆/杀错率）+ 各自对随机基线的二项检验 `p` 值（`pickP/danP/killP`，n<20 为 null）+ 对账明细 |
-| `/api/analyze` | `kind=`, `win=` | 频次 / 冷热 / 遗漏 / 奇偶 / 大小 / 质合 / AC / 012 路 / 区间 / 连号 / 重号；号码池型额外返回 `shape`（和值/奇偶/大小/012路 一阶转移矩阵 + 下期 Top3 形态，拉普拉斯平滑） |
-| `/api/kill` | `kind=` | 杀号投票（10 类公式加权） |
-| `/api/dan` | `kind=`, `win=` | 定胆（频率 + 遗漏回归 + 邻号 + 重号） |
-| `/api/specs` | — | 各彩种号码池与默认推荐个数 |
+| `/api/analyze` | `kind=`, `win=` | 频次/冷热/遗漏/奇偶/大小/质合/AC/012路/区间/连号/重号；号码池型附 `shape` 形态转移矩阵 |
+| `/api/kill` | `kind=` | 杀号投票（10 类公式加权 + threshold） |
+| `/api/dan` | `kind=`, `win=` | 定胆 |
+| `/api/backtest` | `kind=`, `periods=1..600` | 历史回测：真实命中率 vs 随机基线 + p 值 + 分年稳定性；>60 期自动抽样（返回 `tested/stride`） |
+| `/api/kill-calibrated` | `kind=`, `holdout=0..0.5` | 校准杀号（按分公式回测生成动态权重）；`holdout=0.3` 触发外推检验；结果缓存 6h |
+| `/api/kill-tune` | `kind=` | 杀号阈值寻优：5 分位 × 两段 10 次回测，`gap` 判据防调参过拟合；结果缓存 6h |
+| `/api/review` | `kind=`（可选） | 预测复盘：滚动命中率 + 二项检验 p 值 + 对账明细 |
+| `/api/trend` | `kind=`, `limit=5..60` | 逐期遗漏走势 |
+| `/api/ticket` | `kind=`, `dan=`, `tuo=` | 胆拖投注单（ssq/dlt/qlc） |
 
-返回结构（号码池型 / 数字型同构）：
+### 查询与工具
+
+| 路径 | 参数 | 说明 |
+|---|---|---|
+| `/api/{kind}/latest` / `history?limit=` | — | 最新一期 / 历史 |
+| `/api/{kind}/verify` | ssq: `code&red&blue` · dlt: `code&front&back` · 其余: `code&nums` | 验奖 |
+| `/api/meta` | — | 彩种元数据 + `stale[]` 数据新鲜度 |
+| `/api/records` | — | 破纪录遗漏预警（当前遗漏 vs 样本内历史最大遗漏） |
+| `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划 |
+| `/api/prize` | `kind=` + 命中参数 | 奖级与固定奖金额 |
+| `/api/rotation` | `n=&pick=&hit=` | 旋转矩阵（覆盖设计，注数约理论下界 1.5 倍） |
+| `/api/favs` | GET/POST/DELETE | 收藏（需鉴权） |
+| `/api/admin/sync` | POST | 触发 8 彩种落库（需鉴权），响应含各彩种 `crosscheck` 报告 |
+| `/health` | — | `{status, version, lotteries}` |
+
+<details>
+<summary><b>返回结构示例（点击展开）</b></summary>
 
 ```jsonc
 {
   "kind": "ssq", "type": "pool", "window": 30, "count": 30,
-  "analysis": { "hot": [], "cold": [], "freq": {}, "omission": {"cur":{}, "avg":{}, "max":{}}, ... },
-  "kill":   { "main": [{"n":"27","votes":4,"reasons":["上期出号","跨度26"]}], "aux": [...] },
-  "dan":    { "main": [{"n":"05","score":3.4,"freq":21,"cur":2,"avg":1.8}], "aux": [...] },
-  "picks":  [ { "name":"稳健·热号", "main":["01",...], "aux":["14"], "score":9, "note":"..." } ]
+  "analysis": { "hot": [], "cold": [], "freq": {}, "omission": {"cur":{}, "avg":{}, "max":{}} },
+  "kill":   { "main": [{"n":"27","votes":4,"reasons":["上期出号","跨度26"]}], "threshold": 3.5 },
+  "dan":    { "main": [{"n":"05","score":3.4,"freq":21,"cur":2,"avg":1.8}] },
+  "picks":  [ { "name":"稳健·热号", "main":["01","05","12","19","26","33"], "aux":["14"], "score":9 } ]
 }
 ```
 
-数字型（`fc3d`/`pl3`/`pl5`/`qxc`）把 `main` 换成按位的 `digits`，`analysis` 含 `perPos[].freq/omission/hot/cold`，并额外给出近 N 期组三 / 组六 / 豹子形态。
+数字型（`fc3d/pl3/pl5/qxc`）把 `main` 换成按位的 `digits`，`analysis` 含 `perPos[]`，并附近 N 期组三 / 组六 / 豹子形态。
 
-**杀号公式**（加权投票，票数越高越该杀）：上期出号、邻号 ±1、和值尾、跨度 ±1、极号 ±1、热尾、冷 012 路、质合偏态、热区、上上期号。`/api/kill` 同时给出 `threshold`，「杀号缩水」策略剔除票数 ≥ 阈值的号码。
+**杀号 10 类公式**：上期出号、邻号 ±1、和值尾、跨度 ±1、极号 ±1、热尾、冷 012 路、质合偏态、热区、上上期号。
 
-### 计算器
+</details>
 
-| 路径 | 参数 | 说明 |
+<details>
+<summary><b>环境变量参考（点击展开）</b></summary>
+
+| 变量 | 类型 | 说明 |
 |---|---|---|
-| `/api/calc` | `kind=`, 复式/胆拖参数, `chase=`, `mults=` | 注数 / 金额 / 追号计划（每注 2 元） |
-| `/api/prize` | `kind=`, 命中参数 | 奖级与固定奖金额 |
+| `DB` | D1 binding | 建库后绑定（`wrangler.local.toml`） |
+| `VERSION` | var | 版本号，`/health` 返回 |
+| `API_TOKEN` | secret | 写接口鉴权；不设置则写接口一律 401（fail-closed） |
+| `DATA_SOURCE_OFFICIAL` | var/secret | 自定义双色球数据源 URL（返回 `[{code,red,blue,date}]` JSON），设置后双色球只走该源 |
+| `DATA_SOURCE_PUBLIC` | var/secret | 同上，第二自定义源；两者可并用交叉比对 |
 
-- 双色球 `red`/`blue` 复式，`dan`/`tuo` 胆拖；大乐透 `front`/`back` 或 `fdan`/`ftuo`/`bdan`/`btuo`
-- 七乐彩 `main` 或 `dan`/`tuo`；快乐 8 `pick`（选几）+ `nums`（选号个数）
-- 数字型 `pos=2,3,4`（各位可选个数）、`group=3|6` 组选
-- 追号：`chase=3&mults=1,2,4` 返回逐期注数金额与合计
-- 中奖：快乐 8 按官方奖金表（选十中 10 ≤500 万 / 中 9 = 8000 / 中 8 = 720 / 中 0 = 2），3D 与排列 3 判直选 1040 / 组三 346 / 组六 173
+</details>
 
-### 双色球 `/api/ssq/*`
-
-| 路径 | 参数 | 说明 |
-|---|---|---|
-| `latest` | — | 最新一期，含 `sources` / `consistent` |
-| `history` | `limit=1..200` | 历史（新→旧） |
-| `trend` | `win=5..100` | 逐期遗漏表 |
-| `analyze` | `win=5..100` | 频次 / 冷热 / 奇偶 / 质合 / AC / 012 路 / 连号 / 重号 / 遗漏 |
-| `recommend` | — | 6 组参考（含结构分） |
-| `verify` | `code=&red=&blue=` | 验奖，返回 `hitRed` / `hitBlue` / `prize` |
-
-### 大乐透 `/api/dlt/*`
-
-`latest` / `history?limit=` / `analyze?win=` / `verify?code=&front=&back=`
-
-### 小彩种 `/api/{fc3d|pl3|pl5|qlc|qxc|kl8}/*`
-
-| 路径 | 参数 | 说明 |
-|---|---|---|
-| `latest` | — | 最新一期 |
-| `history` | `limit=1..100` | 历史 |
-| `analyze` | `win=5..100` | 与双色球同口径的统计（数字型按位输出） |
-| `predict` | `win=`, `n=` | 与双色球同口径的 6 套策略 + 杀号 + 定胆 |
-| `kill` / `dan` | `win=` | 杀号 / 定胆 |
-| `verify` | `code=&nums=` | 验奖（七乐彩含 `prize`，快乐 8 返回命中个数） |
-
-小彩种在上游不可用时会自动降级读 D1 缓存，响应中标记 `degraded: true`。
-
-### 旋转矩阵
-
-`GET /api/rotation?n=12&pick=6&hit=4`
-
-返回覆盖设计 `C(n, pick, hit)`：从 n 个自选号中每注选 pick 个，**保证**若开奖号命中自选号中任意 hit 个，至少有一注同时包含这 hit 个号。
-
-实测（贪心构造，非最优但保证覆盖）：
-
-| n / pick / 保中 | 注数 | 理论下界 |
-|---|---|---|
-| 8 / 6 / 3 | 4 | 3 |
-| 10 / 6 / 3 | 10 | 6 |
-| 12 / 6 / 4 | 53 | 33 |
-| 14 / 6 / 4 | 107 | 67 |
-| 16 / 6 / 4 | 192 | 122 |
-
-组合规模过大（t 子集数 > 60000）时返回 `error` 而非空转；候选过多时改用随机采样，并在 `note` 与 `guaranteed=false` 中如实标注**未达 100% 覆盖**。缩水只降低投注成本，不提高中奖概率。
-
-## 部署
-
-```bash
-# 1. 建库
-npx wrangler d1 create lottery
-npx wrangler d1 execute lottery --file=db/schema.sql
-
-# 2. 本地部署配置（含真实 database_id，已在 .gitignore 中）
-cp worker/wrangler.toml worker/wrangler.local.toml
-#    编辑 wrangler.local.toml 填入 database_id
-
-# 3. 可选：设置鉴权 Token
-npx wrangler secret put API_TOKEN    # 不设置则接口完全公开
-npx wrangler secret put CLOUDFLARE_API_TOKEN
-npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
-
-# 4. 部署（deploy 脚本会自动先构建前端，无需单独执行 build:ui）
-npm --prefix worker run deploy -- --config worker/wrangler.local.toml
-```
-
-> `worker/src/ui.js` 是构建产物，已在 `.gitignore` 中。克隆后必须先构建再部署，
-> 直接 `wrangler deploy` 会因缺少 `ui.js` 而失败——请始终用 `npm run deploy`。
-
-鉴权模型：**开奖数据是公开信息，读接口一律免鉴权**；只有写操作与个人数据（`/api/favs` 的全部方法、`/api/admin/sync`）要求 `Authorization: Bearer <API_TOKEN>`。未设置 `API_TOKEN` 时写接口一律拒绝（fail-closed），不会「忘了配就裸奔」。
-
-### 定时落库
-
-`.github/workflows/sync.yml` 在 CI 通过后按开奖日触发 `/api/admin/sync`，把 8 个彩种写入 D1。需在仓库 Settings → Secrets 配置：
-
-- `WORKER_URL`：如 `https://lottery-web.xxx.workers.dev`
-- `API_TOKEN`：与 Worker 的 secret 一致
-
-## 本地开发
-
-```bash
-cd worker
-npm run build:ui     # 从 frontend/ 生成 src/ui.js
-npm test             # 单元测试（零依赖，离线可跑）
-npm run test:live    # 真实数据源连通性测试（需联网）
-npm run dev          # wrangler dev
-```
-
-## 结构
+## 📁 目录结构
 
 ```
-worker/src/index.js   路由 / 缓存 / CORS / 鉴权 / 落库调度
-worker/src/predict.js 统一预测引擎：8 彩种共用的分析 / 杀号 / 定胆 / 推荐 / 结构打分
-worker/src/calc.js    注数 / 金额 / 追号计算，快乐8 奖金表，3D 直选组三组六判定
-worker/src/ssq.js     双色球：500 + cwl + 17500、校验、趋势、验奖
-worker/src/dlt.js     大乐透：500 + 17500、验奖
-worker/src/small.js   6 小彩种解析、奖级规则、旋转矩阵（覆盖设计）
-worker/src/db.js      D1 读写（draws / dlt_draws / small_draws / favs / sync_log）
-worker/src/ui.js      构建产物，由 scripts/build-ui.mjs 从 frontend/ 生成
-worker/test/          单元测试 + 真实数据源测试
-frontend/             前端唯一事实源（index.html / sw.js / manifest.json / icon.svg）
-db/schema.sql         D1 建表
-scripts/build-ui.mjs  前端打包进 Worker
+lottery-web/
+├── frontend/               # 前端唯一事实源（构建时内联进 Worker）
+│   ├── index.html          # 单页应用（7 tab + 内联 JS）
+│   ├── sw.js               # Service Worker 离线兜底
+│   ├── manifest.json       # PWA manifest
+│   └── icon.svg
+├── worker/
+│   ├── src/
+│   │   ├── index.js        # 路由 / 三级缓存 / CORS / 鉴权 / 落库调度 / 复盘 job
+│   │   ├── predict.js      # 统一预测引擎（8 彩种共用）
+│   │   ├── ssq.js          # 双色球取数（500 + cwl + 17500）与验奖
+│   │   ├── dlt.js          # 大乐透取数与验奖
+│   │   ├── small.js        # 6 小彩种解析 / 奖级 / 旋转矩阵
+│   │   ├── calc.js         # 注数 / 金额 / 追号 / 快乐8 奖金表
+│   │   ├── db.js           # D1 读写
+│   │   └── ui.js           # ⚠️ 构建产物（不进仓库，先 build:ui）
+│   ├── test/
+│   │   ├── unit.test.mjs   # 基础单元测试
+│   │   ├── predict.test.mjs # 预测引擎测试（含 8 彩种一致性）
+│   │   └── live.test.mjs   # 真实数据源连通性（需联网）
+│   └── wrangler.toml       # 部署模板（database_id 已脱敏为 REPLACE_ME）
+├── scripts/build-ui.mjs    # frontend/ → worker/src/ui.js 打包脚本
+├── db/schema.sql           # D1 建表（6 张：draws / dlt_draws / small_draws / predlog / favs / sync_log）
+├── docs/
+│   ├── CHANGELOG.md        # 全部版本变更记录
+│   ├── PUBLISH.md          # 发布前自检清单
+│   └── research.md         # 调研笔记
+└── .github/workflows/sync.yml   # CI：测试 → 线上冒烟 → 定时落库
 ```
 
-**前端只有 `frontend/` 一份源码**，Worker 通过构建脚本内联，避免两份 HTML 长期漂移。
+## 🧭 设计原则
 
-## v0.11.0 变更
+1. **统计诚实**：任何「有效」结论必须对照随机基线 + 显著性检验；工具的第一句话可能是「别调」（阈值寻优的实测结论）
+2. **杜绝未来函数**：回测只用当期之前的数据
+3. **数据宁缺毋滥**：多源不一致的期号拒绝落库，D1 旧值仍是好的
+4. **免费版友好**：CPU 10ms 限制下自动抽样、三级缓存（isolate 内存 → edge cache → 现算）、重计算走独立请求
+5. **一份事实源**：前端只有 `frontend/` 一份源码，Worker 内联构建产物，杜绝两份 HTML 漂移
 
-本轮主题：**工程韧性与使用体验**。方法学补丁（v0.10）之后，补的是「 CI 怎么知道线上还活着、数据怎么知道自己过期了、用户怎么一眼看到今天该看什么」。
+## 📜 版本演进
 
-- **CI 部署冒烟**：`sync.yml` 新增 `smoke` job——push / 定时同步后对线上 5 端点（health / meta / ssq-latest / dlt-analyze / review）断言 HTTP 200 + 关键字段，部署挂了或线上数据异常时 CI 直接红
-- **dlt 交叉校验**：大乐透补齐与双色球同标准的落库防护——500 与 17500 最近 30 期逐期比对（`crossCheck` 助手两处复用），不一致期号拒绝写 D1，sync 响应带 `crosscheck` 报告
-- **数据新鲜度保险丝**：`/api/meta` 附带 `stale[]`（各彩种 D1 最新一期距今天数，10 分钟内存缓存）；前端任一彩种 ≥4 天在顶部亮黄条「数据可能过期（同步任务停摆？）」——Actions 失效 / 上游改版时用户不再拿旧数据当最新预测
-- **复盘显著性**：`/api/review` 聚合输出挂二项检验 `p` 值（`pickP/danP/killP`，对照随机单号基线，n<20 为 null）；前端复盘卡片直接显示「显著/不显著」，杀号错杀率低于基线才算有价值
-- **阈值寻优**：新端点 `/api/kill-tune`（前端「杀号阈值寻优」按钮）——默认「杀票数前 30%」到底对不对？5 个分位 × 旧 70% 拟合 / 新 30% 验证共 10 次回测，输出 `gap` 与诚实判据（train 最优在 test 上接近事后最优 → 阈值有信息量；否则默认 30% 即可）。线上实测（双色球）：gap=0.018 → 判定「阈值不敏感/过拟合，默认 30% 即可」——工具给出的第一句话就是「别调」
-- **deep 取数缓存**：`drawsDeep` 加 isolate 级内存缓存（TTL 30 分钟，key 带 kind+最新期号，新开奖自动失效）——外推检验/阈值寻优这类 heavy 端点连续点击不再重复拉 650 期全量文件
-- **今日日报页**：新 tab——今日开奖日历（8 彩种红/灰标）、破纪录遗漏预警（`/api/records`：当前遗漏 ≥ 历史纪录标红、≥80% 标橙）、上期对账、下期快照，一页看完今天该看的
-- **复盘与分年可视化**：回测区分年稳定性柱图（热号/杀号命中率 × 随机基线参考线）、复盘卡片加「实际 vs 随机基线」对比小图（ECharts）
-- **复盘快照修复（线上发现）**：review-job 此前只取 8 期喂 `analyzeAll(win=30)`，窗口不足导致快照 `picks` 全空；改取 60 期并清掉 DB 中带空 picks 的未对账快照（今晚 cron 自动重建完整快照）
-- 测试 60 项全过（新增 killThreshold 分位参数化 / thresholdTune 结构与方向锁 2 组）；版本 0.11.0
+`v0.5` 数据正确性大修 → `v0.6` 统一预测引擎 → `v0.7` 历史回测 → `v0.8` 校准杀号+胆拖单 → `v0.9` 600 期回测+走势图 → `v0.10` 统计诚实性+复盘闭环 → `v0.11` 工程韧性+今日日报
 
-## v0.10.0 变更
+完整变更记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
-本轮主题：**统计诚实性 + 预测记忆闭环 + 数据可靠性**。指导思想：彩票近似独立随机，任何「更玄的公式」都不会带来真实提升；值得打磨的是让「有效」二字有统计背书、把预测变成可回看的记录、让数据链路防翻车。
+## 📄 声明
 
-- **统计显著性检验**：`/api/backtest` 三策略与杀号（含逐公式）全部输出二项检验 `p` 值（正态近似，双侧）；样本 <20 返回 `null`（前端显示「样本不足，不评估显著性」），`p<0.05` 前端标「显著」——杜绝把噪音当规律
-- **校准外推检验（holdout）**：`/api/kill-calibrated?holdout=0.3`——权重只用旧 70% 数据拟合，在新 30% 上分别回测「加权 vs 未加权」杀号命中率。新段上校准仍更准才算真有效，直接检验「同一段数据既调权又报成绩」的过拟合。显式传参才计算，默认路径 CPU 不变
-- **calibrate 样本量保护（审计修复）**：killed<10 的公式不参与加权（小样本 rate=0 会被误判成「神公式」放大噪音）；killed≥10 按样本量线性收缩到满强度（killed=40 满强度）
-- **加权杀号可回测（审计修复）**：`backtest` 接受 `weights` 并传入 killList——校准权重此前只在线上投票生效、回测口径从未覆盖，「线上给什么、回测验什么」补齐
-- **分年稳定性**：`/api/backtest` 输出 `eras[]`（按 date/期号前缀分年），前端展示「2023 热22%/杀15% · 2024 …」——策略是长期有效还是最近退化一眼可见
-- **主区形态转移矩阵**：`/api/analyze` 号码池型新增 `shape`——和值档位/奇偶/大小/012路 的一阶转移 + 拉普拉斯平滑（`p=(count+1)/(total+3)`，样本稀疏趋近均匀），输出「上一期形态 → 下期最可能形态 Top3」；与 v0.8 蓝球转移矩阵、形态过滤互补
-- **预测复盘闭环**：新表 `predlog`（UNIQUE(kind,code)），同步任务自动快照下一期推荐（analyze 级计算，不碰回测）→ 开奖后自动对账（命中数/定胆/杀错）；`/api/review` 公开查询滚动命中率与明细；工具页新增「预测复盘」卡片。快照+对账跑在独立请求里（review-job，CPU 预算独立）
-- **多源交叉校验（双色球）**：`getDraws` 对 500/cwl 两源最近 30 期逐期比对，不一致的期号**拒绝落库**（宁缺毋滥，D1 旧值仍是好的），sync 响应带 `crosscheck` 报告
-- **数据去重（审计修复）**：所有取数出口（drawsOf/drawsDeep/loadDraws）按 `code` 去重并透传 `_sources/_degraded` 等元属性——防 D1 唯一约束缺失时重复期号虚增回测样本
-- **空数据防御（审计修复）**：`mainOf/auxOf` 对 null 入参静默返回空数组，缺期数据不再能崩掉整条预测链
-- 测试 58 项全过（新增 binomP/eras/weights/holdout/shapeTrans 5 组）；版本 0.10.0
-
-## v0.9.0 变更
-
-新增：
-
-- **回测拉到 600 期跨度**：`/api/backtest?periods=≤600`，深度取数 `drawsDeep`（17500 全量 650 期，双色球/大乐透/小彩种全覆盖）。免费版 Workers 单请求 CPU 限 10ms，跨度 >60 期自动按步长抽样（实测点数封顶 ≈60），返回 `tested/stride`，前端标注「近 600 期跨度 · 抽样 60 点 · 步长 10」。杀号回测的历史统计窗口封顶 100 期，保证 CPU 有界
-- **遗漏走势图**：统一入口 `/api/trend?kind=`（号码池型通用，含双色球/大乐透），前端 ECharts 折线渲染，默认画当前遗漏最深 4 个号，可自选号码（≤8 个），带缩放条
-- **胆拖单一键保存/导出**：生成胆拖单后可直接「保存到收藏」（写入 D1）/「复制文本」/「导出 TXT」
-- **同步后自动预热校准缓存**：`/api/kill-calibrated` 结果真正进入边缘缓存（`caches.default`，TTL 6h，命中直接返回）；`/api/admin/sync` 完成后自 fetch 8 个彩种的校准端点（各自独立请求，CPU 预算独立），GitHub Actions 每日同步即完成预热
-- `freqStats` 当前遗漏改为由 `lastSeen` O(1) 推导（语义等价），消除 O(pool×draws) 次重复取号——全部统计接口受益
-
-修正：
-
-- 多处并行编辑同文件导致改动丢失（开发过程问题，逐处复验落盘后修复）
-
-## v0.8.0 变更
-
-新增：
-
-- **校准杀号 `/api/kill-calibrated`**：10 类杀号公式带稳定 key，回测逐公式统计真实命中率（如双色球实测：邻号 15.3%、和值尾 12.8% 低于基线有效；上期出号 19.4% 无信息），据此生成 [0.2, 2] 动态权重——无效公式自动降权，投票重新计算。前端杀号区默认展示校准版
-- **胆拖投注单 `/api/ticket`**（ssq/dlt/qlc）：胆 = 校准评分最高 D 个（剔除杀号），拖 = 次高 T 个，副区取胆码前 pick 个，直接输出注数与金额——打通「预测 → 可购买清单」链路。前端预测页一键生成。快乐8/数字型明确拒绝并给替代玩法指引
-- **蓝球/后区转移矩阵**：`analyze` 输出 `auxTransition`（上期副区号 → 下期副区号的历史转移频次 Top6；七乐彩同池跳过；上期号无样本时退回全窗口高频转移并标注）
-- **推荐带形态指标**：`picks[]` 新增 `sum`（和值）/ `span`（跨度）；`predict?filter=1` 开启形态过滤（和值落理想区 ±1.3tol、跨度在区间 50%~98%，最多重抽 12 次）
-- **小彩种遗漏走势** `/api/{qlc|kl8}/trend`：逐期各号当期遗漏（旧→新）
-- 测试增至 53 项
-
-修正（均为本轮自测发现）：
-
-- 回测校准后 reasons 仍计入零权重公式——改为只列实际计票的公式
-- 胆拖单缺省拖数被参数钳位成 1——显式传参才生效
-- 转移矩阵变量遮蔽（转移字典 `tc` 被期数常量 `cnt` 遮蔽）导致恒为空——修正并加非空断言
-
-## v0.7.0 变更
-
-新增：
-
-- **历史回测引擎 `/api/backtest`**：逐期用「当期之前」的数据生成预测再与真实开奖比对（杜绝未来函数），输出热号/冷号/胆码/杀号的真实命中率与随机基线对照，并给出「有效 / 无信息」结论。前端分析页直接展示回测摘要与当前遗漏 Top10
-- 小彩种样本从 60 期扩到 150 期，遗漏（当前/均值/最大）统计更有意义
-- 测试增至 46 项（新增回测结构/取值范围与「恒定开奖 100% 命中」确定性校验）
-
-回测的真实结论（2026-09-08 实测，随数据滚动变化）：
-
-- 双色球：热号策略单号命中 21.7% > 基线 18.2%（有微弱信息）；杀号 20.2% ≥ 基线，如实标注「无信息」
-- 快乐8：杀号 22.4% < 基线 25%；七星彩：首位杀号 7.6% < 基线 10%
-- 结论会随开奖滚动，接口里没有任何写死的「必中」话术
-
-## v0.6.0 变更
-
-新增：
-
-- **统一预测引擎 `worker/src/predict.js`**：8 个彩种共用同一套分析 / 杀号 / 定胆 / 推荐逻辑，返回结构完全一致。此前只有双色球有推荐、大乐透只有简单统计、其余 6 种完全没有分析与预测
-- **杀号**（10 类公式加权投票，给出票数与命中原因）、**定胆**（频率 + 遗漏回归 + 邻号 + 重号）
-- **6 套策略**对每个彩种统一输出：稳健·热号 / 进取·遗漏 / 均衡 / 区间覆盖 / 杀号缩水 / 随机基准，均带结构分（和值 / 奇偶 / 大小 / 区间 / 跨度 / AC）
-- **注数与金额计算器** `/api/calc`：复式、胆拖、追号计划（倍数序列逐期金额）
-- **中奖计算器** `/api/prize`：快乐 8 官方奖金表（选一~选十）、3D / 排列 3 直选 1040 / 组三 346 / 组六 173
-- 数字型彩种按位分析（`perPos`），含近 N 期组三 / 组六 / 豹子形态统计
-- 前端新增「工具」页（注数 / 追号 / 中奖计算），杀号与定胆直接在预测页展示
-- 44 个单元测试（新增 10 个覆盖预测引擎的 8 彩种一致性与边界）
-
-修正：
-
-- 快乐 8 结构分误用「开奖 20 个号」作基准，选 8~10 个号时分数恒偏低——改为按实际选号个数评估
-- 七乐彩特别号可能与基本号重复（两者同池）——副区候选现在排除主区已选号
-- 推荐抽样「先切 N 个再去重」，候选池含重复项时会返回不足 N 个号
-
-## v0.5.0 变更
-
-修复：
-
-- 双色球 17500 备用源漏掉日期列，红球/蓝球整体错位一列，且从文件头取数拿到 2003 年数据——**双源都失败时会静默返回 2003 年开奖号**
-- 期号格式不统一（500 为 5 位 `26103`，cwl/17500 为 7 位 `2026103`），导致双源一致性永远为 false、按期号验奖命中不到
-- 验奖未归一化号码，输入 `1` 匹配不到 `01`
-- 缺少 CORS `OPTIONS` 预检，跨域调用 `/api/favs` 的 POST/DELETE 必然失败
-- 大乐透奖级错误（如 `4+2` 被判为三等，实际为四等）
-- 旋转矩阵的 `minHit` 参数从未参与计算，无任何覆盖保证
-- 蓝球评分中两个维度是写死的 `1.0` 占位值
-
-新增：
-
-- 旋转矩阵改为真正的覆盖设计贪心构造，并自带覆盖校验
-- 大乐透 / 小彩种落库（`dlt_draws` / `small_draws` 此前建表但无代码写入）
-- 小彩种验奖接口、上游故障自动降级读 D1
-- 统计维度：AC 值、012 路、质合比、尾数、连号、重号、遗漏（当前/均值/最大）
-- 七乐彩奖级、快乐 8 命中统计
-- 34 个单元测试 + 12 个真实数据源测试，含双源交叉验证
-- 前端重写为 8 彩种全功能版，含 PWA 与 Service Worker 离线兜底
-- GitHub Actions：单元测试 + 真实落库（此前只 curl 看一眼）
-
-## 声明
-
-自研代码 MIT。数据归属原站（500 / cwl / 17500）。详见 `/licenses` 与 `LICENSE`。
+- 自研代码以 MIT 许可发布（见 [LICENSE](LICENSE)）
+- 开奖数据归属原站（500.com / 中彩联 cwl.gov.cn / 17500），本项目仅做统计与缓存
+- 逻辑借鉴（均为自写实现）：sinyu1012/Double-Color-Ball-AI、oahzxd/lottery、BEWINDOWEB/lotterygrabber、longgeyyds/ssq-fusion、Konata/chinese-lottery-predict、zxz0119/lottery-ai-simulator 等 MIT 项目，TheMelody/LotteryTrend（Apache-2.0，保留声明）；完整清单见站内 `/licenses`
+- 随机游戏，统计仅供娱乐，不保证中奖

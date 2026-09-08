@@ -22,11 +22,11 @@ grep -rInE "cfut_|CLOUDFLARE_API_TOKEN *[:=] *[\"'][A-Za-z0-9_-]{20,}" . --exclu
 
 ## 自建部署指引（给拿到仓库的人）
 
-见 README「部署」章节，核心三步：
+见 README「🚀 快速开始」章节，核心三步：
 
-1. `npx wrangler d1 create lottery` 并记下 `database_id`
+1. `npx wrangler d1 create lottery` 并记下 `database_id`，`npx wrangler d1 execute lottery --file=db/schema.sql` 建表
 2. `cp worker/wrangler.toml worker/wrangler.local.toml`，填入 ID
-3. `npx wrangler deploy --config worker/wrangler.local.toml`
+3. `npm --prefix worker run deploy -- --config worker/wrangler.local.toml`（自动先构建前端）
 
 ## 前端单独发布（可选）
 
