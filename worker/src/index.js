@@ -456,13 +456,14 @@ async function reviewJob(request, env) {
           checkedN++;
         } catch {}
       }
-      // ② 快照下一期推荐（analyze 级计算，CPU 几 ms；不碰回测）
-      const an = analyzeAll(k, draws, 30);
-      const kl = killList(k, draws.slice(0, 60));
+      // ② 快照下一期推荐：必须走 recommendAll——analyzeAll 返回的是统计块（无 picks/dan 字段），
+      //    v0.10~v0.11.0 误用 analyzeAll 导致快照 picks/dan 恒空（封版审计发现，字段来源修复）
+      const rec = recommendAll(k, draws, { win: 30 });
+      const kl = rec.kill || {};
       const th = kl.threshold ?? 99;
       const payload = {
-        picks: (an.picks || []).slice(0, 3).map(x => ({ name: x.name, main: x.main, aux: x.aux || [] })),
-        dan: (an.dan && an.dan.main ? an.dan.main : (an.dan || [])).slice(0, 4).map(x => x.n || x),
+        picks: (rec.picks || []).slice(0, 3).map(x => ({ name: x.name, main: x.main, aux: x.aux || [] })),
+        dan: ((rec.dan && rec.dan.main) || []).slice(0, 4).map(x => x.n || x),
         kill: (kl.main || []).filter(x => x.votes >= th).map(x => x.n),
         basedOn: draws[0].code
       };
