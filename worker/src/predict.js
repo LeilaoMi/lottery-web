@@ -49,6 +49,8 @@ export function acValue(nums) {
 }
 
 // 频率 + 遗漏（遗漏：当前未出现期数 / 历史平均间隔 / 历史最大间隔）
+// 性能关键：cur 由 lastSeen O(1) 推导，不再逐期重扫（原实现 O(pool×draws) 次 getNums，
+// 是 600 期回测的 CPU 大头；等价性：cur = 最新索引 - 最后出现索引，从未出现则为总期数）
 function freqStats(draws, pool, getNums) {
   const freq = {}, lastSeen = {}, gaps = {};
   for (const k of pool) { freq[k] = 0; lastSeen[k] = null; gaps[k] = []; }
@@ -61,14 +63,13 @@ function freqStats(draws, pool, getNums) {
       lastSeen[k] = i;
     }
   });
-  const cur = {}, avg = {}, max = {};
+  const cur = {}, avg = {}, max = {}, L = asc.length;
   for (const k of pool) {
-    let m = 0;
-    for (const d of draws) { if (getNums(d).includes(k)) break; m++; }
-    cur[k] = m;
+    const ls = lastSeen[k];
+    cur[k] = ls !== null ? (L - 1 - ls) : L;
     const g = gaps[k];
-    avg[k] = g.length ? +(g.reduce((a, b) => a + b, 0) / g.length).toFixed(2) : draws.length;
-    max[k] = g.length ? Math.max(...g) : draws.length;
+    avg[k] = g.length ? +(g.reduce((a, b) => a + b, 0) / g.length).toFixed(2) : L;
+    max[k] = g.length ? Math.max(...g) : L;
   }
   return { freq, cur, avg, max };
 }
@@ -107,7 +108,6 @@ export function killList(kind, draws, opts = {}) {
 
   for (const x of N) add(pad2(x), 1, "last", "上期出号");                              // 1 上期号
   for (const x of N) { add(pad2(x + 1), 0.5, "neighbor", "邻号"); add(pad2(x - 1), 0.5, "neighbor", "邻号"); } // 2 邻号
-  const st = freqStats(draws, pool, d => mainOf(d, kind));
   const tail = sum % 10;
   for (const k of pool) if (Number(k) % 10 === tail) add(k, 1, "sumtail", "和值尾" + tail);   // 3 和值尾
   for (const v of [span - 1, span, span + 1]) add(pad2(v), 1, "span", "跨度" + span);          // 4 跨度
@@ -484,11 +484,13 @@ export function backtest(kind, draws, opts = {}) {
   const N = Array.isArray(draws) ? draws.length : 0;
   const warmup = Math.max(10, Math.min(opts.warmup || 30, Math.max(1, N - 1)));
   const win = Math.max(10, Math.min(opts.win || 30, 60));
-  const maxP = Math.max(0, Math.min(40, N - warmup));
+  const maxP = Math.max(0, Math.min(600, N - warmup));
   const periods = Math.max(0, Math.min(opts.periods || 15, maxP));
+  // 免费版 Workers 单请求 CPU 限 10ms：跨度 > 60 期时按步长抽样，实测点数封顶 ≈ 60
+  const stride = periods > 60 ? Math.ceil(periods / 60) : 1;
   const note = "纯统计对照，不构成任何预测保证；某项长期优于基线也不代表未来有效";
   if (N < warmup + 1 || periods <= 0) return { kind, name: s.name, type: s.type, periods: 0, note: "样本不足，无法回测", disclaimer: DISCLAIMER };
-  if (s.type === "digit") return backtestDigit(kind, draws, { warmup, win, periods, note });
+  if (s.type === "digit") return backtestDigit(kind, draws, { warmup, win, periods, stride, note });
 
   const pool = poolOf(s.main), size = pool.length, pick = s.main.pick;
   const guessN = Math.min(s.suggest, size), danK = 8, base = pick / size;
@@ -497,8 +499,8 @@ export function backtest(kind, draws, opts = {}) {
   const killAgg = {};
   const aux = s.aux ? { pick: s.aux.pick, size: s.aux.max - s.aux.min + 1, hot: { hit: 0 }, kill: { killed: 0, hit: 0 } } : null;
   let tested = 0;
-  // draws 由新到旧：测试最近的 periods 期，即 i = periods-1 .. 0，历史为 draws[i+1..]
-  for (let i = Math.min(periods, N) - 1; i >= 0; i--) {
+  // draws 由新到旧：测试最近 periods 期（步长抽样），历史为 draws[i+1..]
+  for (let i = periods - 1; i >= 0; i -= stride) {
     const hist = draws.slice(i + 1);
     if (hist.length < warmup) continue;
     const actual = new Set(mainOf(draws[i], kind));
@@ -510,7 +512,8 @@ export function backtest(kind, draws, opts = {}) {
     hot.hit += hotTop.filter(k => actual.has(k)).length;
     cold.hit += coldTop.filter(k => actual.has(k)).length;
     dan.hit += danTop.filter(k => actual.has(k)).length;
-    const kl = killList(kind, hist, { perFormula: true }), th = kl.threshold ?? 99;
+    // killAux 的遗漏统计窗口封顶 100 期：600 期跨度时历史数组很长，不封顶 CPU 会失控
+    const kl = killList(kind, hist.slice(0, 100), { perFormula: true }), th = kl.threshold ?? 99;
     const killed = (kl.main || []).filter(x => x.votes >= th).map(x => x.n);
     kill.killed += killed.length;
     kill.hit += killed.filter(k => actual.has(k)).length;
@@ -536,7 +539,7 @@ export function backtest(kind, draws, opts = {}) {
   if (!tested) return { kind, name: s.name, type: s.type, periods: 0, note: "样本不足，无法回测", disclaimer: DISCLAIMER };
   const rate = (a, b) => +(a / Math.max(1, b)).toFixed(3);
   const out = {
-    kind, name: s.name, type: s.type, periods: tested, warmup, win,
+    kind, name: s.name, type: s.type, periods, tested, stride, warmup, win,
     guessN, pick, poolSize: size, baseline: +base.toFixed(4),
     strategies: {
       hot: { avgHit: +(hot.hit / tested).toFixed(3), hitRate: rate(hot.hit, tested * guessN), baseline: +base.toFixed(4), note: "预测 " + guessN + " 个，单号基线 " + base.toFixed(4) },
@@ -570,7 +573,7 @@ export function backtest(kind, draws, opts = {}) {
 function backtestDigit(kind, draws, cfg) {
   const s = specOf(kind), N = draws.length, DIG = Array.from({ length: 10 }, (_, i) => String(i));
   const perPos = Array.from({ length: s.digits }, (_, p) => ({ pos: p + 1, hotHits: 0, coldHits: 0, killTotal: 0, killHit: 0, tested: 0 }));
-  for (let i = Math.min(cfg.periods, N) - 1; i >= 0; i--) {
+  for (let i = cfg.periods - 1; i >= 0; i -= cfg.stride) {
     const hist = draws.slice(i + 1);
     if (hist.length < cfg.warmup) continue;
     const actual = mainOf(draws[i], kind);
@@ -581,14 +584,14 @@ function backtestDigit(kind, draws, cfg) {
       const cold1 = DIG.slice().sort((a, b) => st.cur[b] - st.cur[a] || Number(a) - Number(b))[0];
       row.hotHits += hot1 === String(actual[p]) ? 1 : 0;
       row.coldHits += cold1 === String(actual[p]) ? 1 : 0;
-      const kl = killList(kind, hist);
+      const kl = killList(kind, hist.slice(0, 100)); // 统计窗口封顶 100 期，保证 CPU 有界
       const k1 = (kl.perPos[p].kill || [])[0];
       if (k1 && k1.votes > 0) { row.killTotal++; row.killHit += k1.n === String(actual[p]) ? 1 : 0; }
       row.tested++;
     }
   }
   return {
-    kind, name: s.name, type: s.type, periods: cfg.periods, warmup: cfg.warmup, win: cfg.win,
+    kind, name: s.name, type: s.type, periods: cfg.periods, tested: perPos[0].tested, stride: cfg.stride, warmup: cfg.warmup, win: cfg.win,
     baseline: 0.1,
     perPos: perPos.map(r => ({
       pos: r.pos,

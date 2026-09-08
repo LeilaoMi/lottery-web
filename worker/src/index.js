@@ -6,8 +6,12 @@ import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, saveSmall, loadSmall } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
+// kill-calibrated 的 isolate 级内存缓存：caches.default 在 workers.dev 域名上是 no-op，
+// 内存缓存保证同一 isolate 内的后续请求不重复算校准；自定义域上另由 caches.default 兜底
+const CAL_MEM = new Map();
+const CAL_TTL = 21600_000;
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return cors();
     if (url.pathname === "/" || url.pathname === "/index.html") return html();
@@ -25,8 +29,8 @@ export default {
     if (url.pathname === "/api/specs") return json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600);
     if (url.pathname === "/api/calc") return calcRoute(url);
     if (url.pathname === "/api/prize") return prizeRoute(url);
-    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest" || url.pathname === "/api/kill-calibrated" || url.pathname === "/api/ticket") return predictRoute(request, env, url);
-    if (url.pathname === "/api/admin/sync") return adminSync(request, env);
+    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest" || url.pathname === "/api/kill-calibrated" || url.pathname === "/api/ticket" || url.pathname === "/api/trend") return predictRoute(request, env, url);
+    if (url.pathname === "/api/admin/sync") return adminSync(request, env, ctx);
     if (url.pathname.startsWith("/api/favs")) return favsRoute(request, env, url);
     if (url.pathname.startsWith("/api/ssq/")) return ssqRoute(request, env, url);
     if (url.pathname.startsWith("/api/dlt/")) return dltRoute(request, env, url);
@@ -157,25 +161,67 @@ async function drawsOf(env, kind, limit = 60) {
   }
   return d;
 }
+// 深度取数：回测/校准/胆拖单需要 600+ 期长历史，优先走 17500 全量文件（双色球/大乐透/小彩种都覆盖）
+async function drawsDeep(env, kind) {
+  if (kind === "ssq") {
+    let d = [];
+    try { d = await fetch17500(650); } catch {}
+    if (d.length) return d;
+    return getDraws(env, 200);
+  }
+  if (kind === "dlt") {
+    let d = [];
+    try { d = (await fetch17500DLT()).slice(0, 650); } catch {}
+    if (d.length) return d;
+    try { return await fetchDLT(200); } catch { return []; }
+  }
+  let d = [];
+  try { d = await fetchSmall(kind, 650); } catch (e) {
+    d = await loadSmall(env.DB, kind, 650).catch(() => []);
+    if (!d.length) throw e;
+    d._degraded = true;
+  }
+  return d;
+}
 // 全彩种统一的预测入口：/api/predict | /api/analyze | /api/kill | /api/dan?kind=xx
 async function predictRoute(request, env, url) {
   const kind = (url.searchParams.get("kind") || "").trim();
   if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
   const win = num(url, "win", 30, 5, 100);
+  // kill-calibrated：内存/边缘缓存在任何取数之前检查（上游拉数 ~2.5s 不该白白发生）
+  if (url.pathname.endsWith("/kill-calibrated")) {
+    const ck0 = url.toString();
+    const mem0 = CAL_MEM.get(ck0);
+    if (mem0 && Date.now() - mem0.at < CAL_TTL) {
+      const h = new Headers(mem0.headers); h.set("x-cache", "MEM");
+      return new Response(mem0.body, { status: 200, headers: h });
+    }
+    try {
+      const hit0 = await caches.default.match(new Request(ck0, { method: "GET" }));
+      if (hit0) { const r = hit0.clone(); r.headers.set("x-cache", "EDGE"); return r; }
+    } catch {}
+  }
   try {
-    // 回测/校准/胆拖单需要更长的历史（warmup+periods 最多约 70 期，多取冗余）
+    // 回测/校准/胆拖单需要长历史（600 期跨度 + warmup），走 17500 全量源
     const heavy = url.pathname.endsWith("/backtest") || url.pathname.endsWith("/kill-calibrated") || url.pathname.endsWith("/ticket");
-    const draws = await drawsOf(env, kind, heavy ? 320 : Math.max(60, win));
+    const draws = heavy ? await drawsDeep(env, kind) : await drawsOf(env, kind, Math.max(60, win));
     const act = url.pathname.split("/").pop();
     if (act === "analyze") return json({ kind, ...analyzeAll(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
     if (act === "kill") return json({ kind, ...killList(kind, draws), degraded: !!draws._degraded }, 200, 300);
     if (act === "dan") return json({ kind, ...danList(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
-    if (act === "backtest") return json({ ...backtest(kind, draws, { win, periods: num(url, "periods", 15, 1, 40), warmup: num(url, "warmup", 30, 10, 60) }), degraded: !!draws._degraded }, 200, 3600);
+    if (act === "trend") return json({ kind, rows: trendPool(kind, draws, num(url, "limit", 30, 5, 60)), degraded: !!draws._degraded }, 200, 600);
+    if (act === "backtest") return json({ ...backtest(kind, draws, { win, periods: num(url, "periods", 20, 1, 600), warmup: num(url, "warmup", 30, 10, 60) }), degraded: !!draws._degraded }, 200, 3600);
     if (act === "kill-calibrated") {
-      // 先用近 N 期回测算出各公式的真实命中率 → 生成动态权重 → 再出校准后的杀号
-      const cal = calibrate(kind, draws, { periods: num(url, "periods", 12, 1, 30), win });
+      // 缓存已在取数前检查过（内存 → 边缘），这里只现算并写回三级缓存
+      const cal = calibrate(kind, draws, { periods: num(url, "periods", 12, 1, 60), win });
       const kl = killList(kind, draws, { weights: cal.weights });
-      return json({ kind, ...kl, weights: cal.weights, formulas: cal.formulas, periods: cal.periods, degraded: !!draws._degraded }, 200, 1800);
+      const res = json({ kind, ...kl, weights: cal.weights, formulas: cal.formulas, periods: cal.periods, degraded: !!draws._degraded }, 200, 21600);
+      const ck = url.toString(), creq = new Request(ck, { method: "GET" });
+      if (CAL_MEM.size > 64) CAL_MEM.clear();
+      CAL_MEM.set(ck, { at: Date.now(), body: await res.clone().text(), headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=21600" } });
+      try { await caches.default.put(creq, res.clone()); } catch {}
+      res.headers.set("x-cache", "MISS");
+      return res;
     }
     if (act === "ticket") {
       // dan/tuo 只在用户显式传入时生效，缺省走引擎默认（避免 num() 把 0 钳位成 1）
@@ -240,7 +286,7 @@ function json(o, s = 200, cache = 0) { const h = { "Content-Type": "application/
 function cors() {
   return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type,Authorization", "Access-Control-Max-Age": "86400" } });
 }
-async function adminSync(request, env) {
+async function adminSync(request, env, ctx) {
   if (!requireAuth(request, env)) return json({ error: "unauthorized admin" }, 401);
   const out = { ran: new Date().toISOString(), results: {} };
   try {
@@ -261,6 +307,15 @@ async function adminSync(request, env) {
     } catch (e) { out.results[k] = { error: String(e.message || e) }; }
   }
   out.db = !!env.DB;
+  // 同步完成后预热 8 个彩种的校准杀号缓存：自 fetch 各自进入独立请求（CPU 预算独立），
+  // kill-calibrated 路由自身会 cache.put，这里只负责触发
+  if (ctx && typeof ctx.waitUntil === "function") {
+    const origin = new URL(request.url).origin;
+    out.warm = LOTS.map(x => x.id);
+    for (const k of LOTS.map(x => x.id)) {
+      ctx.waitUntil(fetch(origin + "/api/kill-calibrated?kind=" + k).then(() => true).catch(() => false));
+    }
+  }
   return json(out);
 }
 async function favsRoute(request, env, url) {

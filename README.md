@@ -1,4 +1,4 @@
-# lottery-web · 自用彩票网页端 v0.8.0
+# lottery-web · 自用彩票网页端 v0.9.0
 
 8 个彩种的开奖查询 / 统计 / 杀号定胆 / 预测 / 验奖 / 注数与中奖计算。Cloudflare Worker + D1，零运行时依赖，单文件前端。
 
@@ -53,10 +53,10 @@
 | 路径 | 参数 | 说明 |
 |---|---|---|
 | `/api/predict` | `kind=`, `win=5..100`, `n=` | 6 套策略推荐 + 杀号 + 定胆 + 分析，一次返回 |
-| `/api/backtest` | `kind=`, `periods=1..40`, `win=`, `warmup=` | 历史回测：各策略/杀号的真实命中率 vs 随机基线 |
-| `/api/kill-calibrated` | `kind=`, `periods=` | 校准杀号：按分公式回测命中率生成动态权重后重新投票 |
-| `/api/ticket` | `kind=`, `dan=`, `tuo=` | 胆拖投注单（ssq/dlt/qlc）：胆拖号码 + 注数金额 |
-| `/api/{qlc\|kl8}/trend` | `limit=5..60` | 逐期遗漏走势表（号码池型通用） |
+| `/api/backtest` | `kind=`, `periods=1..600`, `win=`, `warmup=` | 历史回测：各策略/杀号的真实命中率 vs 随机基线；跨度 >60 期自动抽样（免费版 CPU 限制），返回 `tested/stride` |
+| `/api/kill-calibrated` | `kind=`, `periods=` | 校准杀号：按分公式回测命中率生成动态权重后重新投票；结果进边缘缓存 6h，`/api/admin/sync` 完成后自动预热 |
+| `/api/ticket` | `kind=`, `dan=`, `tuo=` | 胆拖投注单（ssq/dlt/qlc）：胆拖号码 + 注数金额；前端支持保存到收藏 / 复制 / 导出 TXT |
+| `/api/trend` | `kind=`, `limit=5..60` | 逐期遗漏走势（统一引擎，号码池型通用；前端 ECharts 折线渲染） |
 | `/api/analyze` | `kind=`, `win=` | 频次 / 冷热 / 遗漏 / 奇偶 / 大小 / 质合 / AC / 012 路 / 区间 / 连号 / 重号 |
 | `/api/kill` | `kind=` | 杀号投票（10 类公式加权） |
 | `/api/dan` | `kind=`, `win=` | 定胆（频率 + 遗漏回归 + 邻号 + 重号） |
@@ -197,6 +197,20 @@ scripts/build-ui.mjs  前端打包进 Worker
 ```
 
 **前端只有 `frontend/` 一份源码**，Worker 通过构建脚本内联，避免两份 HTML 长期漂移。
+
+## v0.9.0 变更
+
+新增：
+
+- **回测拉到 600 期跨度**：`/api/backtest?periods=≤600`，深度取数 `drawsDeep`（17500 全量 650 期，双色球/大乐透/小彩种全覆盖）。免费版 Workers 单请求 CPU 限 10ms，跨度 >60 期自动按步长抽样（实测点数封顶 ≈60），返回 `tested/stride`，前端标注「近 600 期跨度 · 抽样 60 点 · 步长 10」。杀号回测的历史统计窗口封顶 100 期，保证 CPU 有界
+- **遗漏走势图**：统一入口 `/api/trend?kind=`（号码池型通用，含双色球/大乐透），前端 ECharts 折线渲染，默认画当前遗漏最深 4 个号，可自选号码（≤8 个），带缩放条
+- **胆拖单一键保存/导出**：生成胆拖单后可直接「保存到收藏」（写入 D1）/「复制文本」/「导出 TXT」
+- **同步后自动预热校准缓存**：`/api/kill-calibrated` 结果真正进入边缘缓存（`caches.default`，TTL 6h，命中直接返回）；`/api/admin/sync` 完成后自 fetch 8 个彩种的校准端点（各自独立请求，CPU 预算独立），GitHub Actions 每日同步即完成预热
+- `freqStats` 当前遗漏改为由 `lastSeen` O(1) 推导（语义等价），消除 O(pool×draws) 次重复取号——全部统计接口受益
+
+修正：
+
+- 多处并行编辑同文件导致改动丢失（开发过程问题，逐处复验落盘后修复）
 
 ## v0.8.0 变更
 

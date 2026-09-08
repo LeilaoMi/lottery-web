@@ -120,6 +120,7 @@ document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () =
   b.classList.add('on');
   ['p','a','h','v','t','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
   if (b.dataset.t === 'a' && window.__chart) setTimeout(() => window.__chart.resize(), 0);
+  if (b.dataset.t === 'a' && window.__chart2) setTimeout(() => window.__chart2.resize(), 0);
   if (b.dataset.t === 'f') loadFavs();
 });
 sel.onchange = load;
@@ -186,15 +187,49 @@ async function loadPredict(id){
     const out = document.getElementById('tkout');
     try {
       const r = await api('/api/ticket?kind=' + id + '&dan=' + encodeURIComponent($('#tkd').value.trim() || 2) + '&tuo=' + encodeURIComponent($('#tkt').value.trim() || 6));
-      out.innerHTML = r.dan
-        ? '<div>胆 ' + balls(r.dan) + '　拖 ' + balls(r.tuo) + (r.aux && r.aux.length ? '　副区 ' + balls(r.aux, 'b') : '') + '</div>' +
-          '<div><b>' + esc(r.bets) + ' 注 / ' + esc(r.amount) + ' 元</b>　<span class="muted">已剔除 ' + esc(r.excluded) + ' 个杀号</span></div>' +
-          '<div class="muted">' + esc(r.note) + '</div>'
-        : '<div class="muted">' + esc(r.note || '该彩种不支持胆拖') + '</div>';
+      if (!r.dan) { out.innerHTML = '<div class="muted">' + esc(r.note || '该彩种不支持胆拖') + '</div>'; return; }
+      const txt = tkText(r);
+      out.innerHTML =
+        '<div>胆 ' + balls(r.dan) + '　拖 ' + balls(r.tuo) + (r.aux && r.aux.length ? '　副区 ' + balls(r.aux, 'b') : '') + '</div>' +
+        '<div><b>' + esc(r.bets) + ' 注 / ' + esc(r.amount) + ' 元</b>　<span class="muted">已剔除 ' + esc(r.excluded) + ' 个杀号</span></div>' +
+        '<div class="muted">' + esc(r.note) + '</div>' +
+        '<div class="row"><button id="tksave">保存到收藏</button><button id="tkcopy">复制文本</button><button id="tkdl">导出 TXT</button></div>';
+      document.getElementById('tksave').onclick = async () => {
+        try {
+          await fetch(base() + '/api/favs', {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, headers()),
+            body: JSON.stringify({ kind: id, numbers: '胆 ' + r.dan.join(',') + ' 拖 ' + r.tuo.join(',') + (r.aux && r.aux.length ? ' 副 ' + r.aux.join(',') : ''), note: r.bets + '注/' + r.amount + '元' })
+          });
+          document.getElementById('tksave').textContent = '已保存 ✓';
+        } catch (e) { errBox(e, out); }
+      };
+      document.getElementById('tkcopy').onclick = async () => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
+          else throw new Error('浏览器不支持剪贴板，请用导出 TXT');
+          document.getElementById('tkcopy').textContent = '已复制 ✓';
+        } catch (e) { errBox(e, out); }
+      };
+      document.getElementById('tkdl').onclick = () => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain;charset=utf-8' }));
+        a.download = r.name + '-胆拖单-' + new Date().toISOString().slice(0, 10) + '.txt';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      };
     } catch (e) { errBox(e, out); }
   };
   await loadAnalyze(id);
   await loadHistory(id);
+}
+
+// 胆拖单导出文本（保存到收藏 / 复制 / 下载共用）
+function tkText(r){
+  return '【' + r.name + ' 胆拖单】\n胆码: ' + r.dan.join(',') + '\n拖码: ' + r.tuo.join(',') +
+    (r.aux && r.aux.length ? '\n副区: ' + r.aux.join(',') : '') +
+    '\n注数: ' + r.bets + ' 注 / ' + r.amount + ' 元\n生成时间: ' + new Date().toLocaleString() +
+    '\n随机游戏，仅供娱乐，不保证中奖';
 }
 
 // ---------- 分析 ----------
@@ -239,16 +274,58 @@ async function loadAnalyze(id){
       '<br><b>当前遗漏 Top10</b>　' + Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
         .map(([k, v]) => esc(k) + '(' + v + '期·均值' + esc(om.avg[k] != null ? om.avg[k] : '-') + ')').join(' ');
     await loadBacktest(id);
+    // 号码池型才有遗漏走势（数字型无号码池）；insertAdjacentHTML 不破坏已绑定的按钮事件
+    if (an.freq && Object.keys(an.freq).length) {
+      $('#stats').insertAdjacentHTML('beforeend',
+        '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>遗漏走势</b> <span class="muted">（各号码当期连续未出期数，回到 0 = 当期开出）</span>' +
+        '<div class="row"><input id="trn" placeholder="号码，逗号分隔；留空取当前遗漏最深 4 个" style="flex:1;min-width:200px">' +
+        '<button id="trgo">画走势</button></div><div id="chart2" style="height:340px"></div></div>');
+      document.getElementById('trgo').onclick = () => drawTrend(id);
+      drawTrend(id);
+    }
   } catch (e) { errBox(e, $('#a')); }
 }
 
-// 回测摘要：策略/杀号历史表现 vs 随机基线（失败不影响主统计展示）
-async function loadBacktest(id){
+// 遗漏走势：统一引擎 /api/trend?kind=xx（trendPool），每条折线是一个号码的逐期遗漏
+async function drawTrend(id){
+  const el = document.getElementById('chart2');
+  if (!el) return;
   try {
-    const bt = await api('/api/backtest?kind=' + id);
+    const tr = await api('/api/trend?kind=' + id + '&limit=60');
+    const rows = tr.rows || [];
+    if (!rows.length) { el.innerHTML = '<div class="muted">该彩种暂无遗漏走势数据</div>'; return; }
+    let nums = (document.getElementById('trn').value || '').split(/[ ,]+/).filter(Boolean).map(x => pad2(Number(x)));
+    if (!nums.length) {
+      const miss = rows[rows.length - 1].miss || {};
+      nums = Object.entries(miss).sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
+    }
+    nums = [...new Set(nums)].slice(0, 8);
+    if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），可在上方输入框指定号码。</div>'; return; }
+    if (!window.__chart2) window.__chart2 = echarts.init(el);
+    window.__chart2.setOption({
+      title: { text: LOT[id].name + ' 遗漏走势（近 ' + rows.length + ' 期）', textStyle: { fontSize: 14 } },
+      tooltip: { trigger: 'axis' },
+      legend: { data: nums, textStyle: { fontSize: 10 }, top: 24 },
+      grid: { left: 40, right: 12, top: 52, bottom: 48 },
+      dataZoom: [{ type: 'inside' }, { type: 'slider', height: 14, bottom: 10 }],
+      xAxis: { type: 'category', data: rows.map(r => r.code), axisLabel: { fontSize: 9 } },
+      yAxis: { type: 'value', minInterval: 1 },
+      series: nums.map(n => ({ name: n, type: 'line', showSymbol: false, data: rows.map(r => r.miss[n] || 0) }))
+    }, true);
+  } catch (e) { el.innerHTML = '<div class="err">走势加载失败：' + esc(e.message || e) + '</div>'; }
+}
+
+// 回测摘要：策略/杀号历史表现 vs 随机基线（失败不影响主统计展示）
+// periods 可传 ≤600：跨度 >60 期时后端自动抽样（免费版 CPU 限制），返回 tested/stride 供展示
+async function loadBacktest(id, periods){
+  try {
+    const bt = await api('/api/backtest?kind=' + id + (periods ? '&periods=' + encodeURIComponent(periods) : ''));
+    const spanTxt = bt.stride > 1
+      ? '近 ' + esc(bt.periods) + ' 期跨度 · 抽样 ' + esc(bt.tested) + ' 点 · 步长 ' + esc(bt.stride)
+      : '近 ' + esc(bt.periods) + ' 期';
     let extra = '';
     if (bt.strategies) {
-      extra = '<b>回测</b>（近 ' + esc(bt.periods) + ' 期 · 单号基线 ' + (bt.baseline * 100).toFixed(1) + '%）：热号均中 ' +
+      extra = '<b>回测</b>（' + spanTxt + ' · 单号基线 ' + (bt.baseline * 100).toFixed(1) + '%）：热号均中 ' +
         esc(bt.strategies.hot.avgHit) + ' / 冷号均中 ' + esc(bt.strategies.cold.avgHit) + ' / 胆码均中 ' +
         esc(bt.strategies.dan.avgHit) + '（胆基线 ' + esc(bt.strategies.dan.baseline) + '）<br>杀号命中率 ' +
         (bt.kill.hitRate * 100).toFixed(1) + '% vs 随机基线 ' + (bt.kill.baseline * 100).toFixed(1) + '% → <b>' + esc(bt.kill.verdict) + '</b>';
@@ -259,12 +336,18 @@ async function loadBacktest(id){
     } else if (bt.perPos) {
       const avgOf = key => bt.perPos.reduce((a, r) => a + (r[key] || 0), 0) / bt.perPos.length;
       const kr = bt.perPos.filter(r => r.killRate != null);
-      extra = '<b>回测</b>（近 ' + esc(bt.periods) + ' 期 · 单位基线 10%）：各位热号均中率 ' + (avgOf('hotRate') * 100).toFixed(1) +
+      extra = '<b>回测</b>（' + spanTxt + ' · 单位基线 10%）：各位热号均中率 ' + (avgOf('hotRate') * 100).toFixed(1) +
         '% / 冷号均中率 ' + (avgOf('coldRate') * 100).toFixed(1) + '%' +
         (kr.length ? ' / 首位杀号命中率 ' + ((kr.reduce((a, r) => a + r.killRate, 0) / kr.length) * 100).toFixed(1) + '%' : '');
     }
     if (bt.note) extra += '<br><span>' + esc(bt.note) + '</span>';
-    if (extra) $('#stats').innerHTML += '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee" class="muted">' + extra + '</div>';
+    extra += '<div class="row" style="margin-top:6px"><input id="btp" placeholder="回测期数（≤600，>60 自动抽样）" style="width:200px"><button id="btgo">按期数重算</button></div>';
+    // insertAdjacentHTML + 先移除旧块：重算时不会丢失走势图的按钮事件
+    const old = document.getElementById('btout');
+    if (old) old.remove();
+    $('#stats').insertAdjacentHTML('beforeend', '<div id="btout" style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee" class="muted">' + extra + '</div>');
+    const go = document.getElementById('btgo');
+    if (go) go.onclick = () => { const v = parseInt(document.getElementById('btp').value, 10); if (v > 0) loadBacktest(id, Math.min(600, v)); };
   } catch (e2) { /* 回测接口失败时保持主统计展示 */ }
 }
 
