@@ -37,6 +37,7 @@ th{background:#fafafa}
   <button data-t="a" data-page-node-id="eErWbJuO3OQGIcMuAIfLs1">分析</button>
   <button data-t="h" data-page-node-id="zZ87FxSiEg7fRNzsuqDYtH">历史</button>
   <button data-t="v" data-page-node-id="IGGbA4so6NzuVLtkBBi2Qq">验奖·矩阵</button>
+  <button data-t="t" data-page-node-id="tl2KQm8XvVjWlMFQ14OqTN4">工具</button>
   <button data-t="f" data-page-node-id="0SYdguSKBUjII2VXvQ5LyW">收藏</button>
 </header>
 
@@ -57,6 +58,7 @@ th{background:#fafafa}
   <div id="a" class="card" style="display:none" data-page-node-id="T8v3apBHXKeL6vElBOz29a"><div id="chart" style="height:300px" data-page-node-id="F94RLhn7RTFlIxGwDpco5w"></div><div id="stats" class="muted" data-page-node-id="KLERzjPJDsyMYezfGpHd5W"></div></div>
   <div id="h" class="card" style="display:none" data-page-node-id="hD65Rjrk4hCm83ucPXhI0t"></div>
   <div id="v" class="card" style="display:none" data-page-node-id="E73QkA8micfJzuqG5tcuLv"></div>
+  <div id="t" class="card" style="display:none" data-page-node-id="tl3KQm8XvVjWlMFQ14OqTN5"></div>
   <div id="f" class="card" style="display:none" data-page-node-id="CvLNRGaVhm4i9UchgUEV5q"></div>
 </div>
 
@@ -116,7 +118,7 @@ function renderNums(o){
 document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () => {
   document.querySelectorAll('header button[data-t]').forEach(x => x.classList.remove('on'));
   b.classList.add('on');
-  ['p','a','h','v','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
+  ['p','a','h','v','t','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
   if (b.dataset.t === 'a' && window.__chart) setTimeout(() => window.__chart.resize(), 0);
   if (b.dataset.t === 'f') loadFavs();
 });
@@ -127,56 +129,51 @@ async function load(){
   const id = sel.value;
   $('#st').textContent = '加载中…';
   try {
-    if (LOT[id].mode === 'rb') await loadRB(id); else await loadSmall(id);
+    await loadPredict(id);
     $('#st').textContent = '已加载：' + LOT[id].name + ' · ' + new Date().toLocaleString();
   } catch (e) {
     $('#st').textContent = '加载失败';
     errBox(e, $('#p'));
   }
   buildVerify(id);
+  buildTools(id);
 }
 
-async function loadRB(id){
-  const latest = await api('/api/' + id + '/latest');
+// 8 个彩种共用一套展示：后端 /api/{kind}/predict 返回统一结构 {picks:[{name,main,aux|digits,score}],kill,dan}
+async function loadPredict(id){
+  const [latest, rec] = await Promise.all([
+    api('/api/' + id + '/latest'),
+    api('/api/' + id + '/predict?win=30')
+  ]);
+  const isDigit = Array.isArray(latest.digits);
   let html = '<h3 style="margin:0 0 8px">' + esc(latest.code || '') + ' 期</h3>' + renderNums(latest);
   html += '<div class="muted">' + esc(latest.date || '') + ' · 源 ' + esc(((latest.sources || [latest.src]).join(',') || '-')) + '</div>';
-  if (id === 'ssq') {
-    const rec = await api('/api/ssq/recommend');
-    html += '<h4 style="margin:14px 0 6px">6 组参考（含结构分）</h4>';
-    html += rec.picks.map(p =>
-      '<div class="kv"><span>' + esc(p.name) + ' <span class="muted">分 ' + esc(p.score) + '</span></span>' +
-      '<span>' + balls(p.red) + balls([p.blue], 'b') + '</span></div>').join('');
-    html += '<p class="muted">' + esc(rec.disclaimer) + '</p>';
-  } else {
-    html += '<h4 style="margin:14px 0 6px">随机参考（该彩种暂无推荐接口）</h4>';
-    for (let i = 0; i < 3; i++) html += '<div class="kv"><span>机选 ' + (i + 1) + '</span><span>' + renderNums(randPick(id)) + '</span></div>';
-    html += '<p class="muted">大乐透仅提供统计与验奖，不做号码推荐。</p>';
+  html += '<h4 style="margin:14px 0 6px">6 组参考（含结构分）</h4>';
+  for (const p of (rec.picks || [])) {
+    html += '<div class="kv"><span>' + esc(p.name) + ' <span class="muted">分 ' + esc(p.score) + '</span></span><span>' +
+      (isDigit ? balls(p.digits) : balls(p.main) + balls(p.aux, 'b')) + '</span></div>';
   }
+  html += '<p class="muted">' + esc(rec.disclaimer || '') + '</p>';
+  const kl = rec.kill || {}, dl = rec.dan || {};
+  if (kl.main && kl.main.length) {
+    html += '<h4 style="margin:14px 0 6px">杀号（票数越高越该杀）</h4><div class="muted">' +
+      kl.main.slice(0, 12).map(x => esc(x.n) + '(' + esc(x.votes) + ')').join(' ') + '</div>';
+  } else if (kl.perPos) {
+    html += '<h4 style="margin:14px 0 6px">分位杀号</h4><div class="muted">' +
+      kl.perPos.map(pp => '第' + pp.pos + '位 ' + pp.kill.slice(0, 3).map(x => esc(x.n)).join(',')).join('　') + '</div>';
+  }
+  if (dl.main && dl.main.length) {
+    html += '<h4 style="margin:14px 0 6px">胆码</h4><div>' + balls(dl.main.slice(0, 5).map(x => x.n)) +
+      (dl.aux && dl.aux.length ? ' <span class="muted">副区</span>' + balls(dl.aux.slice(0, 2).map(x => x.n), 'b') : '') + '</div>';
+  } else if (dl.perPos) {
+    html += '<h4 style="margin:14px 0 6px">分位胆码</h4><div class="muted">' +
+      dl.perPos.map(pp => '第' + pp.pos + '位 ' + pp.dan.slice(0, 3).map(x => esc(x.n)).join(',')).join('　') + '</div>';
+  }
+  if (rec.formHint) html += '<div class="muted">近 ' + esc(rec.count) + ' 期形态：组三 ' + esc(rec.formHint['组三']) +
+    ' / 组六 ' + esc(rec.formHint['组六']) + ' / 豹子 ' + esc(rec.formHint['豹子']) + '</div>';
   $('#p').innerHTML = html;
-  await loadAnalyzeRB(id);
+  await loadAnalyze(id);
   await loadHistory(id);
-}
-
-async function loadSmall(id){
-  const latest = await api('/api/' + id + '/latest');
-  let html = '<h3 style="margin:0 0 8px">' + esc(latest.code || '') + ' 期</h3>' + renderNums(latest);
-  html += '<div class="muted">' + esc(latest.date || '') + '</div>';
-  html += '<h4 style="margin:14px 0 6px">随机参考（该彩种暂无推荐接口）</h4>';
-  for (let i = 0; i < 2; i++) html += '<div class="kv"><span>机选 ' + (i + 1) + '</span><span>' + renderNums(randPick(id)) + '</span></div>';
-  $('#p').innerHTML = html;
-  await loadAnalyzeSmall(id);
-  await loadHistory(id);
-}
-
-function randPick(id){
-  const l = LOT[id];
-  const pick = (pool, n) => { const s = new Set(); while (s.size < n) s.add(pool[Math.floor(Math.random() * pool.length)]); return [...s].sort(); };
-  const seq = n => Array.from({ length: n }, (_, i) => pad2(i + 1));
-  if (id === 'ssq') return { red: pick(seq(33), 6), blue: [pad2(1 + Math.floor(Math.random() * 16))] };
-  if (id === 'dlt') return { red: pick(seq(35), 5), blue: pick(seq(12), 2) };
-  if (l.mode === 'digits') return { digits: Array.from({ length: l.n }, () => String(Math.floor(Math.random() * 10))) };
-  if (l.mode === 'qlc') { const m = pick(seq(30), 8); return { main: m.slice(0, 7), special: m[7] }; }
-  return { nums: pick(seq(80), 20) };
 }
 
 // ---------- 分析 ----------
@@ -193,38 +190,32 @@ function drawChart(title, cats, vals){
   }, true);
 }
 
-async function loadAnalyzeRB(id){
+// 统一分析：号码池型看频次/遗漏/形态，数字型按位看冷热
+async function loadAnalyze(id){
   try {
     const an = await api('/api/' + id + '/analyze?win=30');
-    const a = an.analysis || an;
-    if (id === 'ssq') {
-      const ks = Object.keys(a.redFreq).sort();
-      drawChart('红球频次（近 30 期）', ks, ks.map(k => a.redFreq[k]));
-      const om = a.omission || {};
-      $('#stats').innerHTML =
-        '热号 ' + esc(a.hotRed.join(',')) + '　冷号 ' + esc(a.coldRed.join(',')) + '<br>' +
-        '奇偶比 ' + esc(a.oddRatio) + '　质合比 ' + esc(a.primeRatio) + '　均和 ' + esc(a.avgSum) + '　平均AC ' + esc(a.avgAC) + '<br>' +
-        '012路 ' + esc(a.road012[0]) + '/' + esc(a.road012[1]) + '/' + esc(a.road012[2]) +
-        '　平均连号 ' + esc(a.avgConsec) + '　平均重号 ' + esc(a.avgRepeat) + '<br>' +
-        '蓝球首选 ' + esc(an.blue.top1) + '　候选池 ' + esc((an.blue.pool || []).join(',')) + '<br>' +
-        '历史最大遗漏 ' + esc(om.max ? Math.max.apply(null, Object.values(om.max)) : '-') + ' 期';
-    } else {
-      const ks = Object.keys(a.frontFreq || {}).sort();
-      drawChart('前区频次（近 30 期）', ks, ks.map(k => a.frontFreq[k]));
-      $('#stats').innerHTML = '热前区 ' + esc((a.hotFront || []).join(',')) + '　热后区 ' + esc((a.hotBack || []).join(',')) + '　窗口 ' + esc(a.count) + ' 期';
+    if (an.perPos) {
+      const p0 = an.perPos[0], ks = Object.keys(p0.freq).sort();
+      drawChart(LOT[id].name + ' 第 1 位频次（近 ' + an.count + ' 期）', ks, ks.map(k => p0.freq[k]));
+      $('#stats').innerHTML = an.perPos.map(p =>
+        '第' + p.pos + '位　热 ' + esc(p.hot.join(',')) + '　冷 ' + esc(p.cold.join(','))).join('<br>') +
+        '<br>平均和值 ' + esc(an.avgSum) + '　平均大数个数 ' + esc(an.avgBigSmall) +
+        (an.form ? '<br>近 ' + esc(an.count) + ' 期形态：组三 ' + esc(an.form.group3) +
+          ' / 组六 ' + esc(an.form.group6) + ' / 豹子 ' + esc(an.form.bail) : '');
+      return;
     }
-  } catch (e) { errBox(e, $('#a')); }
-}
-
-async function loadAnalyzeSmall(id){
-  try {
-    const his = await api('/api/' + id + '/history?limit=60');
-    const f = {};
-    for (const d of his) for (const x of (d.digits || d.main || d.nums || [])) f[x] = (f[x] || 0) + 1;
-    const ks = Object.keys(f).sort();
-    drawChart(LOT[id].name + ' 号码频次（近 ' + his.length + ' 期）', ks, ks.map(k => f[k]));
-    const top = ks.slice().sort((a, b) => f[b] - f[a]).slice(0, 6);
-    $('#stats').innerHTML = '样本 ' + esc(his.length) + ' 期　出现最多：' + esc(top.join(',')) + '<br>注：数字型玩法各位独立，频次仅供参考。';
+    const ks = Object.keys(an.freq || {}).sort();
+    drawChart(LOT[id].name + ' 号码频次（近 ' + an.count + ' 期）', ks, ks.map(k => an.freq[k]));
+    const om = an.omission || {};
+    const maxOm = om.max ? Math.max.apply(null, Object.values(om.max)) : '-';
+    const auxTop = an.auxFreq && Object.keys(an.auxFreq).length
+      ? Object.entries(an.auxFreq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => x[0]).join(',') : '';
+    $('#stats').innerHTML =
+      '热号 ' + esc((an.hot || []).join(',')) + '　冷号 ' + esc((an.cold || []).join(',')) + '<br>' +
+      '奇偶比 ' + esc(an.oddRatio) + '　大小比 ' + esc(an.bigRatio) + '　质合比 ' + esc(an.primeRatio) + '<br>' +
+      '均和 ' + esc(an.avgSum) + '　平均AC ' + esc(an.avgAC) + '　平均连号 ' + esc(an.avgConsec) + '　平均重号 ' + esc(an.avgRepeat) + '<br>' +
+      '012路 ' + esc((an.road012 || []).join('/')) + '　区间分布 ' + esc((an.zoneDist || []).join('/')) + '<br>' +
+      '历史最大遗漏 ' + esc(maxOm) + ' 期' + (auxTop ? '<br>副区高频 ' + esc(auxTop) : '');
   } catch (e) { errBox(e, $('#a')); }
 }
 
@@ -236,6 +227,59 @@ async function loadHistory(id){
     for (const d of his) h += '<tr><td>' + esc(d.code) + '</td><td>' + renderNums(d) + '</td><td>' + esc(d.date || '') + '</td></tr>';
     $('#h').innerHTML = h + '</table>';
   } catch (e) { errBox(e, $('#h')); }
+}
+
+// ---------- 工具：注数/金额/追号 与 中奖计算器 ----------
+const CALC_FIELDS = {
+  ssq: [['red', '红球个数', 90], ['blue', '蓝球个数', 90], ['dan', '胆码数', 80], ['tuo', '拖码数', 80]],
+  dlt: [['front', '前区个数', 90], ['back', '后区个数', 90], ['fdan', '前区胆', 80], ['ftuo', '前区拖', 80], ['bdan', '后区胆', 80], ['btuo', '后区拖', 80]],
+  qlc: [['main', '基本号个数', 100], ['dan', '胆码数', 80], ['tuo', '拖码数', 80]],
+  kl8: [['pick', '选几(1-10)', 90], ['nums', '选号个数', 90]]
+};
+const PRIZE_FIELDS = {
+  kl8: [['pick', '选几', 80], ['hit', '命中个数', 90]],
+  fc3d: [['bet', '你的号码(3位)', 160], ['draw', '开奖号(3位)', 160]],
+  pl3: [['bet', '你的号码(3位)', 160], ['draw', '开奖号(3位)', 160]],
+  ssq: [['hitMain', '命中红球', 90], ['hitAux', '中蓝球(1/0)', 100]],
+  dlt: [['hitMain', '命中前区', 90], ['hitAux', '命中后区', 90]],
+  qlc: [['hitMain', '命中基本号', 90], ['hitAux', '中特别号(1/0)', 100]]
+};
+function buildTools(id){
+  const cf = CALC_FIELDS[id] || [['pos', '各位可选个数(逗号)', 200], ['group', '组选 3/6', 80]];
+  const pf = PRIZE_FIELDS[id] || [['exact', '是否全中(1/0)', 120]];
+  const inputs = (arr) => arr.map(f => '<input data-f="' + f[0] + '" placeholder="' + f[1] + '" style="width:' + f[2] + 'px">').join('');
+  $('#t').innerHTML =
+    '<h3 style="margin:0 0 8px">注数 / 金额 / 追号</h3><div class="row" id="crow">' + inputs(cf) +
+    '<input data-f="chase" placeholder="追号期数" style="width:100px">' +
+    '<input data-f="mults" placeholder="倍数序列 1,2,4" style="width:150px"></div>' +
+    '<div class="row"><button id="cgo">计算注数</button></div><div id="cout" class="muted"></div>' +
+    '<h3 style="margin:16px 0 8px">中奖计算器</h3><div class="row" id="prow">' + inputs(pf) + '</div>' +
+    '<div class="row"><button id="pgo">判定奖级</button></div><div id="pout" class="muted"></div>';
+  const q = (row) => [...row.querySelectorAll('input[data-f]')]
+    .filter(i => i.value.trim() !== '')
+    .map(i => i.dataset.f + '=' + encodeURIComponent(i.value.trim())).join('&');
+  $('#cgo').onclick = async () => {
+    try {
+      const r = await api('/api/calc?kind=' + id + '&' + q($('#crow')));
+      let h = '<div class="card"><b>' + esc(r.bets) + ' 注 · ' + esc(r.amount) + ' 元</b>' +
+        '<div class="muted">' + esc(r.mode === 'dantuo' ? '胆拖' : '复式') + '　' + esc(r.formula) + '</div>';
+      if (r.chase && r.chase.plan) {
+        h += '<div class="muted">追号 ' + esc(r.chase.periods) + ' 期　合计 ' + esc(r.chase.totalBets) +
+          ' 注 / ' + esc(r.chase.totalAmount) + ' 元</div>' +
+          r.chase.plan.map(p => '<div class="kv"><span>第 ' + p.period + ' 期 ×' + esc(p.mult) + '</span><span>' +
+            esc(p.bets) + ' 注 / ' + esc(p.amount) + ' 元</span></div>').join('');
+      }
+      $('#cout').innerHTML = h + '<div class="muted">' + esc(r.note || '') + '</div></div>';
+    } catch (e) { errBox(e, $('#cout')); }
+  };
+  $('#pgo').onclick = async () => {
+    try {
+      const r = await api('/api/prize?kind=' + id + '&' + q($('#prow')));
+      $('#pout').innerHTML = '<div class="card"><b>' + esc(r.prize) + '</b>' +
+        (r.amount ? ' <span class="muted">参考 ' + esc(r.amount) + ' 元</span>' : '') +
+        '<div class="muted">' + esc(r.note || '') + '</div></div>';
+    } catch (e) { errBox(e, $('#pout')); }
+  };
 }
 
 // ---------- 验奖 + 矩阵 ----------

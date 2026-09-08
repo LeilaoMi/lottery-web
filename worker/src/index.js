@@ -1,6 +1,8 @@
-import { fetch500, fetchCWL, fetch17500, analyze, blueScores, recommend, trend, verify } from "./ssq.js";
-import { fetchDLT, analyzeDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
+import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
+import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
 import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
+import { SPECS, analyzeAll, killList, danList, recommendAll } from "./predict.js";
+import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, saveSmall, loadSmall } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
@@ -20,6 +22,10 @@ export default {
       const n = num(url, "n", 12, 7, 33), p = num(url, "pick", 6, 5, 7);
       return json(rotation(n, p, num(url, "hit", 4, 3, 6)));
     }
+    if (url.pathname === "/api/specs") return json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600);
+    if (url.pathname === "/api/calc") return calcRoute(url);
+    if (url.pathname === "/api/prize") return prizeRoute(url);
+    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan") return predictRoute(request, env, url);
     if (url.pathname === "/api/admin/sync") return adminSync(request, env);
     if (url.pathname.startsWith("/api/favs")) return favsRoute(request, env, url);
     if (url.pathname.startsWith("/api/ssq/")) return ssqRoute(request, env, url);
@@ -29,14 +35,17 @@ export default {
   }
 };
 async function ssqRoute(request, env, url) {
-  if (!checkAuth(request, env)) return json({ error: "unauthorized" }, 401);
   try {
     const draws = await getDraws(env, 100);
     if (url.pathname.endsWith("/latest")) return json({ ...draws[0], sources: draws._sources, consistent: draws._consistent }, 200, 300);
     if (url.pathname.endsWith("/history")) return json(withMeta(draws.slice(0, num(url, "limit", 30, 1, 200)), draws), 200, 600);
     if (url.pathname.endsWith("/trend")) return json(withMeta(trend(draws, num(url, "win", 30, 5, 100)), draws), 200, 600);
-    if (url.pathname.endsWith("/analyze")) return json({ analysis: analyze(draws, num(url, "win", 30, 5, 100)), blue: blueScores(draws), sources: draws._sources }, 200, 300);
-    if (url.pathname.endsWith("/recommend")) return json({ ...recommend(draws), sources: draws._sources }, 200, 0);
+    // 预测相关一律走统一引擎，保证 8 个彩种口径一致
+    if (url.pathname.endsWith("/analyze")) return json({ kind: "ssq", ...analyzeAll("ssq", draws, num(url, "win", 30, 5, 100)), sources: draws._sources }, 200, 300);
+    if (url.pathname.endsWith("/kill")) return json({ kind: "ssq", ...killList("ssq", draws), sources: draws._sources }, 200, 300);
+    if (url.pathname.endsWith("/dan")) return json({ kind: "ssq", ...danList("ssq", draws, num(url, "win", 30, 5, 100)), sources: draws._sources }, 200, 300);
+    if (url.pathname.endsWith("/recommend")) return json({ ...withLegacy(recommendAll("ssq", draws, { win: num(url, "win", 30, 5, 100) })), sources: draws._sources }, 200, 0);
+    if (url.pathname.endsWith("/predict")) return json({ ...withLegacy(recommendAll("ssq", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) })), sources: draws._sources }, 200, 0);
     if (url.pathname.endsWith("/verify")) {
       const code = url.searchParams.get("code") || "", red = (url.searchParams.get("red") || "").split(/[ ,]+/).filter(Boolean), blue = url.searchParams.get("blue") || "";
       const r = verify(draws, code, red, blue);
@@ -47,7 +56,6 @@ async function ssqRoute(request, env, url) {
   return json({ error: "not_found" }, 404);
 }
 async function dltRoute(request, env, url) {
-  if (!checkAuth(request, env)) return json({ error: "unauthorized" }, 401);
   try {
     const cache = caches.default;
     const ck = new Request(url.toString(), { method: "GET" });
@@ -59,7 +67,10 @@ async function dltRoute(request, env, url) {
     let res;
     if (url.pathname.endsWith("/latest")) res = json(draws[0], 200, 300);
     else if (url.pathname.endsWith("/history")) res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
-    else if (url.pathname.endsWith("/analyze")) res = json(analyzeDLT(draws, num(url, "win", 30, 5, 100)), 200, 300);
+    else if (url.pathname.endsWith("/analyze")) res = json({ kind: "dlt", ...analyzeAll("dlt", draws, num(url, "win", 30, 5, 100)) }, 200, 300);
+    else if (url.pathname.endsWith("/kill")) res = json({ kind: "dlt", ...killList("dlt", draws) }, 200, 300);
+    else if (url.pathname.endsWith("/dan")) res = json({ kind: "dlt", ...danList("dlt", draws, num(url, "win", 30, 5, 100)) }, 200, 300);
+    else if (url.pathname.endsWith("/predict")) res = json(recommendAll("dlt", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), 200, 0);
     else if (url.pathname.endsWith("/verify")) {
       const code = url.searchParams.get("code") || "", f = (url.searchParams.get("front") || "").split(/[ ,]+/).filter(Boolean), b = (url.searchParams.get("back") || "").split(/[ ,]+/).filter(Boolean);
       const r = verifyDLT(draws, code, f, b); if (r.hit) r.prize = prizeDLT(r.hitFront, r.hitBack); res = json(r);
@@ -70,14 +81,13 @@ async function dltRoute(request, env, url) {
   return json({ error: "not_found" }, 404);
 }
 async function smallRoute(request, env, url) {
-  if (!checkAuth(request, env)) return json({ error: "unauthorized" }, 401);
-  const m = url.pathname.match(/^\/api\/(fc3d|pl3|pl5|qlc|qxc|kl8)\/(latest|history|verify)$/);
+  const m = url.pathname.match(/^\/api\/(fc3d|pl3|pl5|qlc|qxc|kl8)\/(latest|history|verify|analyze|kill|dan|predict)$/);
   if (!m) return json({ error: "not_found" }, 404);
   const kind = m[1], act = m[2];
   try {
     const cache = caches.default, ck = new Request(url.toString());
-    const hit = await cache.match(ck);
-    if (hit) return hit;
+    // 预测结果带随机性，不能进缓存，否则同一窗口内所有人拿到同一组号
+    if (act !== "predict") { const hit = await cache.match(ck); if (hit) return hit; }
     let draws = [], degraded = false;
     try { draws = await fetchSmall(kind, 60); } catch (e) {
       // 上游不可用时降级读 D1，避免直接 502
@@ -88,12 +98,17 @@ async function smallRoute(request, env, url) {
     let res;
     if (act === "latest") res = json(draws[0], 200, 600);
     else if (act === "history") res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
+    else if (act === "analyze") res = json({ kind, ...analyzeAll(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
+    else if (act === "kill") res = json({ kind, ...killList(kind, draws), degraded }, 200, 300);
+    else if (act === "dan") res = json({ kind, ...danList(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
+    else if (act === "predict") res = json({ ...recommendAll(kind, draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), degraded }, 200, 0);
     else {
       const code = (url.searchParams.get("code") || "").trim();
       const nums = (url.searchParams.get("nums") || "").split(/[ ,]+/).filter(Boolean);
       res = json({ ...verifySmall(draws, kind, code, nums), degraded }, 200, 0);
       return res;
     }
+    if (act === "predict") return res; // 带随机性，不缓存、不重写
     if (degraded) res = json({ ...(await res.json()), degraded: true }, 200, 600);
     try { await cache.put(ck, res.clone()); } catch {}
     return res;
@@ -120,8 +135,73 @@ function verifySmall(draws, kind, code, nums) {
   return { hit: true, actual: d, posHit: pos, total: act.length, exact, prize: exact ? "直选" : "未中" };
 }
 function num(url, k, d, a, b) { const v = parseInt(url.searchParams.get(k) || d, 10); return Math.min(b, Math.max(a, isNaN(v) ? d : v)); }
+// n 缺省时返回 undefined，让引擎按彩种默认推荐个数走
+function optN(url) { const raw = url.searchParams.get("n"); return raw === null || raw === "" ? undefined : num(url, "n", 6, 1, 80); }
+// 兼容旧字段：同一份推荐结果同时给出 main/aux 与 red/blue 等别名
+function withLegacy(r) {
+  const alias = { ssq: ["red", "blue"], dlt: ["front", "back"], qlc: ["nums", "special"], kl8: ["nums", null] };
+  const a = alias[r.kind];
+  if (!a) return r;
+  return { ...r, picks: (r.picks || []).map(p => ({ ...p, ...(a[0] ? { [a[0]]: p.main } : {}), ...(a[1] && p.aux && p.aux.length ? { [a[1]]: p.aux.length === 1 ? p.aux[0] : p.aux } : {}) })) };
+}
+// 统一取数：ssq 走双源融合，dlt 走 500/17500，其余走 17500 并在上游失败时降级读 D1
+async function drawsOf(env, kind, limit = 60) {
+  if (kind === "ssq") return getDraws(env, Math.max(100, limit));
+  if (kind === "dlt") { let d = []; try { d = await fetchDLT(limit); } catch {} if (!d.length) d = await fetch17500DLT(); return d; }
+  let d = [];
+  try { d = await fetchSmall(kind, limit); } catch (e) {
+    d = await loadSmall(env.DB, kind, limit).catch(() => []);
+    if (!d.length) throw e;
+    d._degraded = true;
+  }
+  return d;
+}
+// 全彩种统一的预测入口：/api/predict | /api/analyze | /api/kill | /api/dan?kind=xx
+async function predictRoute(request, env, url) {
+  const kind = (url.searchParams.get("kind") || "").trim();
+  if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
+  const win = num(url, "win", 30, 5, 100);
+  try {
+    const draws = await drawsOf(env, kind, Math.max(60, win));
+    const act = url.pathname.split("/").pop();
+    if (act === "analyze") return json({ kind, ...analyzeAll(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
+    if (act === "kill") return json({ kind, ...killList(kind, draws), degraded: !!draws._degraded }, 200, 300);
+    if (act === "dan") return json({ kind, ...danList(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
+    return json({ ...recommendAll(kind, draws, { win, n: optN(url) }), degraded: !!draws._degraded }, 200, 0);
+  } catch (e) { return json({ error: String(e.message || e) }, 502); }
+}
+// 注数/金额/追号计算器
+function calcRoute(url) {
+  const kind = (url.searchParams.get("kind") || "").trim();
+  if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
+  const p = {};
+  for (const [k, v] of url.searchParams) p[k] = v;
+  return json(calcBet(kind, p), 200, 0);
+}
+// 中奖计算器：快乐8 查表、3D/排3 判直选组选、其余按命中个数判奖级
+function prizeRoute(url) {
+  const kind = (url.searchParams.get("kind") || "").trim();
+  if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
+  const g = (k, d = 0) => { const v = parseInt(url.searchParams.get(k) || d, 10); return Number.isNaN(v) ? d : v; };
+  if (kind === "kl8") return json(kl8Prize(g("pick", 10), g("hit")), 200, 0);
+  if (kind === "fc3d" || kind === "pl3") {
+    const bet = (url.searchParams.get("bet") || "").split(/[,\s]+/).filter(Boolean);
+    const draw = (url.searchParams.get("draw") || "").split(/[,\s]+/).filter(Boolean);
+    return json(digit3Prize(bet, draw), 200, 0);
+  }
+  if (kind === "ssq") { const r = prizeSSQ(g("hitMain"), !!g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: !!g("hitAux"), prize: r }, 200, 0); }
+  if (kind === "dlt") { const r = prizeDLT(g("hitMain"), g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r }, 200, 0); }
+  if (kind === "qlc") { const r = prizeQLC(g("hitMain"), g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r }, 200, 0); }
+  return json({ kind, prize: g("exact") ? "直选" : "未中", note: "数字型逐位比对，全中即直选" }, 200, 0);
+}
 function withMeta(list, draws) { list._sources = draws._sources; list._consistent = draws._consistent; return list; }
-function checkAuth(r, env) { if (!env.API_TOKEN) return true; return (r.headers.get("Authorization") || "") === `Bearer ${env.API_TOKEN}`; }
+// 鉴权模型：开奖数据是公开信息，读接口（latest/history/analyze/recommend/rotation/trend）无需鉴权；
+// 只有写操作与个人数据（/api/favs 的所有方法、/api/admin/sync）要求 API_TOKEN。
+// 未设置 API_TOKEN 时写接口一律拒绝（fail-closed）。
+function requireAuth(r, env) {
+  if (!env.API_TOKEN) return false;
+  return (r.headers.get("Authorization") || "") === `Bearer ${env.API_TOKEN}`;
+}
 async function getDraws(env, limit) {
   if (env.DATA_SOURCE_OFFICIAL || env.DATA_SOURCE_PUBLIC) return getCustom(env);
   const rs = await Promise.all([fetch500(limit).then(d => ({ k: "500", d })).catch(e => ({ k: "500", e })), fetchCWL().then(d => ({ k: "cwl", d })).catch(e => ({ k: "cwl", e }))]);
@@ -144,7 +224,7 @@ function cors() {
   return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type,Authorization", "Access-Control-Max-Age": "86400" } });
 }
 async function adminSync(request, env) {
-  if (!env.API_TOKEN || (request.headers.get("Authorization") || "") !== `Bearer ${env.API_TOKEN}`) return json({ error: "unauthorized admin" }, 401);
+  if (!requireAuth(request, env)) return json({ error: "unauthorized admin" }, 401);
   const out = { ran: new Date().toISOString(), results: {} };
   try {
     const live = await getDraws(env, 100);

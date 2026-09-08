@@ -1,6 +1,8 @@
-# lottery-web · 自用彩票网页端 v0.5.0
+# lottery-web · 自用彩票网页端 v0.6.0
 
-8 个彩种的开奖查询 / 统计 / 验奖 / 缩水工具。Cloudflare Worker + D1，零运行时依赖，单文件前端。
+8 个彩种的开奖查询 / 统计 / 杀号定胆 / 预测 / 验奖 / 注数与中奖计算。Cloudflare Worker + D1，零运行时依赖，单文件前端。
+
+**8 个彩种共用同一套预测引擎**（`worker/src/predict.js`），接口返回结构完全一致，不存在「双色球有推荐、其他彩种只有统计」的割裂。
 
 > 随机游戏，统计仅供娱乐，不保证中奖。
 
@@ -44,6 +46,47 @@
 | GET/POST/DELETE | `/api/favs` | 收藏（需 D1，读写均需鉴权） |
 | POST | `/api/admin/sync` | 触发 8 彩种落库（需鉴权） |
 
+### 统一预测（8 彩种口径一致）
+
+`kind` = `ssq` / `dlt` / `qlc` / `kl8` / `fc3d` / `pl3` / `pl5` / `qxc`，也可写成 `/api/{kind}/{analyze|kill|dan|predict}`。
+
+| 路径 | 参数 | 说明 |
+|---|---|---|
+| `/api/predict` | `kind=`, `win=5..100`, `n=` | 6 套策略推荐 + 杀号 + 定胆 + 分析，一次返回 |
+| `/api/analyze` | `kind=`, `win=` | 频次 / 冷热 / 遗漏 / 奇偶 / 大小 / 质合 / AC / 012 路 / 区间 / 连号 / 重号 |
+| `/api/kill` | `kind=` | 杀号投票（10 类公式加权） |
+| `/api/dan` | `kind=`, `win=` | 定胆（频率 + 遗漏回归 + 邻号 + 重号） |
+| `/api/specs` | — | 各彩种号码池与默认推荐个数 |
+
+返回结构（号码池型 / 数字型同构）：
+
+```jsonc
+{
+  "kind": "ssq", "type": "pool", "window": 30, "count": 30,
+  "analysis": { "hot": [], "cold": [], "freq": {}, "omission": {"cur":{}, "avg":{}, "max":{}}, ... },
+  "kill":   { "main": [{"n":"27","votes":4,"reasons":["上期出号","跨度26"]}], "aux": [...] },
+  "dan":    { "main": [{"n":"05","score":3.4,"freq":21,"cur":2,"avg":1.8}], "aux": [...] },
+  "picks":  [ { "name":"稳健·热号", "main":["01",...], "aux":["14"], "score":9, "note":"..." } ]
+}
+```
+
+数字型（`fc3d`/`pl3`/`pl5`/`qxc`）把 `main` 换成按位的 `digits`，`analysis` 含 `perPos[].freq/omission/hot/cold`，并额外给出近 N 期组三 / 组六 / 豹子形态。
+
+**杀号公式**（加权投票，票数越高越该杀）：上期出号、邻号 ±1、和值尾、跨度 ±1、极号 ±1、热尾、冷 012 路、质合偏态、热区、上上期号。`/api/kill` 同时给出 `threshold`，「杀号缩水」策略剔除票数 ≥ 阈值的号码。
+
+### 计算器
+
+| 路径 | 参数 | 说明 |
+|---|---|---|
+| `/api/calc` | `kind=`, 复式/胆拖参数, `chase=`, `mults=` | 注数 / 金额 / 追号计划（每注 2 元） |
+| `/api/prize` | `kind=`, 命中参数 | 奖级与固定奖金额 |
+
+- 双色球 `red`/`blue` 复式，`dan`/`tuo` 胆拖；大乐透 `front`/`back` 或 `fdan`/`ftuo`/`bdan`/`btuo`
+- 七乐彩 `main` 或 `dan`/`tuo`；快乐 8 `pick`（选几）+ `nums`（选号个数）
+- 数字型 `pos=2,3,4`（各位可选个数）、`group=3|6` 组选
+- 追号：`chase=3&mults=1,2,4` 返回逐期注数金额与合计
+- 中奖：快乐 8 按官方奖金表（选十中 10 ≤500 万 / 中 9 = 8000 / 中 8 = 720 / 中 0 = 2），3D 与排列 3 判直选 1040 / 组三 346 / 组六 173
+
 ### 双色球 `/api/ssq/*`
 
 | 路径 | 参数 | 说明 |
@@ -65,6 +108,9 @@
 |---|---|---|
 | `latest` | — | 最新一期 |
 | `history` | `limit=1..100` | 历史 |
+| `analyze` | `win=5..100` | 与双色球同口径的统计（数字型按位输出） |
+| `predict` | `win=`, `n=` | 与双色球同口径的 6 套策略 + 杀号 + 定胆 |
+| `kill` / `dan` | `win=` | 杀号 / 定胆 |
 | `verify` | `code=&nums=` | 验奖（七乐彩含 `prize`，快乐 8 返回命中个数） |
 
 小彩种在上游不可用时会自动降级读 D1 缓存，响应中标记 `degraded: true`。
@@ -110,7 +156,7 @@ npm --prefix worker run deploy -- --config worker/wrangler.local.toml
 > `worker/src/ui.js` 是构建产物，已在 `.gitignore` 中。克隆后必须先构建再部署，
 > 直接 `wrangler deploy` 会因缺少 `ui.js` 而失败——请始终用 `npm run deploy`。
 
-设置了 `API_TOKEN` 后，所有 `/api/*` 请求需带 `Authorization: Bearer <token>`；`/api/favs` 的读与写都要求鉴权。
+鉴权模型：**开奖数据是公开信息，读接口一律免鉴权**；只有写操作与个人数据（`/api/favs` 的全部方法、`/api/admin/sync`）要求 `Authorization: Bearer <API_TOKEN>`。未设置 `API_TOKEN` 时写接口一律拒绝（fail-closed），不会「忘了配就裸奔」。
 
 ### 定时落库
 
@@ -133,8 +179,10 @@ npm run dev          # wrangler dev
 
 ```
 worker/src/index.js   路由 / 缓存 / CORS / 鉴权 / 落库调度
-worker/src/ssq.js     双色球：500 + cwl + 17500、校验、分析、推荐、验奖
-worker/src/dlt.js     大乐透：500 + 17500、分析、验奖
+worker/src/predict.js 统一预测引擎：8 彩种共用的分析 / 杀号 / 定胆 / 推荐 / 结构打分
+worker/src/calc.js    注数 / 金额 / 追号计算，快乐8 奖金表，3D 直选组三组六判定
+worker/src/ssq.js     双色球：500 + cwl + 17500、校验、趋势、验奖
+worker/src/dlt.js     大乐透：500 + 17500、验奖
 worker/src/small.js   6 小彩种解析、奖级规则、旋转矩阵（覆盖设计）
 worker/src/db.js      D1 读写（draws / dlt_draws / small_draws / favs / sync_log）
 worker/src/ui.js      构建产物，由 scripts/build-ui.mjs 从 frontend/ 生成
@@ -145,6 +193,25 @@ scripts/build-ui.mjs  前端打包进 Worker
 ```
 
 **前端只有 `frontend/` 一份源码**，Worker 通过构建脚本内联，避免两份 HTML 长期漂移。
+
+## v0.6.0 变更
+
+新增：
+
+- **统一预测引擎 `worker/src/predict.js`**：8 个彩种共用同一套分析 / 杀号 / 定胆 / 推荐逻辑，返回结构完全一致。此前只有双色球有推荐、大乐透只有简单统计、其余 6 种完全没有分析与预测
+- **杀号**（10 类公式加权投票，给出票数与命中原因）、**定胆**（频率 + 遗漏回归 + 邻号 + 重号）
+- **6 套策略**对每个彩种统一输出：稳健·热号 / 进取·遗漏 / 均衡 / 区间覆盖 / 杀号缩水 / 随机基准，均带结构分（和值 / 奇偶 / 大小 / 区间 / 跨度 / AC）
+- **注数与金额计算器** `/api/calc`：复式、胆拖、追号计划（倍数序列逐期金额）
+- **中奖计算器** `/api/prize`：快乐 8 官方奖金表（选一~选十）、3D / 排列 3 直选 1040 / 组三 346 / 组六 173
+- 数字型彩种按位分析（`perPos`），含近 N 期组三 / 组六 / 豹子形态统计
+- 前端新增「工具」页（注数 / 追号 / 中奖计算），杀号与定胆直接在预测页展示
+- 44 个单元测试（新增 10 个覆盖预测引擎的 8 彩种一致性与边界）
+
+修正：
+
+- 快乐 8 结构分误用「开奖 20 个号」作基准，选 8~10 个号时分数恒偏低——改为按实际选号个数评估
+- 七乐彩特别号可能与基本号重复（两者同池）——副区候选现在排除主区已选号
+- 推荐抽样「先切 N 个再去重」，候选池含重复项时会返回不足 N 个号
 
 ## v0.5.0 变更
 
