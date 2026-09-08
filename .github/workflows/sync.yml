@@ -52,11 +52,11 @@ jobs:
             fi
             echo "ok: $name"
           }
-          check health      /health            "j.status === 'ok'"
-          check meta        /api/meta          "Array.isArray(j.lotteries) && j.lotteries.length === 8"
-          check ssq-latest  /api/ssq/latest    "j.code && (j.red || j.front || j.main)"
-          check dlt-analyze /api/dlt/analyze   "j.kind === 'dlt' && Array.isArray(j.picks) && j.picks.length > 0"
-          check review      /api/review        "typeof j.summary === 'object'"
+          check health        /health            "j.status === 'ok'"
+          check meta          /api/meta          "Array.isArray(j.lotteries) && j.lotteries.length === 8"
+          check ssq-latest    /api/ssq/latest    "j.code && (j.red || j.front || j.main)"
+          check dlt-predict   /api/dlt/predict   "j.kind === 'dlt' && Array.isArray(j.picks) && j.picks.length > 0"
+          check review        /api/review        "typeof j.summary === 'object'"
           echo "线上冒烟 5 端点全部通过"
 
   sync:
