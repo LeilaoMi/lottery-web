@@ -1,9 +1,9 @@
 import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
 import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
 import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
-import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool } from "./predict.js";
+import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, mainOf, auxOf } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
-import { saveSSQ, loadSSQ, logSync, saveDLT, saveSmall, loadSmall } from "./db.js";
+import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
 // kill-calibrated 的 isolate 级内存缓存：caches.default 在 workers.dev 域名上是 no-op，
@@ -31,6 +31,8 @@ export default {
     if (url.pathname === "/api/prize") return prizeRoute(url);
     if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest" || url.pathname === "/api/kill-calibrated" || url.pathname === "/api/ticket" || url.pathname === "/api/trend") return predictRoute(request, env, url);
     if (url.pathname === "/api/admin/sync") return adminSync(request, env, ctx);
+    if (url.pathname === "/api/admin/review-job") return reviewJob(request, env);
+    if (url.pathname === "/api/review") return reviewRoute(request, env, url);
     if (url.pathname.startsWith("/api/favs")) return favsRoute(request, env, url);
     if (url.pathname.startsWith("/api/ssq/")) return ssqRoute(request, env, url);
     if (url.pathname.startsWith("/api/dlt/")) return dltRoute(request, env, url);
@@ -45,7 +47,7 @@ async function ssqRoute(request, env, url) {
     if (url.pathname.endsWith("/history")) return json(withMeta(draws.slice(0, num(url, "limit", 30, 1, 200)), draws), 200, 600);
     if (url.pathname.endsWith("/trend")) return json(withMeta(trend(draws, num(url, "win", 30, 5, 100)), draws), 200, 600);
     // 预测相关一律走统一引擎，保证 8 个彩种口径一致
-    if (url.pathname.endsWith("/analyze")) return json({ kind: "ssq", ...analyzeAll("ssq", draws, num(url, "win", 30, 5, 100)), sources: draws._sources }, 200, 300);
+    if (url.pathname.endsWith("/analyze")) return json({ kind: "ssq", ...analyzeAll("ssq", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("ssq", draws, { window: 400 }), sources: draws._sources }, 200, 300);
     if (url.pathname.endsWith("/kill")) return json({ kind: "ssq", ...killList("ssq", draws), sources: draws._sources }, 200, 300);
     if (url.pathname.endsWith("/dan")) return json({ kind: "ssq", ...danList("ssq", draws, num(url, "win", 30, 5, 100)), sources: draws._sources }, 200, 300);
     if (url.pathname.endsWith("/recommend")) return json({ ...withLegacy(recommendAll("ssq", draws, { win: num(url, "win", 30, 5, 100) })), sources: draws._sources }, 200, 0);
@@ -71,7 +73,7 @@ async function dltRoute(request, env, url) {
     let res;
     if (url.pathname.endsWith("/latest")) res = json(draws[0], 200, 300);
     else if (url.pathname.endsWith("/history")) res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
-    else if (url.pathname.endsWith("/analyze")) res = json({ kind: "dlt", ...analyzeAll("dlt", draws, num(url, "win", 30, 5, 100)) }, 200, 300);
+    else if (url.pathname.endsWith("/analyze")) res = json({ kind: "dlt", ...analyzeAll("dlt", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("dlt", draws, { window: 400 }) }, 200, 300);
     else if (url.pathname.endsWith("/kill")) res = json({ kind: "dlt", ...killList("dlt", draws) }, 200, 300);
     else if (url.pathname.endsWith("/dan")) res = json({ kind: "dlt", ...danList("dlt", draws, num(url, "win", 30, 5, 100)) }, 200, 300);
     else if (url.pathname.endsWith("/predict")) res = json(recommendAll("dlt", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), 200, 0);
@@ -102,7 +104,7 @@ async function smallRoute(request, env, url) {
     let res;
     if (act === "latest") res = json(draws[0], 200, 600);
     else if (act === "history") res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
-    else if (act === "analyze") res = json({ kind, ...analyzeAll(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
+    else if (act === "analyze") res = json({ kind, ...analyzeAll(kind, draws, num(url, "win", 30, 5, 100)), ...(SPECS[kind].type === "pool" ? { shape: shapeTrans(kind, draws, { window: 400 }) } : {}), degraded }, 200, 300);
     else if (act === "kill") res = json({ kind, ...killList(kind, draws), degraded }, 200, 300);
     else if (act === "dan") res = json({ kind, ...danList(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
     else if (act === "predict") res = json({ ...recommendAll(kind, draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), degraded }, 200, 0);
@@ -142,6 +144,19 @@ function verifySmall(draws, kind, code, nums) {
 function num(url, k, d, a, b) { const v = parseInt(url.searchParams.get(k) || d, 10); return Math.min(b, Math.max(a, isNaN(v) ? d : v)); }
 // n 缺省时返回 undefined，让引擎按彩种默认推荐个数走
 function optN(url) { const raw = url.searchParams.get("n"); return raw === null || raw === "" ? undefined : num(url, "n", 6, 1, 80); }
+// 浮点参数（如 holdout=0.3）
+function optF(url, k, d, mn, mx) { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(mx, Math.max(mn, v)) : d; }
+// 按 code 去重（保留先出现的=最新一期）：save* 用 INSERT OR REPLACE 依赖唯一约束，
+// 若建表时没加 UNIQUE 会积累重复期号，回测样本被虚增、同一天被算两遍。
+// 数组上的自定义属性（_sources/_consistent/_degraded/_mock）原样透传
+function dedupeByCode(arr) {
+  const seen = new Set(), out = [];
+  for (const d of (arr || [])) { const c = String(d && d.code); if (seen.has(c)) continue; seen.add(c); out.push(d); }
+  for (const k of Object.keys(arr || {})) if (k.startsWith("_")) out[k] = arr[k];
+  return out;
+}
+// 下一期期号：纯数字 +1（跨年边界会失真，但对账只按「该期是否已开奖」兜底，不影响正确性）
+function nextIssue(code) { return /^\d+$/.test(String(code || "")) ? String(Number(code) + 1) : String(code || "") + "+1"; }
 // 兼容旧字段：同一份推荐结果同时给出 main/aux 与 red/blue 等别名
 function withLegacy(r) {
   const alias = { ssq: ["red", "blue"], dlt: ["front", "back"], qlc: ["nums", "special"], kl8: ["nums", null] };
@@ -151,37 +166,37 @@ function withLegacy(r) {
 }
 // 统一取数：ssq 走双源融合，dlt 走 500/17500，其余走 17500 并在上游失败时降级读 D1
 async function drawsOf(env, kind, limit = 60) {
-  if (kind === "ssq") return getDraws(env, Math.max(100, limit));
-  if (kind === "dlt") { let d = []; try { d = await fetchDLT(limit); } catch {} if (!d.length) d = await fetch17500DLT(); return d; }
+  if (kind === "ssq") return dedupeByCode(await getDraws(env, Math.max(100, limit)));
+  if (kind === "dlt") { let d = []; try { d = await fetchDLT(limit); } catch {} if (!d.length) d = await fetch17500DLT(); return dedupeByCode(d); }
   let d = [];
   try { d = await fetchSmall(kind, limit); } catch (e) {
-    d = await loadSmall(env.DB, kind, limit).catch(() => []);
+    d = dedupeByCode(await loadSmall(env.DB, kind, limit).catch(() => []));
     if (!d.length) throw e;
     d._degraded = true;
   }
-  return d;
+  return dedupeByCode(d);
 }
 // 深度取数：回测/校准/胆拖单需要 600+ 期长历史，优先走 17500 全量文件（双色球/大乐透/小彩种都覆盖）
 async function drawsDeep(env, kind) {
   if (kind === "ssq") {
     let d = [];
     try { d = await fetch17500(650); } catch {}
-    if (d.length) return d;
-    return getDraws(env, 200);
+    if (d.length) return dedupeByCode(d);
+    return dedupeByCode(await getDraws(env, 200));
   }
   if (kind === "dlt") {
     let d = [];
     try { d = (await fetch17500DLT()).slice(0, 650); } catch {}
-    if (d.length) return d;
-    try { return await fetchDLT(200); } catch { return []; }
+    if (d.length) return dedupeByCode(d);
+    try { return dedupeByCode(await fetchDLT(200)); } catch { return []; }
   }
   let d = [];
   try { d = await fetchSmall(kind, 650); } catch (e) {
-    d = await loadSmall(env.DB, kind, 650).catch(() => []);
+    d = dedupeByCode(await loadSmall(env.DB, kind, 650).catch(() => []));
     if (!d.length) throw e;
     d._degraded = true;
   }
-  return d;
+  return dedupeByCode(d);
 }
 // 全彩种统一的预测入口：/api/predict | /api/analyze | /api/kill | /api/dan?kind=xx
 async function predictRoute(request, env, url) {
@@ -206,16 +221,21 @@ async function predictRoute(request, env, url) {
     const heavy = url.pathname.endsWith("/backtest") || url.pathname.endsWith("/kill-calibrated") || url.pathname.endsWith("/ticket");
     const draws = heavy ? await drawsDeep(env, kind) : await drawsOf(env, kind, Math.max(60, win));
     const act = url.pathname.split("/").pop();
-    if (act === "analyze") return json({ kind, ...analyzeAll(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
+    if (act === "analyze") {
+      const an = { kind, ...analyzeAll(kind, draws, win) };
+      if (SPECS[kind].type === "pool") an.shape = shapeTrans(kind, draws, { window: 400 }); // 形态转移，CPU O(400) 可忽略
+      return json({ ...an, degraded: !!draws._degraded }, 200, 300);
+    }
     if (act === "kill") return json({ kind, ...killList(kind, draws), degraded: !!draws._degraded }, 200, 300);
     if (act === "dan") return json({ kind, ...danList(kind, draws, win), degraded: !!draws._degraded }, 200, 300);
     if (act === "trend") return json({ kind, rows: trendPool(kind, draws, num(url, "limit", 30, 5, 60)), degraded: !!draws._degraded }, 200, 600);
     if (act === "backtest") return json({ ...backtest(kind, draws, { win, periods: num(url, "periods", 20, 1, 600), warmup: num(url, "warmup", 30, 10, 60) }), degraded: !!draws._degraded }, 200, 3600);
     if (act === "kill-calibrated") {
       // 缓存已在取数前检查过（内存 → 边缘），这里只现算并写回三级缓存
-      const cal = calibrate(kind, draws, { periods: num(url, "periods", 12, 1, 60), win });
+      // holdout=0.3（可选）：权重只用旧段拟合、新段外推检验——显式传参才算，默认路径 CPU 不变
+      const cal = calibrate(kind, draws, { periods: num(url, "periods", 12, 1, 60), win, holdout: optF(url, "holdout", 0, 0, 0.5) });
       const kl = killList(kind, draws, { weights: cal.weights });
-      const res = json({ kind, ...kl, weights: cal.weights, formulas: cal.formulas, periods: cal.periods, degraded: !!draws._degraded }, 200, 21600);
+      const res = json({ kind, ...kl, weights: cal.weights, formulas: cal.formulas, periods: cal.periods, ...(cal.holdout ? { holdout: cal.holdout } : {}), degraded: !!draws._degraded }, 200, 21600);
       const ck = url.toString(), creq = new Request(ck, { method: "GET" });
       if (CAL_MEM.size > 64) CAL_MEM.clear();
       CAL_MEM.set(ck, { at: Date.now(), body: await res.clone().text(), headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=21600" } });
@@ -271,7 +291,21 @@ async function getDraws(env, limit) {
   const ok = rs.filter(x => x.d && x.d.length);
   if (!ok.length) { try { const t = await fetch17500(); if (t.length) { t._sources = ["17500"]; t._consistent = true; return t; } } catch {} const m = [{ code: "2025091", red: ["01", "08", "12", "19", "26", "33"], blue: "09", date: "", src: "mock" }]; m._sources = []; m._consistent = true; m._mock = true; return m; }
   const base = ok.find(x => x.k === "500")?.d || ok[0].d;
-  base._sources = ok.map(x => x.k); base._consistent = ok.length > 1 && ok[0].d[0].code === ok[1].d[0].code ? JSON.stringify([ok[0].d[0].red, ok[0].d[0].blue]) === JSON.stringify([ok[1].d[0].red, ok[1].d[0].blue]) : true; return base;
+  base._sources = ok.map(x => x.k); base._consistent = ok.length > 1 && ok[0].d[0].code === ok[1].d[0].code ? JSON.stringify([ok[0].d[0].red, ok[0].d[0].blue]) === JSON.stringify([ok[1].d[0].red, ok[1].d[0].blue]) : true;
+  // 多源交叉校验（最近 30 期逐期比对）：单源数据错误 = 全部预测报废，落库前必须拦住
+  if (ok.length > 1) {
+    const [a, b] = ok.map(x => x.d);
+    const bMap = new Map(b.slice(0, 40).map(d => [String(d.code), d]));
+    let checked = 0; const mismatch = [];
+    for (const d of a.slice(0, 30)) {
+      const o = bMap.get(String(d.code));
+      if (!o) continue;
+      checked++;
+      if (JSON.stringify([d.red, d.blue]) !== JSON.stringify([o.red, o.blue])) mismatch.push(String(d.code));
+    }
+    base._cross = { checked, mismatch };
+  }
+  return base;
 }
 async function getCustom(env) {
   const out = [];
@@ -291,10 +325,13 @@ async function adminSync(request, env, ctx) {
   const out = { ran: new Date().toISOString(), results: {} };
   try {
     const live = await getDraws(env, 100);
-    const ins = await saveSSQ(env.DB, live);
-    await logSync(env.DB, (live._sources || []).join(","), live.length, ins, live._consistent ? 1 : 0, live._mock ? "mock" : "");
+    // 交叉校验不一致的期号拒绝落库：无法分辨哪个源对，宁缺毋滥——D1 旧值仍是好的
+    const bad = new Set((live._cross && live._cross.mismatch) || []);
+    const toSave = bad.size ? live.filter(d => !bad.has(String(d.code))) : live;
+    const ins = await saveSSQ(env.DB, toSave);
+    await logSync(env.DB, (live._sources || []).join(","), live.length, ins, live._consistent ? 1 : 0, live._mock ? "mock" : (bad.size ? "crosscheck_dropped_" + bad.size : ""));
     const cached = await loadSSQ(env.DB, 5);
-    out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code };
+    out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code, ...(live._cross ? { crosscheck: { checked: live._cross.checked, mismatch: live._cross.mismatch, dropped: bad.size } } : {}) };
   } catch (e) { out.results.ssq = { error: String(e.message || e) }; }
   try {
     let d = []; try { d = await fetchDLT(60); } catch {} if (!d.length) d = await fetch17500DLT();
@@ -315,6 +352,9 @@ async function adminSync(request, env, ctx) {
     for (const k of LOTS.map(x => x.id)) {
       ctx.waitUntil(fetch(origin + "/api/kill-calibrated?kind=" + k).then(() => true).catch(() => false));
     }
+    // 预测复盘（快照 + 对账）放独立请求跑：8 彩种 analyze+killList 的 CPU 不占本请求预算
+    out.review = "deferred";
+    ctx.waitUntil(fetch(origin + "/api/admin/review-job", { method: "POST", headers: { Authorization: `Bearer ${env.API_TOKEN}` } }).then(() => true).catch(() => false));
   }
   return json(out);
 }
@@ -333,6 +373,92 @@ async function favsRoute(request, env, url) {
     try { await env.DB.prepare("DELETE FROM favs WHERE id=?").bind(id).run(); return json({ ok: true }); } catch (e) { return json({ error: String(e) }, 500); }
   }
   return json({ error: "method" }, 405);
+}
+// ---------- 预测复盘闭环：D1 存每日推荐快照 → 开奖后自动对账 → /api/review 滚动命中率 ----------
+async function loadDraws(env, k, n) {
+  if (k === "ssq") return dedupeByCode(await loadSSQ(env.DB, n));
+  if (k === "dlt") return dedupeByCode(await loadDLT(env.DB, n));
+  return dedupeByCode(await loadSmall(env.DB, k, n));
+}
+const PREDLOG_DDL = "CREATE TABLE IF NOT EXISTS predlog (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, code TEXT NOT NULL, payload TEXT NOT NULL, hit TEXT, checked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(kind, code))";
+// review-job：adminSync 通过 waitUntil 自 fetch 触发（独立请求独立 CPU 预算）
+async function reviewJob(request, env) {
+  if (!requireAuth(request, env)) return json({ error: "unauthorized admin" }, 401);
+  if (!env.DB) return json({ error: "no db" }, 501);
+  const out = {};
+  try { await env.DB.prepare(PREDLOG_DDL).run(); } catch (e) { return json({ error: "predlog init: " + String(e) }, 500); }
+  for (const k of LOTS.map(x => x.id)) {
+    try {
+      const draws = await loadDraws(env, k, 8); // 刚同步完，DB 是事实源
+      if (!draws.length) { out[k] = { skip: "no draws" }; continue; }
+      const byCode = new Map(draws.map(d => [String(d.code), d]));
+      // ① 对账：checked=0 且该期已开奖的快照 → 算命中并落库
+      let checkedN = 0;
+      const pend = await env.DB.prepare("SELECT id, code, payload FROM predlog WHERE kind=? AND checked=0 ORDER BY id DESC LIMIT 30").bind(k).all();
+      for (const row of (pend.results || [])) {
+        const d = byCode.get(String(row.code));
+        if (!d) continue;
+        try {
+          const p = JSON.parse(row.payload);
+          const actMain = new Set(mainOf(d, k)), actAux = new Set(auxOf(d, k));
+          const hit = {
+            picks: (p.picks || []).map(x => ({ name: x.name, main: x.main, hit: (x.main || []).filter(n => actMain.has(n)).length, auxHit: (x.aux || []).filter(n => actAux.has(n)).length })),
+            dan: p.dan || [], danHit: (p.dan || []).filter(n => actMain.has(n)).length,
+            kill: p.kill || [], killWrong: (p.kill || []).filter(n => actMain.has(n)),
+            actual: mainOf(d, k).join(" ") + (auxOf(d, k).length ? " + " + auxOf(d, k).join(" ") : "")
+          };
+          await env.DB.prepare("UPDATE predlog SET hit=?, checked=1 WHERE id=?").bind(JSON.stringify(hit), row.id).run();
+          checkedN++;
+        } catch {}
+      }
+      // ② 快照下一期推荐（analyze 级计算，CPU 几 ms；不碰回测）
+      const an = analyzeAll(k, draws, 30);
+      const kl = killList(k, draws.slice(0, 60));
+      const th = kl.threshold ?? 99;
+      const payload = {
+        picks: (an.picks || []).slice(0, 3).map(x => ({ name: x.name, main: x.main, aux: x.aux || [] })),
+        dan: (an.dan && an.dan.main ? an.dan.main : (an.dan || [])).slice(0, 4).map(x => x.n || x),
+        kill: (kl.main || []).filter(x => x.votes >= th).map(x => x.n),
+        basedOn: draws[0].code
+      };
+      await env.DB.prepare("INSERT INTO predlog(kind,code,payload) VALUES(?,?,?) ON CONFLICT(kind,code) DO NOTHING").bind(k, nextIssue(draws[0].code), JSON.stringify(payload)).run();
+      out[k] = { snapshot: nextIssue(draws[0].code), reconciled: checkedN };
+    } catch (e) { out[k] = { error: String(e) }; }
+  }
+  return json({ ok: true, results: out });
+}
+// reviewRoute：复盘查询（公开读；汇总各彩种滚动命中率 + 明细）
+async function reviewRoute(request, env, url) {
+  if (!env.DB) return json({ error: "no db" }, 501);
+  const kind = (url.searchParams.get("kind") || "").trim();
+  try { await env.DB.prepare(PREDLOG_DDL).run(); } catch {}
+  try {
+    const rows = kind
+      ? await env.DB.prepare("SELECT id,kind,code,payload,hit,checked,created_at FROM predlog WHERE kind=? ORDER BY id DESC LIMIT 100").bind(kind).all()
+      : await env.DB.prepare("SELECT id,kind,code,payload,hit,checked,created_at FROM predlog ORDER BY id DESC LIMIT 200").all();
+    const list = (rows.results || []).map(r => { try { r.payload = JSON.parse(r.payload); r.hit = r.hit ? JSON.parse(r.hit) : null; } catch {} return r; });
+    const agg = {};
+    for (const r of list) {
+      if (!r.checked || !r.hit) continue;
+      const a = agg[r.kind] || (agg[r.kind] = { checked: 0, picksTotal: 0, picksHit: 0, danTotal: 0, danHit: 0, killTotal: 0, killWrong: 0 });
+      a.checked++;
+      for (const p of (r.hit.picks || [])) { a.picksTotal += (p.main || []).length; a.picksHit += p.hit || 0; }
+      a.danTotal += (r.hit.dan || []).length; a.danHit += r.hit.danHit || 0;
+      a.killTotal += (r.hit.kill || []).length; a.killWrong += (r.hit.killWrong || []).length;
+    }
+    const summary = {};
+    for (const [k, a] of Object.entries(agg)) {
+      const m = SPECS[k] && SPECS[k].main;
+      summary[k] = {
+        checked: a.checked,
+        pickHitRate: a.picksTotal ? +(a.picksHit / a.picksTotal).toFixed(3) : null,
+        pickBaseline: m ? +(m.pick / (m.max - m.min + 1)).toFixed(4) : null,
+        danHitRate: a.danTotal ? +(a.danHit / a.danTotal).toFixed(3) : null,
+        killWrongRate: a.killTotal ? +(a.killWrong / a.killTotal).toFixed(3) : null
+      };
+    }
+    return json({ summary, rows: list.slice(0, 50) });
+  } catch (e) { return json({ error: String(e) }, 500); }
 }
 function htmlLicenses() {
   const s = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>Licenses</title></head><body><h1>声明</h1><p>自研代码 MIT。逻辑借鉴（自写实现）：sinyu1012 Double-Color-Ball-AI MIT，oahzxd lottoery MIT，BEWINDOWEB lotterygrabber MIT，longgeyyds ssq-fusion MIT，Konata chinese-lottery-predict MIT，zxz0119 lottery-ai-simulator MIT。TheMelody LotteryTrend Apache-2.0（保留声明）。zepen/predict等无License仅借思路未抄码。数据：500/cwl/17500/sporttery归属原站。随机游戏，仅供娱乐，不保证中奖。</p><a href="/">回首页</a></body></html>`;

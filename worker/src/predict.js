@@ -26,12 +26,14 @@ export function poolOf(zone) { const o = []; for (let i = zone.min; i <= zone.ma
 
 // 取一期的号码：统一成「字符串数组」，屏蔽各彩种字段差异
 export function mainOf(d, kind) {
+  if (!d) return []; // 上游缺期时静默返回空，避免 (null)[field] 崩掉整条预测链
   const s = specOf(kind);
   if (s.type === "digit") return (d[s.fMain] || []).map(x => String(x));
   const v = d[s.fMain];
   return (Array.isArray(v) ? v : v ? [v] : []).map(x => pad2(Number(String(x).trim())));
 }
 export function auxOf(d, kind) {
+  if (!d) return [];
   const s = specOf(kind);
   if (!s.fAux) return [];
   const v = d[s.fAux];
@@ -46,6 +48,29 @@ export function acValue(nums) {
   const n = nums.map(Number), set = new Set();
   for (let i = 0; i < n.length; i++) for (let j = i + 1; j < n.length; j++) set.add(Math.abs(n[i] - n[j]));
   return set.size - (n.length - 1);
+}
+
+// ---------- 统计显著性：二项检验 p 值（正态近似，双侧） ----------
+// 观察 hits/n 是否显著偏离基线 p0。n < 20 返回 null：样本不足不做显著性宣称。
+// p < 0.05 视为「显著偏离」；对杀号而言方向是越低越好，p 只回答「是否偏离」，方向由调用方判断。
+export function binomP(hits, n, p0) {
+  if (!(n >= 20) || !(p0 > 0 && p0 < 1) || !(hits >= 0 && hits <= n)) return null;
+  const se = Math.sqrt(p0 * (1 - p0) / n);
+  const z = Math.abs((hits / n - p0) / se);
+  if (!Number.isFinite(z)) return null;
+  const t = 1 / (1 + 0.2316419 * z);
+  const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  const tail = 0.3989423 * Math.exp(-z * z / 2) * poly;
+  return +Math.min(1, Math.max(0, 2 * tail)).toFixed(4);
+}
+
+// 期号 → 年代桶：优先 date 字段取年份，退化用 code 前缀（7 位=2026103，5 位=26103）
+function eraOf(d) {
+  if (d && d.date && /^\d{4}/.test(String(d.date))) return String(d.date).slice(0, 4);
+  const iss = d && d.code != null ? String(d.code) : (d && d.issue != null ? String(d.issue) : "");
+  if (/^\d{7}/.test(iss)) return iss.slice(0, 4);
+  if (/^\d{5}/.test(iss)) return "20" + iss.slice(0, 2);
+  return "未知";
 }
 
 // 频率 + 遗漏（遗漏：当前未出现期数 / 历史平均间隔 / 历史最大间隔）
@@ -499,6 +524,7 @@ export function backtest(kind, draws, opts = {}) {
   const killAgg = {};
   const aux = s.aux ? { pick: s.aux.pick, size: s.aux.max - s.aux.min + 1, hot: { hit: 0 }, kill: { killed: 0, hit: 0 } } : null;
   let tested = 0;
+  const eras = {}; // 分年代桶：策略稳定性观察（era → {tested, hot, cold, dan, kk, kh}）
   // draws 由新到旧：测试最近 periods 期（步长抽样），历史为 draws[i+1..]
   for (let i = periods - 1; i >= 0; i -= stride) {
     const hist = draws.slice(i + 1);
@@ -509,14 +535,19 @@ export function backtest(kind, draws, opts = {}) {
     const hotTop = pool.slice().sort((a, b) => st.freq[b] - st.freq[a] || Number(a) - Number(b)).slice(0, guessN);
     const coldTop = pool.slice().sort((a, b) => st.cur[b] - st.cur[a] || Number(a) - Number(b)).slice(0, guessN);
     const danTop = scorePool(st, pool, lastN).slice(0, danK).map(x => x.n);
-    hot.hit += hotTop.filter(k => actual.has(k)).length;
-    cold.hit += coldTop.filter(k => actual.has(k)).length;
-    dan.hit += danTop.filter(k => actual.has(k)).length;
+    const hHit = hotTop.filter(k => actual.has(k)).length, cHit = coldTop.filter(k => actual.has(k)).length, dHit = danTop.filter(k => actual.has(k)).length;
+    hot.hit += hHit; cold.hit += cHit; dan.hit += dHit;
     // killAux 的遗漏统计窗口封顶 100 期：600 期跨度时历史数组很长，不封顶 CPU 会失控
-    const kl = killList(kind, hist.slice(0, 100), { perFormula: true }), th = kl.threshold ?? 99;
+    // opts.weights：校准权重（来自 calibrate）——传入后回测的就是「加权杀号」的真实命中率
+    const kl = killList(kind, hist.slice(0, 100), { perFormula: true, weights: opts.weights }), th = kl.threshold ?? 99;
     const killed = (kl.main || []).filter(x => x.votes >= th).map(x => x.n);
+    const kHit = killed.filter(k => actual.has(k)).length;
     kill.killed += killed.length;
-    kill.hit += killed.filter(k => actual.has(k)).length;
+    kill.hit += kHit;
+    // 年代桶累积（命中数已在上面捕获，这里只做归档）
+    const era = eraOf(draws[i]);
+    const eb = eras[era] || (eras[era] = { tested: 0, hot: 0, cold: 0, dan: 0, kk: 0, kh: 0 });
+    eb.tested++; eb.hot += hHit; eb.cold += cHit; eb.dan += dHit; eb.kk += killed.length; eb.kh += kHit;
     if (kl.byFormula) {
       for (const [key, arr] of Object.entries(kl.byFormula)) {
         const a = killAgg[key] || (killAgg[key] = { killed: 0, hit: 0 });
@@ -542,23 +573,32 @@ export function backtest(kind, draws, opts = {}) {
     kind, name: s.name, type: s.type, periods, tested, stride, warmup, win,
     guessN, pick, poolSize: size, baseline: +base.toFixed(4),
     strategies: {
-      hot: { avgHit: +(hot.hit / tested).toFixed(3), hitRate: rate(hot.hit, tested * guessN), baseline: +base.toFixed(4), note: "预测 " + guessN + " 个，单号基线 " + base.toFixed(4) },
-      cold: { avgHit: +(cold.hit / tested).toFixed(3), hitRate: rate(cold.hit, tested * guessN), baseline: +base.toFixed(4) },
-      dan: { k: danK, avgHit: +(dan.hit / tested).toFixed(3), hitRate: rate(dan.hit, tested * danK), baseline: +(danK * base).toFixed(4) }
+      hot: { avgHit: +(hot.hit / tested).toFixed(3), hitRate: rate(hot.hit, tested * guessN), baseline: +base.toFixed(4), p: binomP(hot.hit, tested * guessN, base), note: "预测 " + guessN + " 个，单号基线 " + base.toFixed(4) },
+      cold: { avgHit: +(cold.hit / tested).toFixed(3), hitRate: rate(cold.hit, tested * guessN), baseline: +base.toFixed(4), p: binomP(cold.hit, tested * guessN, base) },
+      dan: { k: danK, avgHit: +(dan.hit / tested).toFixed(3), hitRate: rate(dan.hit, tested * danK), baseline: +(danK * base).toFixed(4), p: binomP(dan.hit, tested * danK, base) } // hitRate 的随机基线是单号 base（danK*base 是 avgHit 基线，>1 不能当 p0）
     },
     kill: {
       killedTotal: kill.killed, killedHit: kill.hit,
       hitRate: rate(kill.hit, kill.killed), baseline: +base.toFixed(4),
+      p: binomP(kill.hit, kill.killed, base),
       verdict: kill.killed === 0 ? "无杀号样本" : (kill.hit / kill.killed < base ? "有效（低于随机基线）" : "无信息（不低于随机基线）"),
       formulas: Object.entries(FORMULAS).map(([key, label]) => {
         const a = killAgg[key] || { killed: 0, hit: 0 };
         const r = a.killed > 0 ? +(a.hit / a.killed).toFixed(4) : null;
-        return { key, label, killed: a.killed, hit: a.hit, rate: r, baseline: +base.toFixed(4),
+        return { key, label, killed: a.killed, hit: a.hit, rate: r, baseline: +base.toFixed(4), p: binomP(a.hit, a.killed, base),
           verdict: a.killed === 0 ? "无样本" : (r < base ? "有效" : "无信息") };
       })
     },
     note, disclaimer: DISCLAIMER
   };
+  // 分年代稳定性：策略是「长期有效」还是「最近退化」，分年看一眼便知
+  out.eras = Object.entries(eras).map(([era, b]) => ({
+    era, tested: b.tested,
+    hotRate: +(b.hot / Math.max(1, b.tested * guessN)).toFixed(3),
+    danRate: +(b.dan / Math.max(1, b.tested * danK)).toFixed(3),
+    killRate: b.kk ? +(b.kh / b.kk).toFixed(3) : null,
+    killN: b.kk
+  })).sort((a, b) => a.era < b.era ? -1 : 1);
   if (aux) {
     const aBase = aux.pick / aux.size;
     out.aux = {
@@ -584,7 +624,7 @@ function backtestDigit(kind, draws, cfg) {
       const cold1 = DIG.slice().sort((a, b) => st.cur[b] - st.cur[a] || Number(a) - Number(b))[0];
       row.hotHits += hot1 === String(actual[p]) ? 1 : 0;
       row.coldHits += cold1 === String(actual[p]) ? 1 : 0;
-      const kl = killList(kind, hist.slice(0, 100)); // 统计窗口封顶 100 期，保证 CPU 有界
+      const kl = killList(kind, hist.slice(0, 100), { weights: cfg.weights }); // 统计窗口封顶 100 期，保证 CPU 有界；数字型 killDigits 忽略 weights
       const k1 = (kl.perPos[p].kill || [])[0];
       if (k1 && k1.votes > 0) { row.killTotal++; row.killHit += k1.n === String(actual[p]) ? 1 : 0; }
       row.tested++;
@@ -606,17 +646,52 @@ function backtestDigit(kind, draws, cfg) {
 
 // ---------- 校准：按分公式回测命中率生成动态权重 ----------
 // rate 越高于基线，权重越低（无效公式自动降权）；权重区间 [0.2, 2]
-export function calibrate(kind, draws, opts = {}) {
-  const bt = backtest(kind, draws, { periods: opts.periods || 12, warmup: opts.warmup || 30, win: opts.win || 30 });
+// 样本量保护（审计发现）：killed < 10 的公式不参与加权——小样本 rate=0 会被误判成「神公式」放大噪音；
+// killed ≥ 10 后按样本量线性收缩到满强度（killed=40 达满强度），小样本极端权重被压向 1
+function weightsFrom(bt) {
   const weights = {};
   if (bt.kill && bt.kill.formulas) {
     for (const f of bt.kill.formulas) {
-      weights[f.key] = (f.killed === 0 || f.rate == null)
-        ? 1
-        : Math.max(0.2, Math.min(2, +(2 - f.rate / f.baseline).toFixed(3)));
+      if (f.killed === 0 || f.rate == null) { weights[f.key] = 1; continue; }
+      const clamped = Math.max(0.2, Math.min(2, +(2 - f.rate / f.baseline).toFixed(3)));
+      weights[f.key] = f.killed < 10 ? 1 : +(1 + (clamped - 1) * Math.min(1, f.killed / 40)).toFixed(3);
     }
   }
-  return { weights, periods: bt.periods, formulas: (bt.kill && bt.kill.formulas) || [] };
+  return weights;
+}
+// holdout 模式（opts.holdout>0，如 0.3）：只用旧段拟合权重，在新段分别回测「带权重 / 不带权重」的
+// 杀号命中率——新段上 calibrated 仍低于 raw 才说明校准有外推价值（防「同一段数据既调权又报成绩」的过拟合）。
+// CPU 说明：显式传 holdout 才计算，默认路径不涨 CPU（免费版单请求限制）。
+export function calibrate(kind, draws, opts = {}) {
+  const hFrac = Math.max(0, Math.min(opts.holdout || 0, 0.5));
+  const s = specOf(kind);
+  if (hFrac > 0 && s.type !== "digit") {
+    const N = draws.length;
+    const m = Math.max(opts.warmup || 30, Math.floor(N * (1 - hFrac)));
+    const evalN = N - m;
+    if (evalN < 20) {
+      const bt0 = backtest(kind, draws, { periods: opts.periods || 12, warmup: opts.warmup || 30, win: opts.win || 30 });
+      return { weights: weightsFrom(bt0), periods: bt0.periods, formulas: (bt0.kill && bt0.kill.formulas) || [], holdout: { note: "样本不足：新段 < 20 期，未做外推检验" } };
+    }
+    const fitPart = draws.slice(m), evalPart = draws.slice(0, m); // evalPart=新段（含最新），fitPart=旧段
+    const fitBt = backtest(kind, fitPart, { periods: opts.periods || 12, warmup: opts.warmup || 30, win: opts.win || 30 });
+    const weights = weightsFrom(fitBt);
+    const withW = backtest(kind, evalPart, { periods: opts.evalPeriods || 60, warmup: opts.warmup || 30, win: opts.win || 30, weights });
+    const raw = backtest(kind, evalPart, { periods: opts.evalPeriods || 60, warmup: opts.warmup || 30, win: opts.win || 30 });
+    const k = b => b && b.kill ? { hitRate: b.kill.hitRate, baseline: b.kill.baseline, killedTotal: b.kill.killedTotal, p: b.kill.p } : null;
+    return {
+      weights, periods: fitBt.periods, formulas: (fitBt.kill && fitBt.kill.formulas) || [],
+      holdout: {
+        splitAt: m, fitN: fitPart.length, evalN, evalPeriods: withW.periods, tested: withW.tested,
+        calibrated: k(withW), raw: k(raw),
+        note: "权重仅用旧段（fitN 期）拟合；新段上 calibrated 仍低于 raw 才说明校准有外推价值"
+      }
+    };
+  }
+  const bt = backtest(kind, draws, { periods: opts.periods || 12, warmup: opts.warmup || 30, win: opts.win || 30 });
+  const res = { weights: weightsFrom(bt), periods: bt.periods, formulas: (bt.kill && bt.kill.formulas) || [] };
+  if (hFrac > 0 && s.type === "digit") res.holdout = { note: "数字型无加权杀号聚合，holdout 不适用" };
+  return res;
 }
 
 // ---------- 胆拖投注单：胆 = 评分最高 D 个（剔除杀号），拖 = 次高 T 个，副区取胆码前 pick 个 ----------
@@ -664,4 +739,59 @@ export function trendPool(kind, draws, win = 30) {
     for (const k of pool) { if (nums.has(k)) miss[k] = 0; else miss[k]++; row.miss[k] = miss[k]; }
     return row;
   });
+}
+
+// ---------- 主区形态转移矩阵（号码池型）：和值档位 / 奇偶 / 大小 / 012路 ----------
+// 一阶转移 + 拉普拉斯平滑：p = (count+1)/(total+3)，样本稀疏时趋近均匀，杜绝零样本假确定
+// 与 v0.8 的蓝球转移矩阵、predict?filter=1 的静态形态过滤互补：这里回答「下期大概率什么形态」
+export function shapeTrans(kind, draws, opts = {}) {
+  const s = specOf(kind);
+  if (s.type !== "pool") {
+    return { kind, name: s && s.name, note: "该彩种不支持形态转移", disclaimer: DISCLAIMER };
+  }
+  const pick = s.main.pick, min = s.main.min, max = s.main.max;
+  const minSum = pick * min, range = pick * (max - min);
+  const lo = minSum + range / 3, hi = minSum + 2 * range / 3; // 和值三等分档位
+  const mid = (min + max) / 2;
+  const asc = draws.slice(0, Math.max(60, Math.min(opts.window || 400, 600))).slice().reverse(); // 旧→新，窗口封顶防 CPU
+  const shapeOf = d => {
+    const nums = mainOf(d, kind).map(Number);
+    if (!nums.length) return null;
+    const sum = nums.reduce((a, b) => a + b, 0);
+    const odd = nums.filter(x => x % 2 === 1).length;
+    const big = nums.filter(x => x > mid).length;
+    const r = [0, 0, 0]; nums.forEach(x => r[x % 3]++);
+    return {
+      sum: sum < lo ? "低和值" : sum > hi ? "高和值" : "中和值",
+      odd: odd * 3 <= pick ? "偏偶" : odd * 3 >= pick * 2 ? "偏奇" : "均衡",
+      big: big * 3 <= pick ? "偏小" : big * 3 >= pick * 2 ? "偏大" : "均衡",
+      r012: "路" + r.indexOf(Math.max(...r))
+    };
+  };
+  const DIMS = ["sum", "odd", "big", "r012"];
+  const cnt = {}; for (const dim of DIMS) cnt[dim] = {};
+  const lastShape = {};
+  let prev = null;
+  for (const d of asc) {
+    const cur = shapeOf(d);
+    if (!cur) continue;
+    if (prev) {
+      for (const dim of DIMS) {
+        const f = cnt[dim][prev[dim]] || (cnt[dim][prev[dim]] = {});
+        f[cur[dim]] = (f[cur[dim]] || 0) + 1;
+      }
+    }
+    for (const dim of DIMS) lastShape[dim] = cur[dim];
+    prev = cur;
+  }
+  const out = { kind, name: s.name, type: s.type, window: asc.length, disclaimer: DISCLAIMER };
+  for (const dim of DIMS) {
+    const from = cnt[dim][lastShape[dim]] || {};
+    const total = Object.values(from).reduce((a, b) => a + b, 0);
+    const next = Object.entries(from).map(([to, n]) => ({ shape: to, p: +((n + 1) / (total + 3)).toFixed(3) }))
+      .sort((a, b) => b.p - a.p).slice(0, 3);
+    out[dim] = { last: lastShape[dim] || null, transitions: total, next, matrix: cnt[dim] };
+  }
+  out.note = "一阶转移 + 拉普拉斯平滑；「上一期形态 → 下一期最可能的形态」，样本稀疏时仅供参考";
+  return out;
 }

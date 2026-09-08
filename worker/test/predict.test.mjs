@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { pad2 } from "../src/small.js";
-import { SPECS, specOf, mainOf, auxOf, analyzeAll, killList, danList, recommendAll, structScore, acValue } from "../src/predict.js";
+import { SPECS, specOf, mainOf, auxOf, analyzeAll, killList, danList, recommendAll, structScore, acValue, binomP, backtest, calibrate, shapeTrans } from "../src/predict.js";
 
 // 构造合成历史：不依赖网络，保证测试可重复
 function synth(kind, n = 60) {
@@ -290,4 +290,77 @@ test("filter=1：全部推荐的和值/跨度落在合理形态区", async () =>
     assert.ok(Math.abs(p.sum - ideal) <= tol * 1.3, "和值越界: " + p.sum);
     assert.ok(p.span >= (s.main.max - s.main.min) * 0.5 && p.span <= (s.main.max - s.main.min) * 0.98, "跨度越界: " + p.span);
   }
+});
+
+// ---------- v0.10.0：统计显著性 / holdout 外推 / 分年稳定性 / 形态转移 ----------
+
+test("binomP：样本不足返回 null，显著偏离给小 p，贴基线给大 p", () => {
+  assert.equal(binomP(1, 10, 0.2), null, "n<20 应为 null");
+  assert.equal(binomP(10, 20, 0), null, "p0 无效应为 null");
+  const p1 = binomP(2, 100, 0.2);   // 2% vs 20%，强烈偏低
+  const p2 = binomP(20, 100, 0.2);  // 正好等于基线
+  assert.ok(p1 !== null && p1 < 0.01, "强偏离应显著: " + p1);
+  assert.ok(p2 !== null && p2 > 0.5, "贴基线应不显著: " + p2);
+});
+
+test("backtest 输出 p 值与 eras 分年桶", () => {
+  const draws = synth("ssq", 120);
+  for (const d of draws) d.date = "2026-05-0" + (1 + (Number(d.code) % 9)); // 全部归 2026
+  const bt = backtest("ssq", draws, { periods: 40, warmup: 30, win: 30 });
+  assert.ok(bt.strategies && typeof bt.strategies.hot.p === "number", "hot 缺 p 值");
+  assert.ok(typeof bt.kill.p === "number", "kill 缺 p 值");
+  assert.ok(Array.isArray(bt.eras) && bt.eras.length >= 1, "缺 eras");
+  const sumTested = bt.eras.reduce((a, b) => a + b.tested, 0);
+  assert.equal(sumTested, bt.tested, "eras 测试点数应等于 tested");
+  assert.ok(bt.eras.every(e => e.era === "2026"), "era 归桶错误");
+  for (const e of bt.eras) {
+    assert.ok(e.hotRate >= 0 && e.hotRate <= 1, "hotRate 越界");
+    assert.ok(e.killRate === null || (e.killRate >= 0 && e.killRate <= 1), "killRate 越界");
+  }
+});
+
+test("backtest 接受 weights 且不崩（加权杀号可被回测）", () => {
+  const draws = synth("ssq", 80);
+  const cal = calibrate("ssq", draws.slice(20), { periods: 10 });
+  const bt = backtest("ssq", draws, { periods: 30, warmup: 30, win: 30, weights: cal.weights });
+  assert.ok(bt.kill && typeof bt.kill.hitRate === "number", "加权回测缺 kill.hitRate");
+  assert.ok(Object.keys(cal.weights).length > 0, "calibrate 未产出权重");
+  for (const w of Object.values(cal.weights)) assert.ok(w >= 0.2 && w <= 2, "权重越界: " + w);
+});
+
+test("calibrate holdout：旧段拟合 / 新段外推，输出 calibrated vs raw", () => {
+  const draws = synth("ssq", 200);
+  const c = calibrate("ssq", draws, { periods: 12, holdout: 0.3 });
+  assert.ok(c.holdout && c.holdout.calibrated && c.holdout.raw, "缺 holdout 块");
+  assert.ok(c.holdout.evalN >= 20, "新段应 ≥20 期");
+  assert.ok(c.holdout.calibrated.hitRate >= 0 && c.holdout.calibrated.hitRate <= 1, "calibrated.hitRate 越界");
+  assert.ok(c.holdout.raw.hitRate >= 0 && c.holdout.raw.hitRate <= 1, "raw.hitRate 越界");
+  assert.equal(c.holdout.calibrated.baseline, c.holdout.raw.baseline, "两段基线应一致");
+  // 样本不足时的降级路径：给说明而非崩溃
+  const small = calibrate("ssq", synth("ssq", 40), { periods: 12, holdout: 0.3 });
+  assert.ok(small.holdout && small.holdout.note, "小样本应给说明");
+  // 数字型：holdout 不适用，给说明
+  const dg = calibrate("fc3d", synth("fc3d", 200), { holdout: 0.3 });
+  assert.ok(dg.holdout && dg.holdout.note, "数字型应给说明");
+});
+
+test("shapeTrans：确定性交替数据的转移矩阵与 next 概率", () => {
+  // 构造奇偶交替序列：上一期「偏奇」→ 下一期「偏偶」应 100% 出现（平滑后 <1 但必须是 top1）
+  const draws = [];
+  for (let i = 0; i < 60; i++) {
+    const oddPick = i % 2 === 0 ? ["01", "03", "05", "07"] : ["02", "04", "06", "08"];
+    draws.push({ code: String(2026000 + i), date: "", red: [...oddPick, "10", "12"], blue: "07", src: "synth" });
+  }
+  const st = shapeTrans("ssq", draws.slice().reverse()); // 引擎入参是新→旧
+  assert.equal(st.kind, "ssq");
+  assert.ok(st.odd && st.odd.matrix, "缺 odd 矩阵");
+  assert.ok(st.odd.next.length >= 1 && st.odd.next[0].p > 0 && st.odd.next[0].p <= 1, "next 概率越界");
+  // 最后一期 i=59 → 红球 02/04/06/08（0 奇）→「偏偶」；下一期 i=60 应是「偏奇」
+  assert.equal(st.odd.last, "偏偶", "last 形态判错");
+  assert.equal(st.odd.next[0].shape, "偏奇", "交替模式未学到");
+  const psum = st.odd.next.reduce((a, b) => a + b.p, 0);
+  assert.ok(psum <= 1.001, "next 概率和应 ≤1: " + psum);
+  // 数字型降级：给说明
+  const dg = shapeTrans("fc3d", synth("fc3d", 20));
+  assert.ok(dg.note, "数字型应给说明");
 });

@@ -1,4 +1,17 @@
-# progress · lottery-web v0.9.0 完成（已部署，已推送）
+# progress · lottery-web v0.10.0 完成
+
+## v0.10.0：统计诚实性 + 预测记忆闭环 + 数据可靠性（反复琢磨轮）
+- **指导思想**：彩票近似独立随机，「更玄的公式」不会带来真实提升；打磨方向 = 让「有效」有统计背书 + 预测可回看 + 数据链路防翻车
+- **p 值**：backtest 三策略/杀号/逐公式全部输出二项检验 p（正态近似双侧，n<20 → null）；前端「显著」绿标
+- **holdout 外推检验**：`kill-calibrated?holdout=0.3`——旧 70% 拟合权重，新 30% 上对比加权 vs 未加权杀号命中率；显式传参才算（默认 CPU 不变）
+- **calibrate 样本量保护（审计修复）**：killed<10 → 权重 1；killed≥10 线性收缩到满强度（40 期满）；backtest 接受 weights 传入 killList——加权杀号的回测口径补齐（审计发现权重此前从未进回测）
+- **分年稳定性**：backtest 输出 eras[]（date/期号前缀分桶），前端 >1 个年代才展示
+- **形态转移矩阵**：analyze 号码池型返回 shape（和值/奇偶/大小/012路一阶转移 + 拉普拉斯平滑），前端卡片「上期形态→下期 Top3」
+- **预测复盘闭环**：predlog 表（UNIQUE(kind,code)）+ review-job 独立请求（同步后 waitUntil 自 fetch 触发，CPU 独立）快照下一期推荐 + 开奖对账；/api/review 汇总滚动命中率；工具页复盘卡片
+- **多源交叉校验**：getDraws 对 500/cwl 最近 30 期逐期比对，不一致期号拒绝落库，sync 报 crosscheck；getDraws 本来只比最新 1 期，本轮加深
+- **数据去重（审计修复）**：drawsOf/drawsDeep/loadDraws 出口全按 code 去重并透传 _ 元属性；**mainOf/auxOf null 防御**（审计发现缺期数据可崩全链）
+- 审计贡献：fresh-eyes 子代理独立审计 v0.9.0 方法学，产出 3 条已折入修复（死权重口径/样本量保护/null 崩溃）；未来函数与数组方向未发现问题
+- 测试 58 全过（+5：binomP/eras/weights 回测/holdout/shapeTrans）；版本 0.10.0；README/接口表同步
 
 ## v0.9.0：回测 600 期 + 走势图 + 胆拖单导出 + 缓存三级化（做到位轮）
 - **600 期回测**：`backtest` maxP 60→600；免费版 Workers CPU 10ms 限制 → 跨度 >60 期自动步长抽样（tested 封顶 60，返回 `tested/stride`）；killList 回测历史窗口封顶 100 期；`drawsDeep`(650 期) 接入 backtest/kill-calibrated/ticket

@@ -274,6 +274,17 @@ async function loadAnalyze(id){
       '<br><b>当前遗漏 Top10</b>　' + Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
         .map(([k, v]) => esc(k) + '(' + v + '期·均值' + esc(om.avg[k] != null ? om.avg[k] : '-') + ')').join(' ');
     await loadBacktest(id);
+    // 形态转移卡片（号码池型）：上一期形态 → 下期最可能形态
+    if (an.shape && an.shape.sum) {
+      const dims = [["sum", "和值"], ["odd", "奇偶"], ["big", "大小"], ["r012", "012路"]];
+      const shapeTxt = dims.map(([k, label]) => {
+        const d = an.shape[k];
+        if (!d || !d.last) return '';
+        return label + ' ' + esc(d.last) + '→' + (d.next || []).map(x => esc(x.shape) + '(' + Math.round(x.p * 100) + '%)').join('/');
+      }).filter(Boolean).join('　');
+      if (shapeTxt) $('#stats').insertAdjacentHTML('beforeend',
+        '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>形态转移</b> <span class="muted">（上一期形态 → 下期最可能形态；一阶转移+拉普拉斯平滑）</span><br>' + shapeTxt + '</div>');
+    }
     // 号码池型才有遗漏走势（数字型无号码池）；insertAdjacentHTML 不破坏已绑定的按钮事件
     if (an.freq && Object.keys(an.freq).length) {
       $('#stats').insertAdjacentHTML('beforeend',
@@ -315,6 +326,12 @@ async function drawTrend(id){
   } catch (e) { el.innerHTML = '<div class="err">走势加载失败：' + esc(e.message || e) + '</div>'; }
 }
 
+// p 值展示：p<0.05 视为显著偏离基线；null = 样本不足（不评估）
+function pTag(p){
+  if (p == null) return ' <span class="muted">（样本不足，不评估显著性）</span>';
+  if (p < 0.05) return ' <b style="color:#0a7">p=' + p + ' 显著</b>';
+  return ' <span class="muted">p=' + p + '</span>';
+}
 // 回测摘要：策略/杀号历史表现 vs 随机基线（失败不影响主统计展示）
 // periods 可传 ≤600：跨度 >60 期时后端自动抽样（免费版 CPU 限制），返回 tested/stride 供展示
 async function loadBacktest(id, periods){
@@ -328,11 +345,17 @@ async function loadBacktest(id, periods){
       extra = '<b>回测</b>（' + spanTxt + ' · 单号基线 ' + (bt.baseline * 100).toFixed(1) + '%）：热号均中 ' +
         esc(bt.strategies.hot.avgHit) + ' / 冷号均中 ' + esc(bt.strategies.cold.avgHit) + ' / 胆码均中 ' +
         esc(bt.strategies.dan.avgHit) + '（胆基线 ' + esc(bt.strategies.dan.baseline) + '）<br>杀号命中率 ' +
-        (bt.kill.hitRate * 100).toFixed(1) + '% vs 随机基线 ' + (bt.kill.baseline * 100).toFixed(1) + '% → <b>' + esc(bt.kill.verdict) + '</b>';
+        (bt.kill.hitRate * 100).toFixed(1) + '% vs 随机基线 ' + (bt.kill.baseline * 100).toFixed(1) + '% → <b>' + esc(bt.kill.verdict) + '</b>' + pTag(bt.kill.p);
       if (bt.aux) extra += '　副区热号命中 ' + (bt.aux.hot.hitRate * 100).toFixed(1) + '%（基线 ' + (bt.aux.hot.baseline * 100).toFixed(1) + '%）';
       const fs = (bt.kill.formulas || []).filter(f => f.killed > 0);
       if (fs.length) extra += '<br><b>杀号公式校准</b>（基线 ' + (bt.kill.baseline * 100).toFixed(1) + '%，√=低于基线）：' +
-        fs.map(f => esc(f.label) + ' ' + (f.rate * 100).toFixed(1) + '%' + (f.verdict === '有效' ? '√' : '—')).join('　');
+        fs.map(f => esc(f.label) + ' ' + (f.rate * 100).toFixed(1) + '%' + (f.verdict === '有效' ? '√' : '—') +
+          (f.p != null && f.p < 0.05 ? '<b style="color:#0a7">·显著</b>' : '')).join('　');
+      // 分年稳定性：单一学年没有对比意义，>1 个年代才展示
+      if (bt.eras && bt.eras.length > 1) {
+        extra += '<br><b>分年稳定性</b>：' + bt.eras.map(e => esc(e.era) + ' 热' + (e.hotRate * 100).toFixed(0) + '%' +
+          (e.killRate != null ? '/杀' + (e.killRate * 100).toFixed(0) + '%' : '')).join(' · ');
+      }
     } else if (bt.perPos) {
       const avgOf = key => bt.perPos.reduce((a, r) => a + (r[key] || 0), 0) / bt.perPos.length;
       const kr = bt.perPos.filter(r => r.killRate != null);
@@ -341,14 +364,33 @@ async function loadBacktest(id, periods){
         (kr.length ? ' / 首位杀号命中率 ' + ((kr.reduce((a, r) => a + r.killRate, 0) / kr.length) * 100).toFixed(1) + '%' : '');
     }
     if (bt.note) extra += '<br><span>' + esc(bt.note) + '</span>';
-    extra += '<div class="row" style="margin-top:6px"><input id="btp" placeholder="回测期数（≤600，>60 自动抽样）" style="width:200px"><button id="btgo">按期数重算</button></div>';
+    extra += '<div class="row" style="margin-top:6px"><input id="btp" placeholder="回测期数（≤600，>60 自动抽样）" style="width:200px"><button id="btgo">按期数重算</button>' +
+      '<button id="btho">校准外推检验</button><span id="hoout" class="muted"></span></div>';
     // insertAdjacentHTML + 先移除旧块：重算时不会丢失走势图的按钮事件
     const old = document.getElementById('btout');
     if (old) old.remove();
     $('#stats').insertAdjacentHTML('beforeend', '<div id="btout" style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee" class="muted">' + extra + '</div>');
     const go = document.getElementById('btgo');
     if (go) go.onclick = () => { const v = parseInt(document.getElementById('btp').value, 10); if (v > 0) loadBacktest(id, Math.min(600, v)); };
+    const ho = document.getElementById('btho');
+    if (ho) ho.onclick = () => loadHoldout(id);
   } catch (e2) { /* 回测接口失败时保持主统计展示 */ }
+}
+
+// 校准外推检验：权重只用旧段拟合，在新段对比「加权 vs 未加权」杀号命中率（防过拟合的直接证据）
+async function loadHoldout(id){
+  const el = document.getElementById('hoout');
+  if (el) el.innerHTML = '外推检验计算中（拉全量历史 + 三次回测，约几秒）…';
+  try {
+    const r = await api('/api/kill-calibrated?kind=' + id + '&holdout=0.3');
+    const h = r.holdout || {};
+    if (!h.calibrated) { if (el) el.innerHTML = esc(h.note || '无外推检验结果'); return; }
+    const c = h.calibrated, rw = h.raw;
+    const cmp = c.hitRate < rw.hitRate ? '<b style="color:#0a7">校准在新段仍更准（外推有效）</b>'
+      : c.hitRate > rw.hitRate ? '<b style="color:#c60">校准在新段反而更差（过拟合嫌疑）</b>' : '持平';
+    if (el) el.innerHTML = '<br><b>外推检验</b>（旧 ' + esc(h.fitN) + ' 期拟合 → 新 ' + esc(h.evalN) + ' 期验证，抽样 ' + esc(h.tested) + ' 点）：加权杀号 ' +
+      (c.hitRate * 100).toFixed(1) + '% vs 未加权 ' + (rw.hitRate * 100).toFixed(1) + '%（基线 ' + (c.baseline * 100).toFixed(1) + '%）→ ' + cmp;
+  } catch (e) { if (el) el.innerHTML = '<span class="err">外推检验失败：' + esc(e.message || e) + '</span>'; }
 }
 
 // ---------- 历史 ----------
@@ -386,7 +428,9 @@ function buildTools(id){
     '<input data-f="mults" placeholder="倍数序列 1,2,4" style="width:150px"></div>' +
     '<div class="row"><button id="cgo">计算注数</button></div><div id="cout" class="muted"></div>' +
     '<h3 style="margin:16px 0 8px">中奖计算器</h3><div class="row" id="prow">' + inputs(pf) + '</div>' +
-    '<div class="row"><button id="pgo">判定奖级</button></div><div id="pout" class="muted"></div>';
+    '<div class="row"><button id="pgo">判定奖级</button></div><div id="pout" class="muted"></div>' +
+    '<h3 style="margin:16px 0 8px">预测复盘</h3><div class="row"><button id="rgo">加载复盘数据</button></div>' +
+    '<div id="rout" class="muted">每日同步会自动快照下一期推荐，开奖后自动对账；此处查看滚动命中率与近期对账明细。</div>';
   const q = (row) => [...row.querySelectorAll('input[data-f]')]
     .filter(i => i.value.trim() !== '')
     .map(i => i.dataset.f + '=' + encodeURIComponent(i.value.trim())).join('&');
@@ -411,6 +455,26 @@ function buildTools(id){
         (r.amount ? ' <span class="muted">参考 ' + esc(r.amount) + ' 元</span>' : '') +
         '<div class="muted">' + esc(r.note || '') + '</div></div>';
     } catch (e) { errBox(e, $('#pout')); }
+  };
+  $('#rgo').onclick = async () => {
+    try {
+      const r = await api('/api/review?kind=' + id);
+      const s = (r.summary || {})[id];
+      let h = s
+        ? '<div class="card"><b>已对账 ' + esc(s.checked) + ' 期</b>' +
+          (s.pickHitRate != null ? '<div>推荐号命中率 ' + (s.pickHitRate * 100).toFixed(1) + '%（随机基线 ' + (s.pickBaseline * 100).toFixed(1) + '%）</div>' : '') +
+          (s.danHitRate != null ? '<div>定胆命中率 ' + (s.danHitRate * 100).toFixed(1) + '%</div>' : '') +
+          (s.killWrongRate != null ? '<div>杀号杀错率 ' + (s.killWrongRate * 100).toFixed(1) + '%（越低越好）</div>' : '') + '</div>'
+        : '<div class="muted">暂无已对账记录：同步任务运行后逐期累积。</div>';
+      const rows = (r.rows || []).filter(x => x.checked && x.hit).slice(0, 8);
+      if (rows.length) {
+        h += '<table><tr><th>期号</th><th>推荐（各策略主区）</th><th>开奖</th><th>命中</th></tr>' +
+          rows.map(x => '<tr><td>' + esc(x.code) + '</td><td>' +
+            esc((x.payload.picks || []).map(p => (p.main || []).join(' ')).join(' / ')) + '</td><td>' + esc(x.hit.actual) + '</td><td>' +
+            esc((x.hit.picks || []).map(p => p.hit).join('/') + '，胆' + (x.hit.danHit || 0) + '，杀错' + (x.hit.killWrong || []).length) + '</td></tr>').join('') + '</table>';
+      }
+      $('#rout').innerHTML = h || '<div class="muted">暂无数据</div>';
+    } catch (e) { errBox(e, $('#rout')); }
   };
 }
 
