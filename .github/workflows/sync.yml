@@ -20,8 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: 运行单元测试（零依赖）
-        run: node --test worker/test/unit.test.mjs
+      - name: 运行单元测试（零依赖，含统一预测引擎）
+        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs
 
   sync:
     name: 落库同步
