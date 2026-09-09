@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: d1-backup
+  group: lottery-prod        # 与 sync.yml 同组：导出期间 D1 可能短暂无法服务查询，别和落库/冒烟撞上
   cancel-in-progress: false
 
 jobs:

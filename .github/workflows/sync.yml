@@ -11,6 +11,14 @@ on:
     - cron: "30 13 * * *"       # 每日小彩种（3D/排列3/5/快乐8 每日开奖）
   workflow_dispatch:
 
+concurrency:
+  # 与 backup.yml 共用一个组，不让两条流水线同时碰生产库。
+  # 起因是实测：手动 dispatch 的备份与 push 的冒烟撞上时，`/api/review` 直接 500
+  # —— wrangler 导出前那句警告不是客套，「during which your D1 database will be unavailable to serve queries」。
+  # cancel-in-progress 故意留 false：落库/对账跑到一半被掐掉，比在后面排队等它跑完更糟。
+  group: lottery-prod
+  cancel-in-progress: false
+
 jobs:
   test:
     name: 单元测试

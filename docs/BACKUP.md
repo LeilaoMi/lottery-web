@@ -39,10 +39,11 @@ Settings → Secrets and variables → Actions：
 
 workflow 的「还原验证」步骤会把这些数字打印进 Job Summary；全为 0 时给 `::warning::`（新部署的库确实可能还没落库），但**还原本身失败一定让 job 变红**。
 
-首跑还顺带暴露两件事，都已处理：
+首跑还顺带暴露三件事，都已处理：
 
 - wrangler 弹了确认「此过程可能让你的 D1 暂时无法服务查询，Ok to proceed?」，CI 里靠 `Using fallback value in non-interactive context: yes` 过关。**依赖兜底不如显式传参**（尤其这是个会影响生产的确认），命令现在带 `-y`。
 - 日志里会出现 wrangler 自己打印的 **D1 数据库 UUID**（`Executing on remote database lottery (<uuid>)`）。UUID 不是凭证（没有 Token 什么也做不了），但公开仓库的日志人人可读——别把它当秘密，也别把整段日志往 issue / 群里贴。
+- **真撞上过一次**：备份导出的那 25 秒与 push 触发的 CI 冒烟并发，`/api/review` 返回 **HTTP 500**（冒烟因此红），备份跑完后同一端点立刻 200。wrangler 那句「during which your D1 database will be unavailable to serve queries」不是客套话。处置：`backup.yml` 与 `sync.yml` 现在共用 concurrency 组 `lottery-prod` 串行执行，`cancel-in-progress: false`（落库跑到一半被掐掉比排队更糟）。定时上它们本来也不重叠（备份在北京 00:00，落库在 21:20–21:40），这条主要是防手动 dispatch 撞车。
 
 ## 恢复
 
