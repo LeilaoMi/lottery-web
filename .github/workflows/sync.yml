@@ -20,6 +20,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: 构建前端产物（worker/src/ui.js 是 gitignore 的构建输出）
+        # review.test.mjs 会 import worker/src/index.js，而 index.js 里 `import { HTML } from "./ui.js"`
+        # —— 干净检出时没有这个文件，测试直接 ERR_MODULE_NOT_FOUND（本地因为有产物是绿的）
+        run: node scripts/build-ui.mjs
       - name: 运行单元测试（零依赖：预测引擎 / 冷门度 / 复盘闭环端到端 / 统计内核）
         # 统计内核（12 项）同时被 worker 的 coldness 常量与复盘基线依赖，放在 push 时跑：
         # 只在每月 randomness 作业里跑的话，写坏内核要红一个月才发现
