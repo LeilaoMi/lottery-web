@@ -1,0 +1,158 @@
+{
+ "dlt": {
+  "verified": true,
+  "rows": 2921,
+  "range": [
+   "07001",
+   "26103"
+  ],
+  "structural": {
+   "tokBad": 0,
+   "codeBad": 0,
+   "valBad": 0,
+   "dateBad": 0,
+   "jumps": 0,
+   "notes": []
+  },
+  "crossCheck": {
+   "ok": true,
+   "n": 60,
+   "match": 60,
+   "mis": [],
+   "independence": "500(独立源+独立解析)"
+  }
+ },
+ "qlc": {
+  "verified": true,
+  "rows": 2984,
+  "range": [
+   "2007001",
+   "2026104"
+  ],
+  "structural": {
+   "tokBad": 0,
+   "valBad": 0,
+   "dateBad": 0,
+   "jumps": 0,
+   "notes": []
+  },
+  "crossCheck": {
+   "ok": true,
+   "n": 100,
+   "match": 100,
+   "mis": [],
+   "independence": "17500(同源,独立解析校验列映射)"
+  }
+ },
+ "kl8": {
+  "verified": true,
+  "rows": 2063,
+  "range": [
+   "2020001",
+   "2026242"
+  ],
+  "structural": {
+   "tokBad": 0,
+   "valBad": 0,
+   "dateBad": 0,
+   "jumps": 0,
+   "notes": []
+  },
+  "crossCheck": {
+   "ok": true,
+   "n": 100,
+   "match": 100,
+   "mis": [],
+   "independence": "17500(同源,独立解析校验列映射)"
+  }
+ },
+ "fc3d": {
+  "verified": true,
+  "rows": 8750,
+  "range": [
+   "2002001",
+   "2026242"
+  ],
+  "structural": {
+   "tokBad": 0,
+   "valBad": 0,
+   "dateBad": 0,
+   "jumps": 0,
+   "notes": []
+  },
+  "crossCheck": {
+   "ok": true,
+   "n": 100,
+   "match": 100,
+   "mis": [],
+   "independence": "17500(同源,独立解析校验列映射)"
+  }
+ },
+ "pl3": {
+  "verified": true,
+  "rows": 7717,
+  "range": [
+   "2004001",
+   "2026242"
+  ],
+  "structural": {
+   "tokBad": 0,
+   "valBad": 0,
+   "dateBad": 0,
+   "jumps": 0,
+   "notes": []
+  },
+  "crossCheck": {
+   "ok": true,
+   "n": 100,
+   "match": 100,
+   "mis": [],
+   "independence": "17500(同源,独立解析校验列映射)"
+  }
+ },
+ "pl5": {
+  "verified": true,
+  "rows": 7717,
+  "range": [
+   "2004001",
+   "2026242"
+  ],
+  "structural": {
+   "tokBad": 0,
+   "valBad": 0,
+   "dateBad": 0,
+   "jumps": 0,
+   "notes": []
+  },
+  "crossCheck": {
+   "ok": true,
+   "n": 100,
+   "match": 100,
+   "mis": [],
+   "independence": "17500(同源,独立解析校验列映射)"
+  }
+ },
+ "qxc": {
+  "verified": true,
+  "rows": 3388,
+  "range": [
+   "04101",
+   "26104"
+  ],
+  "structural": {
+   "tokBad": 0,
+   "valBad": 0,
+   "dateBad": 0,
+   "jumps": 0,
+   "notes": []
+  },
+  "crossCheck": {
+   "ok": true,
+   "n": 100,
+   "match": 100,
+   "mis": [],
+   "independence": "17500(同源,独立解析校验列映射)"
+  }
+ },
+ "_ts": "2026-09-09T19:03:20.947Z"
+}

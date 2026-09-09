@@ -1,0 +1,105 @@
+name: randomness
+
+# 每月一次：重新拉取 8 彩种全量历史 → 随机性审计 → 归档报告。
+# 与 ci(sync.yml) 完全独立，本任务【不需要任何 secrets】（只读公网数据源 + 本地计算 + 只读公共 API）。
+# fetch-multi 会打线上 /api/{kind}/history 做号码交叉校验，但不需要 token。
+on:
+  schedule:
+    # 每月 1 日 09:15 北京时间（UTC 01:15）；错开 sync.yml 的开奖时段
+    - cron: "15 1 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: randomness
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: 随机性审计
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 统计内核单元测试（零依赖，node --test）
+        run: node --test scripts/randomness/stats.test.mjs
+
+      # 一条命令串起来：拉不到数据就不出结论（fetch 失败 → 非零退出；数据过期 → analyze 拒绝运行）
+      - name: 拉取双色球全量历史 + 官方接口逐字段交叉校验
+        run: node scripts/randomness/fetch-ssq.mjs
+
+      - name: 拉取其余 7 彩种全量历史 + 结构校验 + 线上号码交叉校验
+        run: node scripts/randomness/fetch-multi.mjs
+
+      - name: 审计（A 均匀性 / B 独立性 / C 稳定性 / D 投注侧 / E 经济学 + 8 彩种扩展）
+        run: node scripts/randomness/analyze.mjs --all
+
+      # 安慰剂闸门：六等奖(只看蓝)对红球特征、二等奖(不看蓝)对蓝球特征必须为 NULL。
+      # 一旦显著，说明实现里有混淆（多半是没按销量归一化），本轮所有结论作废 → 构建失败。
+      - name: 断言安慰剂检验为零（显著即构建失败）
+        run: |
+          set -euo pipefail
+          grep -q '^PLACEBO: PASS$' docs/randomness-latest.md || {
+            echo "::error::安慰剂检验出现显著结果 —— 分析实现里有混淆，结论不可信（详见 docs/randomness-latest.md 的 F 节）"
+            grep -n 'PLACEBO\|安慰剂' docs/randomness-latest.md || true
+            exit 1
+          }
+          grep -q '^ACCEPTANCE: PASS' docs/randomness-latest.md || {
+            echo "::error::验收检查未通过（观测值无法复现 / 数据被改坏），结论不可信"
+            exit 1
+          }
+          echo "安慰剂全部为 NULL、验收全过：本轮结论可信"
+
+      # 覆盖闸门：8 个彩种逐个 VERIFIED。analyze --all 已会在有彩种未验收时非零退出，
+      # 这里再数一遍是为了把「哪个彩种掉了」直接写进日志，而不是只看退出码。
+      - name: 断言 8 彩种全部通过数据验收
+        run: |
+          set -euo pipefail
+          n=$(grep -c '｜VERIFIED$' docs/randomness-multi-latest.md || true)
+          echo "多彩种报告里 VERIFIED 行数：$n（期望 7，双色球作为既有基线单列）"
+          [ "$n" -ge 7 ] || {
+            echo "::error::有彩种未通过数据验收，开奖侧结论不完整"
+            grep -n '未通过\|VERIFIED\|结构.*异常' docs/randomness-multi-latest.md | head -30 || true
+            exit 1
+          }
+          grep -q '本 `--all` 只做\*\*开奖侧\*\*' docs/randomness-multi-latest.md || {
+            echo "::error::多彩种报告丢了「范围界定」声明 —— 这条限定防止有人把开奖侧结论当成投注侧/经济性结论"
+            exit 1
+          }
+          echo "8 彩种开奖侧审计齐备，范围界定声明在位"
+
+      # 冷门度：重拟合 → 样本外验证 → 安慰剂 → 与 worker/src/coldness.js 的线上常量对账。
+      # 脚本自带闸门（反号 / 安慰剂破 / 五分位塌 → 退出码 1），这里再 grep 一次产物，
+      # 免得脚本被改成「永远打印 PASS」时整个闸门体系只剩它自己说了算。
+      - name: 冷门度系数重拟合与线上常量对账
+        run: node scripts/coldness/ssq-fit.mjs
+
+      - name: 断言冷门度结论仍成立
+        run: |
+          set -euo pipefail
+          grep -q '^COLDNESS: PASS$' docs/coldness-latest.md || {
+            echo "::error::冷门度（分奖人数）效应样本外不再成立，或线上常量与重拟合结果脱节 —— 见 docs/coldness-latest.md"
+            grep -n 'COLDNESS\|反号\|漂移' docs/coldness-latest.md || true
+            exit 1
+          }
+          echo "冷门度系数样本外仍成立，且与线上常量一致"
+
+      - name: 归档本月报告
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: randomness-report-${{ github.run_number }}
+          path: |
+            docs/randomness-latest.md
+            docs/randomness-multi-latest.md
+            docs/coldness-latest.md
+            scripts/randomness/data/
+            scripts/coldness/out/
+          retention-days: 180
+          if-no-files-found: error

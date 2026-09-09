@@ -9,3 +9,6 @@ npm-debug.log*
 *.log
 .DS_Store
 Thumbs.db
+# fetch 顺手留下的原始下载档（17500 全量 txt，约 4MB）不进仓库；
+# 解析后的 scripts/randomness/data/*.json 才提交 —— 文档里的统计结论要能离线复现。
+scripts/randomness/data/*_asc.txt

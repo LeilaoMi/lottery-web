@@ -1,0 +1,506 @@
+{
+  "meta": {
+    "game": "大乐透",
+    "source": "http://data.17500.cn/dlt_asc.txt",
+    "generated": "2026-09-09T19:59:52.567Z",
+    "target": "log1p(一等奖注数 / (销量/亿元))",
+    "meaning": ">1 = 该特征组合被超买，中奖后与人分享更多；不改变中奖概率",
+    "dataWindow": "2015-01-03 → 2026-09-09（2015 前因回填缺陷排除）",
+    "fixedTierRowDropped": [
+      "22051"
+    ],
+    "caveat_tier3_era1": "2015-01~2019-02 期间三等奖为浮动奖，该段的固定档安慰剂使用四等奖/五等奖（三时代均恒定）",
+    "placeboLimitation": "大乐透没有任何一档奖金只依赖后区（三等奖=前区5中+后区0中，仍含前区），故固定奖级安慰剂对前区特征天然偏严：前区组合被超买时其邻域(4中5)也会推高低奖级注数。本报告按预注册规则执行（未通过即不发布），并在 stats.perFeature.tier1Specific 给出控制固定档密度后的一等奖特异偏效应。"
+  },
+  "coefficients": {},
+  "candidateCoefficients": {},
+  "candidateNote": "candidateCoefficients 只通过「一等奖特异性(OLS 控制固定档密度)」这一条，未通过预注册的固定奖级安慰剂 → 不作正式发布，仅供进一步观察",
+  "keep": [],
+  "dropped": [
+    {
+      "feature": "allLe31",
+      "reason": "固定奖金档同样检出效应 → 混淆非人气 (四等奖 1.147, 95%CI [1.085, 1.214])"
+    },
+    {
+      "feature": "hasTail8",
+      "reason": "样本外与 1 无差异 (out 1.024, 95%CI [0.948, 1.105])"
+    },
+    {
+      "feature": "hasTail4",
+      "reason": "样本外与 1 无差异 (out 0.957, 95%CI [0.887, 1.032])"
+    },
+    {
+      "feature": "nLe12hi",
+      "reason": "样本外反号 (in 0.997 vs out 1.174)"
+    },
+    {
+      "feature": "consec",
+      "reason": "样本外与 1 无差异 (out 1.022, 95%CI [0.948, 1.102])"
+    },
+    {
+      "feature": "sumHi",
+      "reason": "固定奖金档同样检出效应 → 混淆非人气 (四等奖 0.876, 95%CI [0.828, 0.926])"
+    },
+    {
+      "feature": "backHot",
+      "reason": "样本外与 1 无差异 (out 1.025, 95%CI [0.951, 1.105])"
+    },
+    {
+      "feature": "backCold",
+      "reason": "固定奖金档同样检出效应 → 混淆非人气 (四等奖 0.916, 95%CI [0.866, 0.969])"
+    }
+  ],
+  "verdict": {
+    "compositeReplicatedOOS": true,
+    "singleFeatureReplicatedOOS": [
+      "allLe31",
+      "sumHi",
+      "backCold"
+    ],
+    "fixedTierPlaceboPassedForAnyFeature": false,
+    "estimatorUnbiasedPerNoisePlacebo": true,
+    "publishableUnderPreregisteredGate": false
+  },
+  "stats": {
+    "nTrain": 1227,
+    "nTest": 526,
+    "trainWindow": [
+      "2015-01-03",
+      "2023-03-18"
+    ],
+    "testWindow": [
+      "2023-03-20",
+      "2026-09-09"
+    ],
+    "composite": {
+      "indexKeys": [
+        "allLe31",
+        "hasTail8",
+        "hasTail4",
+        "nLe12hi",
+        "consec",
+        "sumHi",
+        "backHot",
+        "backCold"
+      ],
+      "pearsonOut": 0.1219,
+      "spearmanOut": 0.1582,
+      "hotColdRatioOut": 1.2994,
+      "hotColdRatioIn": 1.6165,
+      "mannWhitneyP": 0.006994
+    },
+    "keepOnly": null,
+    "perFeature": {
+      "allLe31": {
+        "inSample": 1.0991,
+        "outSample": 1.1017,
+        "ci95": [
+          1.0213,
+          1.1886
+        ],
+        "n1": 290,
+        "n0": 236,
+        "placeboTier4": 1.1475,
+        "placeboTier3": 1.2337,
+        "placeboTier5": 1.1856,
+        "tier1Specific": 0.9875,
+        "tier1SpecificCI": [
+          0.9218,
+          1.0578
+        ]
+      },
+      "hasTail8": {
+        "inSample": 1.0197,
+        "outSample": 1.0237,
+        "ci95": [
+          0.9481,
+          1.1054
+        ],
+        "n1": 216,
+        "n0": 310,
+        "placeboTier4": 1.1079,
+        "placeboTier3": 1.0525,
+        "placeboTier5": 1.0701,
+        "tier1Specific": 0.952,
+        "tier1SpecificCI": [
+          0.8911,
+          1.0171
+        ]
+      },
+      "hasTail4": {
+        "inSample": 0.9625,
+        "outSample": 0.9567,
+        "ci95": [
+          0.8871,
+          1.0316
+        ],
+        "n1": 232,
+        "n0": 294,
+        "placeboTier4": 0.8937,
+        "placeboTier3": 0.8509,
+        "placeboTier5": 0.8811,
+        "tier1Specific": 1.0459,
+        "tier1SpecificCI": [
+          0.9782,
+          1.1182
+        ]
+      },
+      "nLe12hi": {
+        "inSample": 0.9973,
+        "outSample": 1.1738,
+        "ci95": [
+          1.0885,
+          1.2657
+        ],
+        "n1": 337,
+        "n0": 189,
+        "placeboTier4": 1.1684,
+        "placeboTier3": 1.2548,
+        "placeboTier5": 1.1785,
+        "tier1Specific": 1.0478,
+        "tier1SpecificCI": [
+          0.9766,
+          1.1243
+        ]
+      },
+      "consec": {
+        "inSample": 1.0217,
+        "outSample": 1.0217,
+        "ci95": [
+          0.9476,
+          1.1017
+        ],
+        "n1": 259,
+        "n0": 267,
+        "placeboTier4": 1.0178,
+        "placeboTier3": 0.9839,
+        "placeboTier5": 0.9974,
+        "tier1Specific": 1.0115,
+        "tier1SpecificCI": [
+          0.9483,
+          1.0788
+        ]
+      },
+      "sumHi": {
+        "inSample": 0.9719,
+        "outSample": 0.9131,
+        "ci95": [
+          0.8466,
+          0.9847
+        ],
+        "n1": 240,
+        "n0": 286,
+        "placeboTier4": 0.8758,
+        "placeboTier3": 0.8415,
+        "placeboTier5": 0.8683,
+        "tier1Specific": 1.0106,
+        "tier1SpecificCI": [
+          0.9449,
+          1.0809
+        ]
+      },
+      "backHot": {
+        "inSample": 1.0673,
+        "outSample": 1.0253,
+        "ci95": [
+          0.9511,
+          1.1053
+        ],
+        "n1": 271,
+        "n0": 255,
+        "placeboTier4": 1.0586,
+        "placeboTier3": 0.9727,
+        "placeboTier5": 1.014,
+        "tier1Specific": 0.9887,
+        "tier1SpecificCI": [
+          0.9267,
+          1.0549
+        ]
+      },
+      "backCold": {
+        "inSample": 0.9043,
+        "outSample": 0.9251,
+        "ci95": [
+          0.8587,
+          0.9967
+        ],
+        "n1": 235,
+        "n0": 291,
+        "placeboTier4": 0.9163,
+        "placeboTier3": 1.0508,
+        "placeboTier5": 0.9891,
+        "tier1Specific": 0.9756,
+        "tier1SpecificCI": [
+          0.9134,
+          1.042
+        ]
+      },
+      "backOrder": {
+        "inSample": 0.9689,
+        "outSample": 1.0049,
+        "ci95": [
+          0.9319,
+          1.0835
+        ],
+        "n1": 270,
+        "n0": 256,
+        "placeboTier4": 1.0113,
+        "placeboTier3": 1.0473,
+        "placeboTier5": 1.0124,
+        "tier1Specific": 0.9963,
+        "tier1SpecificCI": [
+          0.9341,
+          1.0626
+        ]
+      },
+      "ordAsc": {
+        "inSample": 0.9675,
+        "outSample": 1.0581,
+        "ci95": [
+          0.9814,
+          1.1407
+        ],
+        "n1": 253,
+        "n0": 273,
+        "placeboTier4": 1.0268,
+        "placeboTier3": 1.0001,
+        "placeboTier5": 1.006,
+        "tier1Specific": 1.0406,
+        "tier1SpecificCI": [
+          0.9757,
+          1.1099
+        ]
+      },
+      "ordMaxFirst": {
+        "inSample": 1.0247,
+        "outSample": 1.0444,
+        "ci95": [
+          0.9551,
+          1.1422
+        ],
+        "n1": 112,
+        "n0": 414,
+        "placeboTier4": 0.9913,
+        "placeboTier3": 1.0491,
+        "placeboTier5": 1.0302,
+        "tier1Specific": 1.0455,
+        "tier1SpecificCI": [
+          0.9662,
+          1.1314
+        ]
+      }
+    },
+    "backRankTrainOnly": "5:2.28 10:2.17 7:2.12 8:2.07 3:2.06 9:2.01 6:1.96 4:1.82 1:1.75 11:1.66 12:1.60 2:1.60",
+    "hotBalls": [
+      5,
+      10,
+      7
+    ],
+    "coldBalls": [
+      11,
+      12,
+      2
+    ],
+    "frontSumThreshold": 89,
+    "noisePlacebo": {
+      "backOrder": {
+        "onTier1": 1.0048520392246258,
+        "ci95": [
+          0.931896376818036,
+          1.0835192043364392
+        ],
+        "onTier4": 1.0112694672677425,
+        "n1": 270,
+        "n0": 256
+      },
+      "ordAsc": {
+        "onTier1": 1.0580582555290101,
+        "ci95": [
+          0.9814155059041983,
+          1.1406863508455425
+        ],
+        "onTier4": 1.026818866096926,
+        "n1": 253,
+        "n0": 273
+      },
+      "ordMaxFirst": {
+        "onTier1": 1.0444379812529272,
+        "ci95": [
+          0.9550677420221888,
+          1.1421710195907198
+        ],
+        "onTier4": 0.9912909893354039,
+        "n1": 112,
+        "n0": 414
+      }
+    },
+    "money": {
+      "coldMeanWinnersPerYi": 1.7273,
+      "hotMeanWinnersPerYi": 2.2418,
+      "coldMeanPrize": 9216352.6699,
+      "hotMeanPrize": 8607607.7692,
+      "coldZeroRate": 0.019,
+      "hotZeroRate": 0.0095,
+      "coldMeanM1All": 9040803.0952,
+      "hotMeanM1All": 8525630.5524
+    },
+    "quintilesOut": [
+      1.308,
+      1.413,
+      1.608,
+      1.779,
+      1.927
+    ]
+  },
+  "uniformity": {
+    "all": {
+      "x": 89.11674084217735,
+      "df": 34,
+      "p": 7.876215190050218e-7,
+      "n": 2921
+    },
+    "post2015": {
+      "x": 30.382201939532234,
+      "df": 34,
+      "p": 0.6456649819021093,
+      "n": 1753
+    },
+    "pre2015": {
+      "x": 220.56164383561645,
+      "df": 34,
+      "p": 0,
+      "n": 1168
+    },
+    "splitHalf": {
+      "pre2015_internal": 0.789,
+      "fullHistory_byRow": -0.26,
+      "pre_vs_post": -0.216
+    }
+  },
+  "eraComparison": {
+    "allLe31": {
+      "post2015": {
+        "in": 1.0990918844129614,
+        "out": 1.1017380635174996
+      },
+      "pre2015": {
+        "in": 0.8937027899413675,
+        "out": 0.920933553269378
+      },
+      "agree": false
+    },
+    "hasTail8": {
+      "post2015": {
+        "in": 1.0196771850752342,
+        "out": 1.0237448881054896
+      },
+      "pre2015": {
+        "in": 0.8682669109133436,
+        "out": 1.068908747503677
+      },
+      "agree": false
+    },
+    "hasTail4": {
+      "post2015": {
+        "in": 0.9625490494016037,
+        "out": 0.9566615477122383
+      },
+      "pre2015": {
+        "in": 0.8900646596506956,
+        "out": 0.9688585508282842
+      },
+      "agree": true
+    },
+    "nLe12hi": {
+      "post2015": {
+        "in": 0.9973194237698652,
+        "out": 1.1737759341187874
+      },
+      "pre2015": {
+        "in": 0.8941575256247869,
+        "out": 1.0720605316174723
+      },
+      "agree": true
+    },
+    "consec": {
+      "post2015": {
+        "in": 1.0216824621624347,
+        "out": 1.0217318504911217
+      },
+      "pre2015": {
+        "in": 1.078467152792455,
+        "out": 1.0303566242195175
+      },
+      "agree": true
+    },
+    "sumHi": {
+      "post2015": {
+        "in": 0.9719047663446013,
+        "out": 0.9130508510768991
+      },
+      "pre2015": {
+        "in": 1.2352762628547491,
+        "out": 1.0901662189351269
+      },
+      "agree": false
+    },
+    "backHot": {
+      "post2015": {
+        "in": 1.0673029554284803,
+        "out": 1.0252819770725428
+      },
+      "pre2015": {
+        "in": 1.1804955385965143,
+        "out": 1.0029450215006075
+      },
+      "agree": true
+    },
+    "backCold": {
+      "post2015": {
+        "in": 0.9042623983038846,
+        "out": 0.9251140433856251
+      },
+      "pre2015": {
+        "in": 0.8984363828446895,
+        "out": 0.8550224528613215
+      },
+      "agree": true
+    },
+    "backOrder": {
+      "post2015": {
+        "in": 0.9688951890828047,
+        "out": 1.0048520392246258
+      },
+      "pre2015": {
+        "in": 1.1094849268445413,
+        "out": 0.9659628864148093
+      },
+      "agree": false
+    },
+    "ordAsc": {
+      "post2015": {
+        "in": 0.9675244669347061,
+        "out": 1.0580582555290101
+      },
+      "pre2015": {
+        "in": 0.9779870154032706,
+        "out": 1.0885036630150906
+      },
+      "agree": true
+    },
+    "ordMaxFirst": {
+      "post2015": {
+        "in": 1.0247326352210326,
+        "out": 1.0444379812529272
+      },
+      "pre2015": {
+        "in": 1.1489385712062263,
+        "out": 0.8236502141265276
+      },
+      "agree": false
+    }
+  },
+  "eraAgreement": "6/11",
+  "nTrain": 1227,
+  "nTest": 526
+}

@@ -1,0 +1,73 @@
+{
+ "generated": "2026-09-09T20:02:06.388Z",
+ "nAll": 3501,
+ "nTrain": 2275,
+ "nTest": 975,
+ "Mtr": {
+  "allLe31": 1.1743145605242848,
+  "hasTail8": 1.0739800079020043,
+  "hasTail4": 0.9177120203612457,
+  "blueHot": 1.2414475187899925,
+  "blueCold": 0.811886149110947,
+  "consec": 0.9922032331521969
+ },
+ "Mte": {
+  "allLe31": 1.1345921884072525,
+  "hasTail8": 1.0652713355136294,
+  "hasTail4": 0.8835122034770864,
+  "blueHot": 1.2195209725094973,
+  "blueCold": 0.8449650141139781,
+  "consec": 1.027544264305287
+ },
+ "placebo": {
+  "blueHot": 1.0059254720415076,
+  "blueCold": 0.9931431062648555
+ },
+ "ratio": 1.506217216591862,
+ "trRatio": 1.8617328392918857,
+ "mwP": 6.16463768920994e-10,
+ "avgFirstWinners": 8.266,
+ "avgFirstWinnersGivenWinners": 8.678,
+ "zeroWinnerRate": 0.0475,
+ "shipped": {
+  "allLe31": 1.174,
+  "hasTail8": 1.074,
+  "hasTail4": 0.918,
+  "blueHot": 1.241,
+  "blueCold": 0.812
+ },
+ "drift": [
+  {
+   "k": "allLe31",
+   "fit": 1.174,
+   "shipped": 1.174,
+   "d": 0.0003
+  },
+  {
+   "k": "hasTail8",
+   "fit": 1.074,
+   "shipped": 1.074,
+   "d": 0
+  },
+  {
+   "k": "hasTail4",
+   "fit": 0.918,
+   "shipped": 0.918,
+   "d": -0.0003
+  },
+  {
+   "k": "blueHot",
+   "fit": 1.241,
+   "shipped": 1.241,
+   "d": 0.0004
+  },
+  {
+   "k": "blueCold",
+   "fit": 0.812,
+   "shipped": 0.812,
+   "d": -0.0001
+  }
+ ],
+ "listsInSync": true,
+ "fails": []
+}
