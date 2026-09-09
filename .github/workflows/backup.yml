@@ -9,19 +9,21 @@ name: d1-backup
 #   D1_DATABASE            wrangler.toml 里的 D1 database 名（不是 UUID 也行）
 # 可选：
 #   R2_BUCKET              设了就推到 R2（私有、可长期保留），此时不再上传 Actions 产物
-#   BACKUP_INCLUDE_FAVS    设成 0 则备份里剔除个人收藏表 favs（公开仓库建议关掉）
+#   BACKUP_INCLUDE_FAVS    设成 1 才会把个人收藏表 favs 一起备份（**默认不含**）
 #
-# 为什么默认落产物要带警告：GitHub 在**公开仓库**里下载的 Actions 产物不需要登录，
-# 谁能看仓库谁就能把你的整库 SQL 拖走。开奖数据本身是公开的，fav（收藏）不是。
+# 为什么默认剔除 favs：本仓库实测是 **PUBLIC**，而 GitHub 在公开仓库里的 Actions 产物
+# **不需要登录就能下载**（保留 90 天）。开奖数据本身是公开信息，`favs`（你存的自选号与备注）不是。
+# 想要完整备份，两条正路：配 `vars.R2_BUCKET` 推到私有桶，或明确设 `vars.BACKUP_INCLUDE_FAVS = 1`
+# 并接受「产物可被任何人下载」这件事。默认值取更保守的那一边，且剔除时会在 Job Summary 里写明。
 on:
   schedule:
     - cron: "0 16 * * *"    # UTC 16:00 = 北京 00:00，排在当日落库之后
   workflow_dispatch:
     inputs:
       include_favs:
-        description: "备份是否包含个人收藏表 favs（公开仓库建议填 0）"
+        description: "是否把个人收藏表 favs 一起备份（公开仓库产物人人可下，默认不含；要完整备份填 1）"
         required: false
-        default: "1"
+        default: "0"
 
 permissions:
   contents: read
@@ -40,7 +42,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE: ${{ secrets.D1_DATABASE }}
       R2_BUCKET: ${{ vars.R2_BUCKET }}
-      INCLUDE_FAVS: ${{ github.event.inputs.include_favs || vars.BACKUP_INCLUDE_FAVS || '1' }}
+      INCLUDE_FAVS: ${{ github.event.inputs.include_favs || vars.BACKUP_INCLUDE_FAVS || '0' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -66,11 +68,15 @@ jobs:
           STAMP="$(date -u +%Y%m%d-%H%M)"
           OUT="backup-$STAMP.sql"
           echo "OUT=$OUT" >> "$GITHUB_ENV"
-          ARGS=(d1 export "$D1_DATABASE" --remote --output "$OUT")
-          if [ "$INCLUDE_FAVS" = "0" ]; then
+          ARGS=(d1 export "$D1_DATABASE" --remote --output "$OUT" -y)
+          # -y：实测 CI 里 wrangler 会问「此过程可能让 D1 暂时无法服务查询，是否继续」，
+          # 非交互环境靠 "fallback value: yes" 过关。依赖兜底不如显式传参——尤其这还是个会影响生产的确认。
+          if [ "$INCLUDE_FAVS" = "1" ]; then
+            echo "本次备份包含 favs（个人收藏）——若仓库是公开的，产物对任何人可下载" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
             # --table 是白名单：不列 favs 就不会进备份（表名取自 db/schema.sql）
             ARGS+=(--table draws --table dlt_draws --table small_draws --table predlog --table sync_log)
-            echo "已按配置剔除 favs（个人收藏）表"
+            echo "本次备份**不含** \`favs\`（个人收藏）表；需要完整备份请配 \`vars.R2_BUCKET\` 或设 \`vars.BACKUP_INCLUDE_FAVS=1\`" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           # ⚠️ wrangler 会把一条预签名 R2 链接打到 stdout，里面带 X-Amz-Credential 与 X-Amz-Signature，
           # 一小时内谁拿到都能直接下载整库。公开仓库的 Actions 日志对任何人可见 —— 必须过滤掉再落日志。

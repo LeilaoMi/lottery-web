@@ -148,7 +148,7 @@ npx wrangler secret put API_TOKEN
 
 备份不是「导出来就完事」：workflow 会把 SQL 真还原进一个临时 sqlite 并逐表报行数。推送也不是只报喜：`needs` 里的 job 失败时它照样发，标题变成 ❌——**告警通路在出事时才有价值**。
 
-> 一句风险提示：GitHub **公开仓库**的 Actions 产物不需要登录就能下载。开奖数据是公开的，但 `favs`（你存的自选号）不是。要么配 R2（私有桶），要么设 `BACKUP_INCLUDE_FAVS=0`，要么仓库转私有——详见 docs/BACKUP.md。
+> 一句风险提示：GitHub **公开仓库**的 Actions 产物不需要登录就能下载。开奖数据是公开的，但 `favs`（你存的自选号）不是——所以备份**默认就不含 `favs`**，且剔除会写在 Job Summary 里。要完整备份：配 `vars.R2_BUCKET` 推到私有桶，或明确设 `vars.BACKUP_INCLUDE_FAVS=1`。详见 docs/BACKUP.md。
 
 ## 💻 本地开发
 
