@@ -3,10 +3,16 @@ main = "src/index.js"
 compatibility_date = "2024-11-01"
 workers_dev = true
 
-# 自用域名：cp.leilaomi.cc.cd，需该 zone 已接入 Cloudflare
-routes = [
-  { pattern = "cp.leilaomi.cc.cd/*", zone_name = "leilaomi.cc.cd" }
-]
+# 自定义域名（可选，默认注释）。
+# 为什么默认注释：routes 是**同步语义** —— `wrangler deploy` 会把配置里没有的 route 从 Worker 上解绑。
+# 模板里带着别人不持有的 zone，fork 的人直接部署就会失败；换成中性示例更诚实。
+# 要启用：取消注释，改成自己的域名（该域名需已作为 zone 接入你的 Cloudflare 账号）。
+#
+# 注意：作者自己的部署用的是 gitignore 的 `wrangler.local.toml`，那份里**保留着** route，
+# 所以「模板不含 route」不会让线上自定义域名掉绑定 —— 两份文件、两种意图。
+# routes = [
+#   { pattern = "example.com/*", zone_name = "example.com" }
+# ]
 
 [vars]
 VERSION = "0.13.0"

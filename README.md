@@ -114,11 +114,16 @@ cp worker/wrangler.toml worker/wrangler.local.toml
 ### 3. 部署
 
 ```bash
-npm --prefix worker run deploy -- --config worker/wrangler.local.toml
-# deploy 脚本会自动先构建前端（frontend/ → worker/src/ui.js），无需单独 build
+cd worker
+npm run build:ui                                    # frontend/ → src/ui.js
+npx --yes wrangler deploy --config wrangler.local.toml
 ```
 
-部署成功会输出 `https://lottery-web.<你的子域>.workers.dev`。
+> `--config` 是相对 `worker/` 的路径。别写成 `npm --prefix worker run deploy -- --config worker/wrangler.local.toml` ——
+> npm 会在**包目录里**执行脚本（实测：临时 package.json 探针的 `process.cwd()` 落在 prefix 目录），
+> 那条命令实际会去找 `worker/worker/wrangler.local.toml`，根本不存在。
+
+部署成功会输出 `https://lottery-web.<你的子域>.workers.dev`。要绑自己的域名，在你的 `wrangler.local.toml` 里加 `routes`（模板默认注释掉了，原因见 [docs/PUBLISH.md](docs/PUBLISH.md)）。
 
 ### 4. （可选）鉴权
 

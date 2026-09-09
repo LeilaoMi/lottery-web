@@ -16,6 +16,8 @@
 - **修复：所有上游请求都没有超时，境内站点一挂就把用户请求拖死** — 本轮 push 的 CI 冒烟红在第三个端点（`/api/ssq/latest` curl 30s 超时），本机连跑三次实测 **25s 超时 / 22.2s 成功 / 2.4s 命中缓存**：`fetch500` / `fetchCWL`（两步）/ `fetch17500` / `fetchSmall` / 自定义源共 8 处 `fetch` 全都没有超时，而 cwl.gov.cn、datachart.500.com、data.17500.cn 从 CF 边缘 PoP 访问偶尔根本不回包。新增 `worker/src/net.js` 的 `fetchT`，两档——常规取数 8s、17500 全量文本（约 0.5MB，回测要用）20s；超时抛 `TimeoutError`，正好被既有的 `.catch` 接住并按多源设计降级（**快速失败好过慢慢挂着**）。`net.test.mjs` 用「永不 `res.end()`」的本地 server 验证超时真的生效
 - 测试 **106 项全过** = 89 worker（unit 34 / predict 26 / coldness 8 / review 5 / verify-batch 9 / ui-render 4 / net 3）+ 12 统计内核 + 5 推送；`worker/package.json`、`sync.yml` 测试步骤与 README 里的项数都按逐文件实测输出对齐（数字会随文件增加而过期，所以这次每个文件单独数过再写）
 - **未做（以及为什么不做）**：① 复式/胆拖在批量入口里的自动展开（前端已有独立入口，展开后仍是注列表，不该在验奖里再造一套出票逻辑）；② 中奖个税——本站没有逐条核对过官方计税口径（门槛、按条还是按票合计），不确定就不算，给一个错的税额比不给更糟；③ 票面图片识别（能力边界，不是遗漏）。备份侧同样刻意不做增量备份与备份加密，理由写在 `docs/BACKUP.md` 末节
+- **模板不再自带作者的自定义域名 route** — `worker/wrangler.toml` 的 `routes` 改成默认注释的中性示例：fork 的人不持有那个 zone，直接部署会失败；而 routes 是**同步语义**（配置里没有的 route 会在部署时被解绑），所以不能靠"删掉"解决。作者自己的部署走 gitignore 的 `wrangler.local.toml`（那份保留 route），模板改动不影响线上域名
+- **修掉一条跑不通的部署命令** — README / PUBLISH 原文 `npm --prefix worker run deploy -- --config worker/wrangler.local.toml`：npm 会在**包目录里**执行脚本（临时 package.json 探针实测 `process.cwd()` 落在 prefix 目录），于是它去找根本不存在的 `worker/worker/wrangler.local.toml`。改为 `cd worker && npm run build:ui && npx --yes wrangler deploy --config wrangler.local.toml`，并用 `--dry-run` 实跑验证（正确解析 config 与 D1 绑定后才写进文档）
 
 ## v0.12.0 · 复盘闭环复活 + 冷门度模型 + 诚实性收敛（2026-09-10）
 
