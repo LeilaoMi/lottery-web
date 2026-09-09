@@ -53,17 +53,17 @@
 2. **`cwl.gov.cn` 的 WAF 挡机房 IP**：GitHub runner 拿 403，于是"未过官方交叉校验就不出结论"这条本来很硬的规矩会让月度作业**永远红**——正是我拿来说服自己不把 dlt 挂进 CI 的那个反模式。改成区分「源不可达」与「数据不一致」：不可达时降级为「与仓库基线 `data/ssq.json`（上一轮经官方逐字段核对过）回归比对」，重叠历史上任何号码/销量/注数字段变了仍然硬失败（那是备源改写了历史），一致才放行，并把降级状态印进报告第 0 节。
 3. **我写的健康断言搞错了命题**：`latestChecked` 非空 ≠ 闭环健康。清理那 4 条坏快照后，这几个彩种唯一的可对该行正是被清掉的数据，而新快照指向的是**还没开奖**的那一期 → 必然误报（run 34402334236 `复盘闭环=failure`，而同一轮 `落库同步`/`线上冒烟`/`单元测试` 全绿、review-job 自己返回 `ssq{snapshot:2026105,reconciled:1}`）。改成"有没有逾期未对账的期"（用 `meta.stale[k].latest` 与该彩种 `/api/review` 的 `checked` 比对），另加"全库至少有一条已对账"守住 UPDATE 通路真死的场景；对**未来的**快照只报信息不报红。变异测试验证过：把 kl8 已对账的 2026241 改回未对账 → 闸门立刻变红。
 
-**新发现的小缺口（未修）**：`/api/meta` 的 `stale[]` 只有 7 个彩种，**没有 dlt** —— 大乐透不在数据新鲜度保险丝的监控范围内，它的停摆不会亮黄条。
+**顺带修掉一个真实缺口**：`/api/meta` 的 `stale[]` 只有 7 个彩种、**没有 dlt**——大乐透不在数据新鲜度保险丝的覆盖内，停摆不会亮黄条。根因是 500 解析器 `date` 恒为空（`dlt.js:15`），空日期写进 D1 后 `metaRoute` 的 `if (!d || !d.date) return null` 把它过滤掉了。修法：用本就要取来做交叉校验的 17500 备源按期号回填日期（不多花一次请求）。线上复验：`stale[]` 覆盖 8 个彩种（dlt 26103 / 2026-09-09 / days 0），D1 `dlt_draws.draw_date` 已写入。
 
 
 
 ### 下一步（未完成项）
 
-1. **重新 dispatch 一次 `randomness.yml`**：验证降级后的交叉校验路径能在 runner 上跑通（预期日志 `CROSSCHECK: DEGRADED` + 报告第 0 节出现降级说明，作业转绿）
-2. **`/api/meta` 的 `stale[]` 缺 dlt**：大乐透不在新鲜度保险丝覆盖内，停摆不会亮黄条（`metaRoute` 的 stale 循环漏了这个 kind）
+1. ~~重新 dispatch `randomness.yml`~~ **已做并转绿**：run 34403627377 success，日志 `CROSSCHECK: DEGRADED（degraded-baseline-regression）`、报告第 0 节打印降级说明、VERIFIED 7/7、冷门度对账闸门通过。下次每月 1 日自动跑
+2. ~~`stale[]` 缺 dlt~~ **已修并线上复验**（见上）
 3. GitHub PAT 换 fine-grained（权限过大，与本任务无关但同源风险）
 4. 未开工的备选池：开奖订阅推送（需 IM/邮件＝外部操作）、批量验奖、中奖个税（规则需先核实）、D1 备份 workflow、P4 重计算预改造
-5. 已完成存档：`wrangler deploy` → `/health` 0.12.0 ✓；push `b21d70d`/`b525147` ✓；数字型快照不再丢号 ✓；4 条坏快照清理 ✓
+5. 已完成存档：`wrangler deploy` 两次（`c277d80e` → 含 dlt 日期回填的 `7fc8b3f7`）→ `/health` 0.12.0 ✓；push `b21d70d`/`b525147`/`99a97cb` ✓；主 CI run 34403602174 **success**（单元/冒烟/落库/复盘四 job 全绿）；数字型快照不再丢号 ✓；4 条坏快照清理 ✓
 
 ## v0.11.0：工程韧性 + 使用体验（继续琢磨轮）
 - **CI 部署冒烟**：sync.yml 新增 smoke job（push/定时后对线上 health/meta/ssq-latest/dlt-analyze/review 5 端点断言 200+关键字段）；smoke 与 sync 都依赖 secrets.WORKER_URL/API_TOKEN
