@@ -1,12 +1,12 @@
 {
   "name": "lottery-web-worker",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "description": "lottery-web Cloudflare Worker：8 彩种开奖数据 / 统计 / 验奖 / 旋转矩阵",
   "scripts": {
     "build:ui": "node ../scripts/build-ui.mjs",
-    "test": "node --test test/unit.test.mjs test/predict.test.mjs",
+    "test": "node --test test/unit.test.mjs test/predict.test.mjs test/coldness.test.mjs test/review.test.mjs ../scripts/randomness/stats.test.mjs",
     "test:live": "node --test test/live.test.mjs",
     "dev": "wrangler dev",
     "deploy": "node ../scripts/build-ui.mjs && wrangler deploy"

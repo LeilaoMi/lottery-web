@@ -3,6 +3,7 @@ import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
 import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
 import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
+import { coldness } from "./coldness.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
@@ -19,7 +20,7 @@ export default {
     if (url.pathname === "/sw.js") return new Response(SW, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" } });
     if (url.pathname === "/manifest.json") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } });
     if (url.pathname === "/icon.svg") return new Response(ICON, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800" } });
-    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.5.0", lotteries: LOTS.map(x => x.id) });
+    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.12.0", lotteries: LOTS.map(x => x.id) });
     if (url.pathname === "/api/meta") return metaRoute(env);
     if (url.pathname === "/api/records") return recordsRoute(env);
     if (url.pathname === "/licenses") return htmlLicenses();
@@ -29,6 +30,14 @@ export default {
     }
     if (url.pathname === "/api/specs") return json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600);
     if (url.pathname === "/api/calc") return calcRoute(url);
+    if (url.pathname === "/api/coldness") {
+      // 纯函数、不取数、与期号无关 → 可长缓存；参数非法时 coldness() 返回 { error } 转 400
+      const kind = (url.searchParams.get("kind") || "ssq").trim();
+      const nums = (url.searchParams.get("nums") || "").split(/[ ,]+/).filter(Boolean);
+      const blue = (url.searchParams.get("blue") || "").trim();
+      const r = coldness(kind, nums, blue ? [blue] : []);
+      return r.error ? json(r, 400, 0) : json(r, 200, 3600);
+    }
     if (url.pathname === "/api/prize") return prizeRoute(url);
     if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest" || url.pathname === "/api/kill-calibrated" || url.pathname === "/api/kill-tune" || url.pathname === "/api/ticket" || url.pathname === "/api/trend") return predictRoute(request, env, url);
     if (url.pathname === "/api/admin/sync") return adminSync(request, env, ctx);
@@ -437,6 +446,7 @@ async function reviewJob(request, env) {
       const draws = await loadDraws(env, k, 60); // 刚同步完，DB 是事实源
       if (!draws.length) { out[k] = { skip: "no draws" }; continue; }
       const byCode = new Map(draws.map(d => [String(d.code), d]));
+      const isDigit = !!(SPECS[k] && SPECS[k].type === "digit");
       // ① 对账：checked=0 且该期已开奖的快照 → 算命中并落库
       let checkedN = 0;
       const pend = await env.DB.prepare("SELECT id, code, payload FROM predlog WHERE kind=? AND checked=0 ORDER BY id DESC LIMIT 30").bind(k).all();
@@ -445,23 +455,44 @@ async function reviewJob(request, env) {
         if (!d) continue;
         try {
           const p = JSON.parse(row.payload);
-          const actMain = new Set(mainOf(d, k)), actAux = new Set(auxOf(d, k));
-          const hit = {
-            picks: (p.picks || []).map(x => ({ name: x.name, main: x.main, hit: (x.main || []).filter(n => actMain.has(n)).length, auxHit: (x.aux || []).filter(n => actAux.has(n)).length })),
-            dan: p.dan || [], danHit: (p.dan || []).filter(n => actMain.has(n)).length,
-            kill: p.kill || [], killWrong: (p.kill || []).filter(n => actMain.has(n)),
-            actual: mainOf(d, k).join(" ") + (auxOf(d, k).length ? " + " + auxOf(d, k).join(" ") : "")
+          const actMain = mainOf(d, k).map(String), actAux = auxOf(d, k).map(String);
+          const aSet = new Set(actMain), bSet = new Set(actAux);
+          // 数字型：逐位比对——第 i 位只对第 i 位，绝不能退化成「该数字是否出现在开奖号里」，
+          // 否则 3D 的 123 会被判成与 321 全中，复盘命中率直接虚高数倍。
+          const posHit = dg => dg.reduce((c, v, i) => c + (String(v) === actMain[i] ? 1 : 0), 0);
+          const hit = isDigit ? {
+            picks: (p.picks || []).map(x => { const dg = (x.digits || x.main || []).map(String); return { name: x.name, digits: dg, hit: posHit(dg) }; }),
+            dan: (p.dan || []).map(a => a.map(String)).flat(),
+            // 位置下标必须取外层数组的下标：内层 filter((v,i)=>...) 的 i 是「候选内的序号」，
+            // 直接拿来索引 actMain 会让每个位置都只与第 1 位比较，danHit 恒为 0（已写回归测试锁定）
+            danHit: (p.dan || []).reduce((s, a, pos) => s + a.map(String).filter(v => v === actMain[pos]).length, 0),
+            kill: (p.kill || []).map(a => a.map(String)).flat(),
+            killWrong: (p.kill || []).flatMap((a, i) => a.map(String).filter(v => v === actMain[i]).map(v => (i + 1) + ":" + v)),
+            actual: actMain.join(" ")
+          } : {
+            picks: (p.picks || []).map(x => ({ name: x.name, main: x.main, hit: (x.main || []).filter(n => aSet.has(n)).length, auxHit: (x.aux || []).filter(n => bSet.has(n)).length })),
+            dan: (p.dan || []).map(String), danHit: (p.dan || []).filter(n => aSet.has(n)).length,
+            kill: (p.kill || []).map(String), killWrong: (p.kill || []).filter(n => aSet.has(n)),
+            actual: actMain.join(" ") + (actAux.length ? " + " + actAux.join(" ") : "")
           };
+          // 落库时数字型的 dan/kill 摊平成「候选总数」，命中数已按位算好：
+          // 每位置 10 个数字等概 ⇒ Σ候选/Σ命中 的随机基线仍恰为 0.1，与 reviewRoute 的统一口径一致。
           await env.DB.prepare("UPDATE predlog SET hit=?, checked=1 WHERE id=?").bind(JSON.stringify(hit), row.id).run();
           checkedN++;
         } catch {}
       }
       // ② 快照下一期推荐：必须走 recommendAll——analyzeAll 返回的是统计块（无 picks/dan 字段），
-      //    v0.10~v0.11.0 误用 analyzeAll 导致快照 picks/dan 恒空（封版审计发现，字段来源修复）
+      //    v0.10~v0.11.0 误用 analyzeAll 导致快照 picks/dan 恒空（封版审计发现，字段来源修复）；
+      //    v0.12.0 再修：v0.11 只修好号码池型，数字型 picks 仍取 .main 而实际字段是 digits，照旧丢号。
       const rec = recommendAll(k, draws, { win: 30 });
       const kl = rec.kill || {};
       const th = kl.threshold ?? 99;
-      const payload = {
+      const payload = isDigit ? {
+        picks: (rec.picks || []).slice(0, 3).map(x => ({ name: x.name, digits: (x.digits || []).map(String), number: x.number || null })),
+        dan: ((rec.dan && rec.dan.perPos) || []).map(pp => (pp.dan || []).slice(0, 2).map(x => String(x.n))),
+        kill: (kl.perPos || []).map(pp => (pp.kill || []).slice(0, 3).map(x => String(x.n))),
+        basedOn: draws[0].code
+      } : {
         picks: (rec.picks || []).slice(0, 3).map(x => ({ name: x.name, main: x.main, aux: x.aux || [] })),
         dan: ((rec.dan && rec.dan.main) || []).slice(0, 4).map(x => x.n || x),
         kill: (kl.main || []).filter(x => x.votes >= th).map(x => x.n),
@@ -488,17 +519,24 @@ async function reviewRoute(request, env, url) {
       if (!r.checked || !r.hit) continue;
       const a = agg[r.kind] || (agg[r.kind] = { checked: 0, picksTotal: 0, picksHit: 0, danTotal: 0, danHit: 0, killTotal: 0, killWrong: 0 });
       a.checked++;
-      for (const p of (r.hit.picks || [])) { a.picksTotal += (p.main || []).length; a.picksHit += p.hit || 0; }
+      // 数字型对账存的是 digits（逐位），号码池型存 main；两者都要计入总数分母，
+      // 否则数字型 picksTotal=0 → pickHitRate 恒 null，复盘页对 4 个数字彩种永远是空白
+      for (const p of (r.hit.picks || [])) { const u = p.main || p.digits || []; a.picksTotal += u.length; a.picksHit += p.hit || 0; }
       a.danTotal += (r.hit.dan || []).length; a.danHit += r.hit.danHit || 0;
       a.killTotal += (r.hit.kill || []).length; a.killWrong += (r.hit.killWrong || []).length;
     }
     const summary = {};
     for (const [k, a] of Object.entries(agg)) {
-      const m = SPECS[k] && SPECS[k].main;
-      const base = m ? m.pick / (m.max - m.min + 1) : null;
+      const s = SPECS[k] || {};
+      // 基线口径：号码池型 = 单号被开概率 pick/poolSize；数字型每位置 0-9 等概 = 0.1
+      const base = s.type === "digit" ? 0.1 : (s.main ? s.main.pick / (s.main.max - s.main.min + 1) : null);
       // 复盘显著性：命中/杀错都对照「随机单号基线」做二项检验。p<0.05 = 显著偏离随机（杀号看方向：错杀率低于基线才有价值）
+      // reliable：样本不够时明确标 false——「没检出信号」和「没能力检出信号」是两件事，不能都渲染成绿的
+      const reliable = a.checked >= 30 && a.picksTotal >= 200;
       summary[k] = {
         checked: a.checked,
+        reliable,
+        note: reliable ? null : "样本不足（对账期数 <30 或单号数 <200），当前无法判断有无偏离",
         pickHitRate: a.picksTotal ? +(a.picksHit / a.picksTotal).toFixed(3) : null,
         pickBaseline: base != null ? +base.toFixed(4) : null,
         pickP: base != null ? binomP(a.picksHit, a.picksTotal, base) : null,
@@ -508,7 +546,8 @@ async function reviewRoute(request, env, url) {
         killP: base != null ? binomP(a.killWrong, a.killTotal, base) : null
       };
     }
-    return json({ summary, rows: list.slice(0, 50) });
+    const unreconciled = list.filter(r => !r.checked).length;
+    return json({ summary, rows: list.slice(0, 50), meta: { total: list.length, unreconciled, hint: Object.keys(summary).length ? null : "复盘尚未产生任何已对账样本：summary 为空表示「没能力判断」，不表示「已验证无效果」" } });
   } catch (e) { return json({ error: String(e) }, 500); }
 }
 // ---------- meta：彩种元数据 + 数据新鲜度（staleness 保险丝） ----------
@@ -532,7 +571,20 @@ async function metaRoute(env) {
       stale = rs.filter(Boolean).sort((a, b) => b.days - a.days);
     } catch {}
   }
-  const out = { lotteries: LOTS, sources: ["500", "cwl", "17500", "d1"], stale, disclaimer: "随机游戏，仅供娱乐，不保证中奖" };
+  // 复盘闭环自身的停摆探测：数据新鲜 ≠ 对账在跑。reviewJob 曾静默死掉数天而前端毫无察觉，
+  // 因为它只被 adminSync 的 waitUntil 自 fetch 触发。这里把 predlog 的真实状态暴露出去。
+  let predlog = null;
+  if (env.DB) {
+    try {
+      const q = await env.DB.prepare("SELECT kind, MAX(code) AS latestSnapshot, MAX(CASE WHEN checked=1 THEN code END) AS latestChecked, SUM(CASE WHEN checked=0 THEN 1 ELSE 0 END) AS unreconciled, MAX(created_at) AS lastCreated FROM predlog GROUP BY kind").all();
+      const nameOf = Object.fromEntries(LOTS.map(l => [l.id, l.name]));
+      predlog = (q.results || []).map(r => {
+        const t = Date.parse(String(r.lastCreated || "").replace(" ", "T") + "Z");
+        return { kind: r.kind, name: nameOf[r.kind] || r.kind, latestSnapshot: r.latestSnapshot || null, latestChecked: r.latestChecked || null, unreconciled: r.unreconciled || 0, days: Number.isFinite(t) ? Math.floor((Date.now() - t) / 86400e3) : null };
+      }).sort((a, b) => (b.days ?? 9e9) - (a.days ?? 9e9));
+    } catch { predlog = null; } // 表不存在（未部署本版本）→ 保持 null，前端不得把「未部署」渲染成「故障」
+  }
+  const out = { lotteries: LOTS, sources: ["500", "cwl", "17500", "d1"], stale, predlog, disclaimer: "随机游戏，仅供娱乐，不保证中奖" };
   META_MEM.at = Date.now(); META_MEM.body = out;
   return json(out, 200, 300);
 }

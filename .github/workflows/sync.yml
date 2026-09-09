@@ -20,8 +20,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: 运行单元测试（零依赖，含统一预测引擎）
-        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs
+      - name: 运行单元测试（零依赖：预测引擎 / 冷门度 / 复盘闭环端到端 / 统计内核）
+        # 统计内核（12 项）同时被 worker 的 coldness 常量与复盘基线依赖，放在 push 时跑：
+        # 只在每月 randomness 作业里跑的话，写坏内核要红一个月才发现
+        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs scripts/randomness/stats.test.mjs
 
   smoke:
     name: 线上冒烟
@@ -56,8 +58,55 @@ jobs:
           check meta          /api/meta          "Array.isArray(j.lotteries) && j.lotteries.length === 8"
           check ssq-latest    /api/ssq/latest    "j.code && (j.red || j.front || j.main)"
           check dlt-predict   /api/dlt/predict   "j.kind === 'dlt' && Array.isArray(j.picks) && j.picks.length > 0"
-          check review        /api/review        "typeof j.summary === 'object'"
-          echo "线上冒烟 5 端点全部通过"
+          check review        /api/review        "Array.isArray(j.rows) && j.meta && typeof j.meta.total === 'number'"
+          echo "线上冒烟 5 端点全部通过（复盘闭环健康门禁见 review job，此处只验响应形状）"
+
+  review:
+    name: 复盘闭环
+    needs: sync
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 显式触发快照+对账并校验闭环仍在跑
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKER_URL:-}" ] || [ -z "${API_TOKEN:-}" ]; then
+            echo "::error::未配置 secrets.WORKER_URL 或 secrets.API_TOKEN"
+            exit 1
+          fi
+          # 显式 HTTP 调用，不再只依赖 adminSync 内部的 waitUntil 自 fetch：
+          # 那条通路在免费层会被静默丢弃，v0.11~v0.12 期间闭环死亡五天而 CI 全绿就是它造成的
+          code=$(curl -sS -m 120 -o /tmp/reviewjob.json -w "%{http_code}" -X POST \
+            "$WORKER_URL/api/admin/review-job" -H "Authorization: Bearer $API_TOKEN")
+          echo "HTTP $code"; cat /tmp/reviewjob.json
+          [ "$code" = "200" ] || { echo "::error::review-job 返回 $code"; exit 1; }
+          node -e '
+            const j = require("/tmp/reviewjob.json");
+            if (!j.ok) { console.error("::error::review-job 未返回 ok:true — " + JSON.stringify(j)); process.exit(1); }
+            const rs = j.results || {};
+            const dead = Object.entries(rs).filter(([, v]) => !v || v.error || v.skip || !(v.snapshot));
+            if (dead.length) { console.error("::error::以下彩种未生成快照：" + JSON.stringify(dead)); process.exit(1); }
+            console.log("快照已写：" + Object.entries(rs).map(([k, v]) => k + "@" + v.snapshot + "(对账" + v.reconciled + ")").join(" "));
+          '
+          curl -sS -m 30 -o /tmp/meta.json "$WORKER_URL/api/meta"
+          node -e '
+            const j = require("/tmp/meta.json");
+            const pl = j.predlog;
+            if (!Array.isArray(pl) || !pl.length) { console.error("::error::/api/meta 无 predlog —— 闭环从未写入或被旧版本 Worker 屏蔽"); process.exit(1); }
+            const daily = ["fc3d","pl3","pl5","kl8"];
+            const bad = [];
+            for (const k of daily) {
+              const e = pl.find(x => x.kind === k);
+              if (!e) { bad.push(k + " 无快照记录"); continue; }
+              if (e.days === null || e.days > 2) bad.push(k + " 最新快照距今 " + e.days + " 天（每日开奖彩种应 ≤2）");
+              if (!e.latestChecked) bad.push(k + " 从未对账（latestChecked=null）");
+            }
+            if (bad.length) { console.error("::error::复盘闭环停摆：" + bad.join(" ; ")); process.exit(1); }
+            console.log("闭环健康：" + pl.map(e => e.kind + " 快照" + e.latestSnapshot + " 对账至" + e.latestChecked + " 待对账" + e.unreconciled).join(" | "));
+          '
 
   sync:
     name: 落库同步
