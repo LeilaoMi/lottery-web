@@ -4,11 +4,11 @@
 
 需求原话：「都做吧，我虽然不用推送，但这个项目开源后可能其他人需要，给用这项目的人配齐」。三件事按「先做完自己每天真会用的」排序执行：批量验奖 → D1 备份 → 开奖推送（**默认关闭 + provider 无关**，不绑任何账号）。
 
-- 证据：`node --test` **103 passed / 0 failed**（86 worker + 12 统计内核 + 5 推送，逐文件单独数过：34/26/8/5/9/4 + 12 + 5）；`scripts/build-ui.mjs` 重建后 `worker/src/ui.js` md5 不变（`fae806d4…`），说明前端源码与产物一致
+- 证据：`node --test` **106 passed / 0 failed**（89 worker + 12 统计内核 + 5 推送，逐文件单独数过：34/26/8/5/9/4/3 + 12 + 5）；`scripts/build-ui.mjs` 重建后 `worker/src/ui.js` md5 不变（`fae806d4…`），说明前端源码与产物一致
+- **push 后 CI 冒烟抓出一个真缺陷（不是 v0.13 引入的）**：`/api/ssq/latest` 在 runner 上 30s 超时。本机复现三次 **25s 超时 / 22.2s 成功 / 2.4s 命中缓存** → 根因是 8 处上游 `fetch` 全都没有超时，境内站点（cwl / 500 / 17500）从 CF 边缘不回包时把用户请求一起拖死。新增 `worker/src/net.js` 的 `fetchT`（常规 8s、17500 全量文本 20s），超时抛 `TimeoutError` 由既有 `.catch` 接住并按多源降级；配 `net.test.mjs` 3 项（用永不 `res.end()` 的本地 server）。教训：**去掉 `signal` 的变异一开始是「永远挂着」而不是变红**，给用例加 `{ timeout: 5000 }` 后才会在 5 秒报 `test timed out`
+- 交付状态：提交 `643fe9f`（v0.13.0）+ 本次 net.js 修复；部署 `f5fd06a6`/`e78a279c` → 线上 `/health` = **0.13.0**，workers.dev 与自定义域均 200（route 未被解绑）；真实浏览器 E2E **8 项 PASS、控制台 0 错误**（含 3D 直选 1040、「期号留空取最近一期」、坏票行号、浮动奖「见公告」）；备份所需 3 个 Actions secrets 已写入
 - 变异验证（新写的闸门是不是真守卫）：① 前端金额 null 保护改成 `w.amount || 0` → `ui-render` 2 项红；② `summary.amountKnown` 改名 → 1 项红；③ 后端 `tickets` 守卫禁用 → 路由测试红并报出原 `TypeError`；④ `send()` 的 `!r.ok` 抛错去掉 → notify 第 4 项红。四处全部还原后复绿，`diff` 与备份逐字节相同
 - 备份链路是拿真库验的：`wrangler d1 export lottery --remote` → 173 KB / 1007 条 INSERT；用 bundled node 的 `node:sqlite` 还原到内存库 → `small_draws 729 / draws 120 / dlt_draws 120 / predlog 12 / sync_log 23 / favs 0`（合 1004）。两个副产品结论进了文档：导出的 DDL **不带 `IF NOT EXISTS`**（重复导入报 `table draws already exists`），且 wrangler 会把**带签名的预签名下载链接打进 stdout**（公开仓库日志 = 泄露整库），workflow 已过滤
-- 线上仍是上一轮的状态：`/health` → `{"status":"ok","version":"0.12.0",...}`，workers.dev 与 `https://cp.leilaomi.cc.cd` 均 200。**本轮未部署、未推送**
-- 待用户确认的外部操作：本地 commit → `wrangler deploy`（走 `~/lw-deploy` 绕行）→ `git push` → 可选创建备份/推送所需 Actions secrets（推送这条用户说过不用，保持不配即为关闭）
 - 一个刻意没动的坑：`worker/wrangler.toml` 里带着作者自用域名的 `routes`，fork 直接部署会因不持有该 zone 失败；但没有顺手注释掉——routes 是同步语义，删掉后重新部署会**真的把线上域名解绑**。已写进 `docs/PUBLISH.md` 的「已知坑」
 - 细节续接：`docs/continue-2026-09-11.md`
 

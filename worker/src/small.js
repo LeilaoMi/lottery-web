@@ -1,3 +1,4 @@
+import { fetchT, BULK_MS } from "./net.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
 export const SRC = {
@@ -33,7 +34,7 @@ export async function fetchSmall(kind, limit = 100) {
   const url = SRC[kind];
   if (!url) throw new Error("unknown kind " + kind);
   const re = CODE_RE[kind];
-  const r = await fetch(url, { headers: { "User-Agent": UA } });
+  const r = await fetchT(url, { headers: { "User-Agent": UA } }, BULK_MS);
   if (!r.ok) throw new Error("http " + r.status);
   const lines = (await r.text()).split(/\r?\n/);
   const out = [];

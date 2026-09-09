@@ -24,12 +24,13 @@ jobs:
         # review.test.mjs 会 import worker/src/index.js，而 index.js 里 `import { HTML } from "./ui.js"`
         # —— 干净检出时没有这个文件，测试直接 ERR_MODULE_NOT_FOUND（本地因为有产物是绿的）
         run: node scripts/build-ui.mjs
-      - name: 运行单元测试（零依赖：预测引擎 / 冷门度 / 复盘闭环端到端 / 批量验奖 + 前后端契约 / 推送 / 统计内核）
+      - name: 运行单元测试（零依赖：预测引擎 / 冷门度 / 复盘闭环端到端 / 批量验奖 + 前后端契约 / 上游超时 / 推送 / 统计内核）
         # 统计内核（12 项）同时被 worker 的 coldness 常量与复盘基线依赖，放在 push 时跑：
         # 只在每月 randomness 作业里跑的话，写坏内核要红一个月才发现
         # ui-render.test.mjs 读 frontend/index.html 渲染真实后端响应 → 前后端字段改名会在 push 时立刻红
         # notify.test.mjs 用本地 http server 真发一次 → 「以为在推、其实从没发出去」不会漏过
-        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
+        # net.test.mjs 用不回包的本地 server 验超时真的会掐断 → 上游挂死把请求拖到 30s 会有人管
+        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs worker/test/net.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
 
   smoke:
     name: 线上冒烟

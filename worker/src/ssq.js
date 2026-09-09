@@ -1,4 +1,5 @@
 import { normNums, pad2 } from "./small.js";
+import { fetchT, BULK_MS } from "./net.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 const CWL_INDEX = "https://www.cwl.gov.cn/ygkj/wqkjgg/ssq/";
 const CWL_API = "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&issueCount=100&pageNo=1&pageSize=100&systemType=PC";
@@ -6,7 +7,7 @@ const T500 = (n) => `https://datachart.500.com/ssq/history/newinc/history.php?li
 const T17500 = "http://data.17500.cn/ssq_asc.txt";
 
 export async function fetch500(limit = 100) {
-  const r = await fetch(T500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
+  const r = await fetchT(T500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
   if (!r.ok) throw new Error("500 http " + r.status);
   const html = await r.text();
   const trs = html.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
@@ -27,13 +28,13 @@ export async function fetchCWL() {
   // Workers无cookie jar，手动两步
   let cookie = "";
   try {
-    const i = await fetch(CWL_INDEX, { headers: { "User-Agent": UA, "Referer": "https://www.cwl.gov.cn/" }, redirect: "follow" });
+    const i = await fetchT(CWL_INDEX, { headers: { "User-Agent": UA, "Referer": "https://www.cwl.gov.cn/" }, redirect: "follow" });
     const sc = i.headers.get("set-cookie") || "";
     const m = sc.match(/(JSESSIONID|SESSION|_session[^=]*)=[^;]+/i);
     if (m) cookie = m[0];
     await i.text().catch(() => {});
   } catch {}
-  const r = await fetch(CWL_API, { headers: { "User-Agent": UA, "Accept": "application/json", "Referer": CWL_INDEX, ...(cookie ? { "Cookie": cookie } : {}) } });
+  const r = await fetchT(CWL_API, { headers: { "User-Agent": UA, "Accept": "application/json", "Referer": CWL_INDEX, ...(cookie ? { "Cookie": cookie } : {}) } });
   if (!r.ok) throw new Error("cwl http " + r.status);
   const j = await r.json();
   const items = j.result || [];
@@ -58,7 +59,7 @@ export function parse17500(text, limit = 200) {
 }
 
 export async function fetch17500(limit = 200) {
-  const r = await fetch(T17500, { headers: { "User-Agent": UA } });
+  const r = await fetchT(T17500, { headers: { "User-Agent": UA } }, BULK_MS);
   if (!r.ok) throw new Error("17500 http " + r.status);
   return parse17500(await r.text(), limit);
 }

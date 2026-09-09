@@ -5,6 +5,7 @@ import { verifyBatch } from "./verify-batch.js";
 import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
 import { coldness } from "./coldness.js";
+import { fetchT } from "./net.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
@@ -374,7 +375,7 @@ async function getCustom(env) {
   const out = [];
   for (const [k, u] of [["official", env.DATA_SOURCE_OFFICIAL], ["public", env.DATA_SOURCE_PUBLIC]]) {
     if (!u) continue;
-    try { const r = await fetch(u); const j = await r.json(); const arr = Array.isArray(j) ? j : j.result || j.data || [j]; for (const it of arr.slice(0, 100)) { const code = String(it.code || ""); const red = String(it.red || "").split(/[ ,]+/).filter(Boolean).map(x => x.padStart(2, "0")); const blue = String(it.blue || "").padStart(2, "0"); if (/^\d{5,7}$/.test(code) && red.length === 6) out.push({ code, red, blue, date: it.date || "", src: k }); } } catch {}
+    try { const r = await fetchT(u); const j = await r.json(); const arr = Array.isArray(j) ? j : j.result || j.data || [j]; for (const it of arr.slice(0, 100)) { const code = String(it.code || ""); const red = String(it.red || "").split(/[ ,]+/).filter(Boolean).map(x => x.padStart(2, "0")); const blue = String(it.blue || "").padStart(2, "0"); if (/^\d{5,7}$/.test(code) && red.length === 6) out.push({ code, red, blue, date: it.date || "", src: k }); } } catch {}
   }
   out._sources = [env.DATA_SOURCE_OFFICIAL ? "official" : null, env.DATA_SOURCE_PUBLIC ? "public" : null].filter(Boolean); out._consistent = true; return out;
 }

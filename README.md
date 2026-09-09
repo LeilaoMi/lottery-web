@@ -83,7 +83,7 @@ Cloudflare Workers + D1 · 零运行时依赖 · 单页 PWA 前端
 | 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
 | 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
 | 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 103 项单元测试（86 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
+| 测试 | `node --test` | 106 项单元测试（89 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
 
 ---
 
@@ -155,7 +155,7 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（103 项，零依赖，离线可跑）
+npm test             # 单元测试（106 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
@@ -265,6 +265,7 @@ lottery-web/
 │   │   ├── small.js        # 6 小彩种解析 / 奖级 / 旋转矩阵
 │   │   ├── calc.js         # 注数 / 金额 / 追号 / 快乐8 奖金表
 │   │   ├── db.js           # D1 读写
+│   │   ├── net.js          # 带超时的上游 fetch（境内站点不回包时宁可降级，也不能把请求拖到 20–30s）
 │   │   └── ui.js           # ⚠️ 构建产物（不进仓库，先 build:ui）
 │   ├── test/
 │   │   ├── unit.test.mjs   # 基础单元测试
@@ -273,6 +274,7 @@ lottery-web/
 │   │   ├── review.test.mjs # 复盘 job 端到端（假 D1 按 WHERE 过滤）
 │   │   ├── verify-batch.test.mjs # 批量验奖：解析 / 奖级金额 / 位置敏感 / 汇总 + 路由 HTTP 契约
 │   │   ├── ui-render.test.mjs # 前后端契约：真跑后端再让前端渲染函数画一遍（字段改名会被抓住）
+│   │   ├── net.test.mjs    # 上游超时：用不回包的本地 server 验超时真的生效
 │   │   └── live.test.mjs   # 真实数据源连通性（需联网）
 │   └── wrangler.toml       # 部署模板（database_id 已脱敏为 REPLACE_ME）
 ├── scripts/

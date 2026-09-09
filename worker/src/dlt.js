@@ -1,8 +1,9 @@
 import { normNums } from "./small.js";
+import { fetchT, BULK_MS } from "./net.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
 const D500 = (n) => `https://datachart.500.com/dlt/history/newinc/history.php?limit=${n}`;
 export async function fetchDLT(limit = 100) {
-  const r = await fetch(D500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
+  const r = await fetchT(D500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
   if (!r.ok) throw new Error("dlt500 http " + r.status);
   const html = await r.text();
   const trs = html.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
@@ -44,7 +45,7 @@ export function verifyDLT(draws, code, front, back) {
   return { hit: true, actual: d, hitFront: hf, hitBack: hb, input: { front: F, back: B } };
 }
 export async function fetch17500DLT() {
-  const r = await fetch("http://data.17500.cn/dlt_asc.txt", { headers: { "User-Agent": UA } });
+  const r = await fetchT("http://data.17500.cn/dlt_asc.txt", { headers: { "User-Agent": UA } }, BULK_MS);
   if (!r.ok) throw new Error("17500dlt http " + r.status);
   const t = await r.text(), out = [];
   for (const ln of t.split(/\r?\n/)) {
