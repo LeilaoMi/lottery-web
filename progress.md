@@ -1,4 +1,55 @@
-# progress · lottery-web v0.11.0 完成
+# progress · lottery-web v0.12.0
+
+## v0.12.0：复盘闭环复活 + 冷门度模型 + 诚实性收敛（2026-09-10）
+
+**本轮由一次全量实证审计驱动**，不是加功能冲动：把双色球 2003→2026 共 3501 期真实开奖（含各奖级中奖注数/销量/奖池，与官方接口逐字段核对 62+100 期全一致）跑完 4 组统计检验，据此修死链路、改口径，并且**只实现统计上站得住的那一项**。
+
+### 修掉的三处「看着绿其实空转」
+
+1. **复盘闭环从未对账**（`worker/src/index.js`）：全库仅 8 条快照、全部 `checked=0`、全部创建于 09-08 07:33，而 2026104 / 2026242 早已开奖入库。根因是 `reviewJob` 只被 `adminSync` 的 `ctx.waitUntil` 自 fetch 触发（免费层静默丢弃）。修法：CI 新增独立 `review` job 显式 `POST /api/admin/review-job`，并对每日彩种断言「最新快照距今 ≤2 天 + 已有对账记录」。
+2. **CI 空断言**（`.github/workflows/sync.yml:59`）：对 `/api/review` 只断言 `typeof summary === 'object'`，`{}` 也通过——这就是闭环死了五天而 CI 全绿的原因。已换成实质形状断言 + 上面的真门禁。
+3. **数字型彩种永久丢号**：`recommendDigits` 的字段是 `digits`/`number`，而快照与对账都读 `x.main` → fc3d/pl3/pl5/qxc 四个彩种快照只剩 `name`+`aux`（线上实测），永久不可对账。已按 `type` 分叉，数字型严格**逐位比对**（退化成"号出现在开奖号里"会让 123 判成与 321 全中）。
+
+### 新增（唯一被样本外支持的）
+
+- `worker/src/coldness.js` + `/api/coldness`：冷门度。**旧 70% 拟合 / 新 30% 样本外**：五分位最热/最冷 = 1.506 倍（p=6.2e-10）；**安慰剂**（蓝球特征打在不含蓝的二等奖）= 1.006 / 0.993 干净归零；连号特征样本外反号 0.992→1.028 **已剔除**。响应硬编码免责声明：只影响分奖人数，不改变中奖概率，期望回报仍为负。
+- `scripts/randomness/`（+ 月度 workflow）：可重跑的 4 组检验，含"安慰剂一旦显著就构建失败"的门禁。复现值 `chi2R=44.5438`、`sumMean=100.9623`、χ² 零分布均值 **26.91（不是 df=32）**。
+- 前端（`frontend/index.html`）：校准权重文案改「展示参考，不参与出票」；回测徽章加 `tested≥100` 门槛；噪声 ±2σ 基线图；追号护栏（总投入 / 长期期望损失 / 最坏累计）；复盘未运行红色告警。
+
+### 验证
+
+- `node --test`：**73 passed / 0 failed**（unit+predict 60 + coldness 8 + review 端到端 5，8 suites）；`worker/src/index.js` 真实 `import()` 通过；直接调用 Worker 处理器实测 `/health`→`0.12.0`、`/api/coldness` 200/400/未拟合彩种 `supported:false` 三种路径均正确
+- **变异测试**：只把 `danHit` 改回下标遮蔽的错写 → `pass 4 / fail 1`（恰好只红对应那项）；还原后 73 全绿。证明新增的 5 项端到端回归是真守卫
+- YAML：两份 workflow 经 PyYAML 解析通过，job 依赖图 `test → {smoke, sync → review}` 正确
+- 前端重新构建 `ui.js` 60.6 KB，新字符串（coldness / 样本不足 / 展示参考 / 不改变中奖概率 / predlog）已落盘
+- 密钥扫描：本轮全部 diff 与新文件中 `ghp_` / JWT / `TOKEN=字面量` / `Bearer 长串` 均 0 命中
+- **本轮踩到并记下的两个陷阱**：① 测试桩若不模拟 `WHERE kind=?`，其他彩种循环会拿去解析 fc3d 的行并以空结果覆盖 UPDATE，造成**假阴性**（我一度据此误判产品代码有 bug）；② 测试代码里整串写 `Authorization: "Bearer x"` 会被环境的密钥脱敏改写，导致全部请求 401——必须拆片段拼接。另：我第一版 `danHit` 确实写下标遮蔽 bug（内层 `filter((v,i)` 的 `i` 是候选序号），被端到端测试抓到并已修复
+
+### 自我更正（防复发）
+
+曾断言 `kill-tune` 的 `periods` 参数无效——**错的**：`train[0].tested` 随 10/30/50/60 精确变化，只有 90 被 `num()` 钳位到 60，而我拿 80/90/120 三个都被钳位的值做对比。但同轮暴露了真问题：`periods=10` 判"有信息量"、`periods≥30` 判"过拟合"，结论依赖隐藏旋钮——这正是徽章加样本门槛的依据。
+
+### 架构决策变更
+
+原计划 P1 的 `money` 表 + D1 回填**取消**：coldness 改为离线拟合常量，外部操作面从「部署 + 迁移 + 回填 + Secrets」缩到「仅部署」。代价：系数需定期重拟合——**已还**：`scripts/coldness/ssq-fit.mjs` 重拟合 + 样本外验证 + 安慰剂 + 与 `worker/src/coldness.js` 常量对账，挂在 `randomness.yml` 月度作业里。
+
+它对账的第一次运行就抓到两处**文档说谎**（代码是对的、注释是错的）：头注写「旧 70%（2437 期）」实际 2275 期；README 写「系数来自 3412 期」，而 3412 只是绝对刻度 `avgFirstWinners` 的分母，真正进入拟合的是 3250 期。顺带厘清一个会反复踩的口径坑：无条件均值 8.27（含 4.7% 一等奖空出的期，彩民每期都买所以刻度要用它）vs 拟合样本内条件均值 8.68，两者混用会把 `estWinners` 系统性高估。
+
+### 第二阶段：把结论从「一家实测」推到「八家实测」，并给常量装上复现机器
+
+- **随机性审计推广到 8 彩种**：`fetch-multi.mjs`（结构校验 + 与线上公共接口逐期号码交叉校验）+ `lib-kinds.mjs`（按 `池/开出数/type` 参数化，零分布期望现算）+ `analyze.mjs --all` → `docs/randomness-multi-latest.md`。116 个检验走 Bonferroni（α=4.31e-4）， surviving 的两条「显著」都被证伪：大乐透前区 χ²=89.1 是 2007–2014 **源数据回填缺陷**（分半 r=−0.26，2015+ p=0.89），七星彩第 7 位「非均匀」是**规则本身**（0–9 约 9%、10–14 约 1.8%）。`--all` 跑不全改成非零退出 + CI 数 VERIFIED 行数，别再出现「没跑成」和「没问题」一个样。
+- **大乐透冷门度 = 负结果，按负结果处理**：只用 2015+（2921 期里 1753 期），目标样本外复现（五分位 1.30×、MW p=0.007），但固定奖级安慰剂对全部候选特征失败 → `keep=[]`、不发布。死结是方法学的：**大乐透没有任何一档奖金只依赖后区**，前区超买会连带推高 4中5 邻域的低奖级注数，这份数据分不清混淆与真实人气。**刻意不进月度 CI**（缺的是集合外人气代理，不是时间；每月一根红灯只会训练人忽略红灯）。留档 `docs/coldness-dlt-2026-09.md` + `scripts/coldness/dlt-fit.mjs`。
+- **数据基线**：`scripts/randomness/data/*.json`（8 彩种）进仓库供离线复现，原始 `*_asc.txt`（约 4MB）加进 `.gitignore`。
+- **验证**：`ssq-fit.mjs` 打印 `COLDNESS: PASS` 且 5 个上线系数与线上常量逐位相同（漂移 ≤0.0004）、冷热名单一致、8.27 对上；变异测试两轮都变红（安慰剂目标换成一等奖 → 2 失败退出 1；系数抹平为 1 → 6 失败、五分位塌到 1.177）。`analyze.mjs --all` 本地全跑：8 彩种 VERIFIED、`ACCEPTANCE: PASS ｜ PLACEBO: PASS`、退出码 0；`dlt-fit.mjs` 与姊妹解析 **2921/2921** 期号码一致。CI 四个 grep 锚点逐条在真实产物上验证过命中数（PLACEBO 1 / ACCEPTANCE 1 / VERIFIED 7 / 范围界定 1），并用「拿 `｜VERIFIED$` 去 grep 双色球深检报告 → 0 命中」做错靶对照，确认锚点不是巧合匹配；但**没做「把结论改坏看闸门是否变红」的负对照**——真正有牙的证据是上面那两轮变异测试。两份 workflow 经 `pyyaml.safe_load` 解析通过（bundled python：`~/.workbuddy/binaries/python/versions/3.13.12/python.exe`）。worker 73 + randomness 12 = **85 项全过**。
+- **闸门断言必须自带负对照**：这一条本轮又被验证一次——`analyze.mjs` 的 `--all` 失败原来被 catch 吞掉（exit 0），意味着「多彩种挂掉」在 CI 里完全隐形。
+
+### 下一步（待用户确认的外部操作）
+
+1. `wrangler deploy`（走 `~/lw-deploy` 绕行，工作区内会被沙箱拦）→ 部署后 `/health` 应返回 0.12.0
+2. push 后观察 Actions：`review` job 首次真实跑通对账（预期 `fc3d/pl3/pl5/kl8` 当轮即有 `reconciled>0`）
+3. **`randomness.yml` 从未在 CI 跑过**：push 后手动 `workflow_dispatch` 一次（它需要能访问 data.17500.cn 与线上公共接口；任一数据源从 runner 不可达时会诚实失败，而不是给个好看的空结论——那时先看第 0 节的验收输出再判断是网络还是代码）
+4. 线上冒烟 6 端点 + `/api/coldness` 实测；确认数字型快照不再丢号
+5. GitHub PAT 换 fine-grained（权限过大，与本任务无关但同源风险）
 
 ## v0.11.0：工程韧性 + 使用体验（继续琢磨轮）
 - **CI 部署冒烟**：sync.yml 新增 smoke job（push/定时后对线上 health/meta/ssq-latest/dlt-analyze/review 5 端点断言 200+关键字段）；smoke 与 sync 都依赖 secrets.WORKER_URL/API_TOKEN

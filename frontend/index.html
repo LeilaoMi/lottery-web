@@ -123,6 +123,7 @@ document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () =
   ['d','p','a','h','v','t','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
   if (b.dataset.t === 'a' && window.__chart) setTimeout(() => window.__chart.resize(), 0);
   if (b.dataset.t === 'a' && window.__chart2) setTimeout(() => window.__chart2.resize(), 0);
+  if (b.dataset.t === 'a' && window.__chart3) setTimeout(() => window.__chart3.resize(), 0);
   if (b.dataset.t === 'd') loadDaily();
   if (b.dataset.t === 'f') loadFavs();
 });
@@ -146,24 +147,45 @@ async function load(){
 
 // 数据新鲜度保险丝：/api/meta 的 stale 显示 D1 最新一期距今天数，任一彩种 ≥4 天 → 黄条提醒
 // （Actions 定时同步停摆 / 上游改版时，用户不至于拿过期数据当最新预测）
+// 另加复盘对账停摆告警：predlog 里 days 全缺 / latestChecked 全空 = 对账循环没在跑，复盘页数字不可信
 let __staleSig = '';
 async function loadStale(){
   try {
     const m = await api('/api/meta');
+    const anchor = document.querySelector('.warn');
+    const putBar = (bar) => { if (anchor) anchor.parentNode.insertBefore(bar, anchor); };
+    // ① 开奖数据过期
     const bad = (m.stale || []).filter(x => x.days >= 4);
     const old = document.getElementById('stalebar');
-    if (!bad.length) { if (old) old.remove(); return; }
-    const sig = bad.map(x => x.kind + x.days).join(',');
-    if (old && sig === __staleSig) return;
-    __staleSig = sig;
-    const bar = document.createElement('div');
-    bar.className = 'warn'; bar.id = 'stalebar';
-    bar.style.cssText = 'background:#fff1b8;border-color:#e6c35c;color:#6d4c00;font-weight:600';
-    bar.innerHTML = '⚠️ 数据可能过期（同步任务停摆？）：' +
-      bad.map(x => esc(x.name) + ' 最新 ' + esc(x.date) + '（' + x.days + ' 天前）').join('、') +
-      '。以下预测请谨慎参考。';
-    const anchor = document.querySelector('.warn');
-    if (anchor) anchor.parentNode.insertBefore(bar, anchor);
+    if (!bad.length) { if (old) old.remove(); }
+    else {
+      const sig = bad.map(x => x.kind + x.days).join(',');
+      if (!old || sig !== __staleSig) {
+        __staleSig = sig;
+        const bar = document.createElement('div');
+        bar.className = 'warn'; bar.id = 'stalebar';
+        bar.style.cssText = 'background:#fff1b8;border-color:#e6c35c;color:#6d4c00;font-weight:600';
+        bar.innerHTML = '⚠️ 数据可能过期（同步任务停摆？）：' +
+          bad.map(x => esc(x.name) + ' 最新 ' + esc(x.date) + '（' + x.days + ' 天前）').join('、') +
+          '。以下预测请谨慎参考。';
+        if (old) old.remove();
+        putBar(bar);
+      }
+    }
+    // ② 预测复盘未运行/未对账（predlog 后端未部署时字段缺失 → 不告警，不误伤）
+    const pl = m.predlog || [];
+    const revDead = pl.length > 0 && (pl.every(x => x.days == null) || pl.every(x => x.latestChecked == null));
+    const old2 = document.getElementById('revwarnbar');
+    if (!revDead) { if (old2) old2.remove(); }
+    else if (!old2) {
+      const bar2 = document.createElement('div');
+      bar2.className = 'warn'; bar2.id = 'revwarnbar';
+      bar2.style.cssText = 'background:#fff1f0;border-color:#ffa39e;color:#a8071a;font-weight:600';
+      bar2.innerHTML = '🔴 预测复盘未运行/未对账，复盘页数字不可信：' +
+        pl.map(x => esc(x.name || x.kind) + (x.unreconciled != null ? '（待对账 ' + esc(x.unreconciled) + ' 期）' : '')).join('、') +
+        '。快照从未被对账时，滚动命中率与对账明细均不可采信。';
+      putBar(bar2);
+    }
   } catch (e) { /* meta 失败不影响主流程 */ }
 }
 
@@ -237,20 +259,25 @@ async function loadPredict(id){
   let html = '<h3 style="margin:0 0 8px">' + esc(latest.code || '') + ' 期</h3>' + renderNums(latest);
   html += '<div class="muted">' + esc(latest.date || '') + ' · 源 ' + esc(((latest.sources || [latest.src]).join(',') || '-')) + '</div>';
   html += '<h4 style="margin:14px 0 6px">6 组参考（含结构分）</h4>';
-  for (const p of (rec.picks || [])) {
+  (rec.picks || []).forEach((p, i) => {
     html += '<div class="kv"><span>' + esc(p.name) + ' <span class="muted">分 ' + esc(p.score) + '</span></span><span>' +
       (isDigit ? balls(p.digits) : balls(p.main) + balls(p.aux, 'b')) + '</span></div>';
-  }
+    if (!isDigit && asArr(p.main).length) html += '<div id="cold-p' + i + '" class="muted">冷门度加载中…</div>';
+  });
+  if (!isDigit) html += '<div class="muted">冷门度衡量的是"万一中了能独享多少"（选号撞车度），<b>不改变中奖概率</b>，期望回报仍为负。</div>';
   html += '<p class="muted">' + esc(rec.disclaimer || '') + '</p>';
   const dl = rec.dan || {};
-  let kl = rec.kill || {}, killTag = '';
+  let kl = rec.kill || {}, killTag = '', killCalNote = '';
   try {
     const ck = await api('/api/kill-calibrated?kind=' + id);
-    if (ck.main && ck.main.length) { kl = ck; killTag = '（已按回测校准公式权重）'; }
+    if (ck.main && ck.main.length) {
+      kl = ck; killTag = '（回测校准权重 · 展示参考）';
+      killCalNote = '<div class="muted">以上仅为按回测校准权重排序的<b>展示参考</b>列表；生成上方推荐号与胆拖投注单时不使用这些权重（后端用未加权票数）。校准不改变中奖概率。</div>';
+    }
   } catch (e2) { /* 校准失败退回普通杀号 */ }
   if (kl.main && kl.main.length) {
     html += '<h4 style="margin:14px 0 6px">杀号' + killTag + '</h4><div class="muted">' +
-      kl.main.slice(0, 12).map(x => esc(x.n) + '(' + esc(x.votes) + ')').join(' ') + '</div>';
+      kl.main.slice(0, 12).map(x => esc(x.n) + '(' + esc(x.votes) + ')').join(' ') + '</div>' + killCalNote;
   } else if (kl.perPos) {
     html += '<h4 style="margin:14px 0 6px">分位杀号</h4><div class="muted">' +
       kl.perPos.map(pp => '第' + pp.pos + '位 ' + pp.kill.slice(0, 3).map(x => esc(x.n)).join(',')).join('　') + '</div>';
@@ -269,6 +296,11 @@ async function loadPredict(id){
   if (rec.formHint) html += '<div class="muted">近 ' + esc(rec.count) + ' 期形态：组三 ' + esc(rec.formHint['组三']) +
     ' / 组六 ' + esc(rec.formHint['组六']) + ' / 豹子 ' + esc(rec.formHint['豹子']) + '</div>';
   $('#p').innerHTML = html;
+  // 冷门度逐组异步填充：后端接口未部署时各组自行显示"暂不可用"，不阻塞页面
+  (rec.picks || []).forEach((p, i) => {
+    const el = document.getElementById('cold-p' + i);
+    if (el) coldnessHtml(id, p.main, p.aux).then(h => { if (document.getElementById('cold-p' + i) === el) el.innerHTML = h; }).catch(() => { el.innerHTML = '<span class="muted">冷门度：暂不可用</span>'; });
+  });
   const tkgo = document.getElementById('tkgo');
   if (tkgo) tkgo.onclick = async () => {
     const out = document.getElementById('tkout');
@@ -279,8 +311,13 @@ async function loadPredict(id){
       out.innerHTML =
         '<div>胆 ' + balls(r.dan) + '　拖 ' + balls(r.tuo) + (r.aux && r.aux.length ? '　副区 ' + balls(r.aux, 'b') : '') + '</div>' +
         '<div><b>' + esc(r.bets) + ' 注 / ' + esc(r.amount) + ' 元</b>　<span class="muted">已剔除 ' + esc(r.excluded) + ' 个杀号</span></div>' +
+        '<div id="tkcold" class="muted">本单冷门度（万一中了能独享多少，不改变中奖概率）加载中…</div>' +
         '<div class="muted">' + esc(r.note) + '</div>' +
         '<div class="row"><button id="tksave">保存到收藏</button><button id="tkcopy">复制文本</button><button id="tkdl">导出 TXT</button></div>';
+      coldnessHtml(id, asArr(r.dan).concat(asArr(r.tuo)), r.aux).then(h => {
+        const ce = document.getElementById('tkcold');
+        if (ce) ce.innerHTML = '本单' + h + '<span class="muted">（衡量"万一中了能独享多少"，不改变中奖概率）</span>';
+      });
       document.getElementById('tksave').onclick = async () => {
         try {
           await fetch(base() + '/api/favs', {
@@ -317,6 +354,25 @@ function tkText(r){
     (r.aux && r.aux.length ? '\n副区: ' + r.aux.join(',') : '') +
     '\n注数: ' + r.bets + ' 注 / ' + r.amount + ' 元\n生成时间: ' + new Date().toLocaleString() +
     '\n随机游戏，仅供娱乐，不保证中奖';
+}
+
+// ---------- 冷门度：只回答"万一中了能独享多少"，不改变中奖概率 ----------
+// 后端 /api/coldness 尚在并行开发：任一字段可能缺失，非 200/404 一律显示中性"暂不可用"，绝不抛错误块
+async function coldnessHtml(kind, main, aux){
+  const NA = '<span class="muted">冷门度：暂不可用</span>';
+  const nums = asArr(main).join(',');
+  if (!nums) return NA;
+  let r;
+  try {
+    r = await api('/api/coldness?kind=' + kind + '&nums=' + encodeURIComponent(nums) + '&blue=' + encodeURIComponent(asArr(aux).join(',')));
+  } catch (e) { return NA; }
+  const bits = [];
+  if (r && r.coldIndex != null) bits.push('冷门度 <b>' + esc(r.coldIndex) + '</b>/100（越高越冷）');
+  if (r && r.ratio != null) bits.push('预计一等同奖 ' + esc(Number(r.ratio).toFixed(2)) + ' × 平均人数（<1 更可能独享）');
+  if (r && (r.estWinners != null || r.avgFirstWinners != null)) bits.push('同奖约 ' + esc(r.estWinners != null ? r.estWinners : '-') + ' 人（平均 ' + esc(r.avgFirstWinners != null ? r.avgFirstWinners : '-') + '）');
+  if (r && Array.isArray(r.factors) && r.factors.length) bits.push('因子：' + r.factors.map(f => esc(f.label) + ' ' + (Number(f.effect) > 0 ? '+' : '') + esc(f.effect)).join('、'));
+  if (!bits.length) return NA;
+  return '冷门度：' + bits.join('　') + (r.disclaimer ? '　' + esc(r.disclaimer) : '');
 }
 
 // ---------- 分析 ----------
@@ -380,6 +436,7 @@ async function loadAnalyze(id){
         '<button id="trgo">画走势</button></div><div id="chart2" style="height:340px"></div></div>');
       document.getElementById('trgo').onclick = () => drawTrend(id);
       drawTrend(id);
+      drawNoiseChart(id, an);
     }
   } catch (e) { errBox(e, $('#a')); }
 }
@@ -413,11 +470,56 @@ async function drawTrend(id){
   } catch (e) { el.innerHTML = '<div class="err">走势加载失败：' + esc(e.message || e) + '</div>'; }
 }
 
+// 噪声对照图：真实频次 vs 随机 ±2σ 带 —— 教眼睛把"冷热"读成随机波动而不是规律。
+// 基线由已取回的数据自推：池大小 = freq 键数，每期开出个数 k = Σfreq/count，期望 μ = count·k/pool，
+// σ 用二项 × 一期内不放回修正 sqrt(count·p(1−p)·(pool−k)/(pool−1))，p = k/pool。
+function drawNoiseChart(id, an){
+  const ks = Object.keys(an.freq || {}).sort();
+  const pool = ks.length;
+  if (!pool || !an.count) return;
+  const vals = ks.map(k => Number(an.freq[k]) || 0);
+  const totalPicks = vals.reduce((a, b) => a + b, 0);
+  const k = totalPicks / an.count;
+  if (k <= 0 || k >= pool) return;
+  const mu = totalPicks / pool;
+  const p0 = k / pool;
+  const sigma = Math.sqrt(Math.max(0, an.count * p0 * (1 - p0) * (pool - k) / Math.max(1, pool - 1)));
+  const lo = mu - 2 * sigma, hi = mu + 2 * sigma;
+  const out = ks.filter((kk, i) => vals[i] < lo || vals[i] > hi);
+  $('#stats').insertAdjacentHTML('beforeend',
+    '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>这就是随机该有的样子</b>' +
+    ' <span class="muted">（近 ' + esc(an.count) + ' 期频次对照随机 ±2σ 带：带内波动＝噪声，不是规律）</span>' +
+    '<div id="chart3" style="height:260px"></div>' +
+    '<div id="noiseout" class="muted">随机带 ' + mu.toFixed(1) + ' ± ' + (2 * sigma).toFixed(1) + ' 次；' +
+    '落在带外的号码 ' + out.length + ' 个' + (out.length ? '（' + out.map(esc).join('、') + '）' : '（无）') +
+    '——' + pool + ' 个号码纯随机本来就该有约 1-2 个越界，越界≠冷热有信息。</div></div>');
+  const el = document.getElementById('chart3');
+  if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），上方带外计数仍可读。</div>'; return; }
+  if (!window.__chart3) window.__chart3 = echarts.init(el);
+  window.__chart3.setOption({
+    grid: { left: 40, right: 12, top: 14, bottom: 30 },
+    xAxis: { type: 'category', data: ks, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value' },
+    series: [{
+      type: 'bar',
+      data: vals.map(v => ({ value: v, itemStyle: { color: (v < lo || v > hi) ? '#e11' : '#bbb' } })),
+      markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#888' }, data: [{ yAxis: +mu.toFixed(2) }], label: { formatter: '期望 ' + mu.toFixed(1), fontSize: 10 } },
+      markArea: { silent: true, itemStyle: { color: 'rgba(136,136,136,.12)' }, data: [[{ yAxis: +lo.toFixed(2) }, { yAxis: +hi.toFixed(2) }]] }
+    }]
+  }, true);
+}
+
 // p 值展示：p<0.05 视为显著偏离基线；null = 样本不足（不评估）
 function pTag(p){
   if (p == null) return ' <span class="muted">（样本不足，不评估显著性）</span>';
   if (p < 0.05) return ' <b style="color:#0a7">p=' + p + ' 显著</b>';
   return ' <span class="muted">p=' + p + '</span>';
+}
+// 判定最低样本量：低于此值只报"样本不足，无法判断"，不给"有效/无信息/√/显著"结论
+const MIN_BT_SAMPLE = 100;
+function verdictTag(verdict, n, p){
+  if (n == null || n < MIN_BT_SAMPLE) return ' <b>样本不足，无法判断</b>' + (n != null ? '<span class="muted">（样本 ' + esc(n) + '，低于 ' + MIN_BT_SAMPLE + '）</span>' : '');
+  return ' <b>' + esc(verdict) + '</b>' + pTag(p);
 }
 // 回测摘要：策略/杀号历史表现 vs 随机基线（失败不影响主统计展示）
 // periods 可传 ≤600：跨度 >60 期时后端自动抽样（免费版 CPU 限制），返回 tested/stride 供展示
@@ -432,12 +534,15 @@ async function loadBacktest(id, periods){
       extra = '<b>回测</b>（' + spanTxt + ' · 单号基线 ' + (bt.baseline * 100).toFixed(1) + '%）：热号均中 ' +
         esc(bt.strategies.hot.avgHit) + ' / 冷号均中 ' + esc(bt.strategies.cold.avgHit) + ' / 胆码均中 ' +
         esc(bt.strategies.dan.avgHit) + '（胆基线 ' + esc(bt.strategies.dan.baseline) + '）<br>杀号命中率 ' +
-        (bt.kill.hitRate * 100).toFixed(1) + '% vs 随机基线 ' + (bt.kill.baseline * 100).toFixed(1) + '% → <b>' + esc(bt.kill.verdict) + '</b>' + pTag(bt.kill.p);
+        (bt.kill.hitRate * 100).toFixed(1) + '% vs 随机基线 ' + (bt.kill.baseline * 100).toFixed(1) + '% →' + verdictTag(bt.kill.verdict, bt.tested, bt.kill.p);
       if (bt.aux) extra += '　副区热号命中 ' + (bt.aux.hot.hitRate * 100).toFixed(1) + '%（基线 ' + (bt.aux.hot.baseline * 100).toFixed(1) + '%）';
       const fs = (bt.kill.formulas || []).filter(f => f.killed > 0);
-      if (fs.length) extra += '<br><b>杀号公式校准</b>（基线 ' + (bt.kill.baseline * 100).toFixed(1) + '%，√=低于基线）：' +
-        fs.map(f => esc(f.label) + ' ' + (f.rate * 100).toFixed(1) + '%' + (f.verdict === '有效' ? '√' : '—') +
-          (f.p != null && f.p < 0.05 ? '<b style="color:#0a7">·显著</b>' : '')).join('　');
+      if (fs.length) extra += '<br><b>杀号公式校准</b>（√=低于基线且杀号样本 ≥' + MIN_BT_SAMPLE + '）：' +
+        fs.map(f => esc(f.label) + ' ' + (f.rate * 100).toFixed(1) + '%（基线 ' + (f.baseline * 100).toFixed(1) + '%）' +
+          (f.killed < MIN_BT_SAMPLE ? '<span class="muted">样本不足，无法判断</span>'
+            : (f.verdict === '有效' ? '√' : '—') + (f.p != null && f.p < 0.05 ? '<b style="color:#0a7">·显著</b>' : ''))).join('　');
+      extra += '<br><span class="muted">样本上限提示：本回测可用的最深历史约 650 期；检出单号 ±10% 级别的偏差约需 3500 期（见 docs/randomness-2026-09.md）。' +
+        '所以"未发现信号"= 当前样本量下检不出来，不等于"已证明随机"。</span>';
       // 分年稳定性：单一学年没有对比意义，>1 个年代才展示
       if (bt.eras && bt.eras.length > 1) {
         extra += '<br><b>分年稳定性</b>：' + bt.eras.map(e => esc(e.era) + ' 热' + (e.hotRate * 100).toFixed(0) + '%' +
@@ -533,6 +638,8 @@ async function loadHistory(id){
 }
 
 // ---------- 工具：注数/金额/追号 与 中奖计算器 ----------
+// 长期返奖率（期望回收 ÷ 投入），数值取自全量历史审计：docs/randomness-2026-09.md
+const PAYOUT = { ssq: 0.51, dlt: 0.51, qlc: 0.51, kl8: 0.57, fc3d: 0.52, pl3: 0.52, pl5: 0.52, qxc: 0.52 };
 const CALC_FIELDS = {
   ssq: [['red', '红球个数', 90], ['blue', '蓝球个数', 90], ['dan', '胆码数', 80], ['tuo', '拖码数', 80]],
   dlt: [['front', '前区个数', 90], ['back', '后区个数', 90], ['fdan', '前区胆', 80], ['ftuo', '前区拖', 80], ['bdan', '后区胆', 80], ['btuo', '后区拖', 80]],
@@ -573,6 +680,17 @@ function buildTools(id){
           ' 注 / ' + esc(r.chase.totalAmount) + ' 元</div>' +
           r.chase.plan.map(p => '<div class="kv"><span>第 ' + p.period + ' 期 ×' + esc(p.mult) + '</span><span>' +
             esc(p.bets) + ' 注 / ' + esc(p.amount) + ' 元</span></div>').join('');
+        // 追号预算护栏：把倍投的资金风险摆到台面上（不是劝退，是让投入上限可见）
+        const chN = Number(r.chase.periods) || r.chase.plan.length;
+        const chTotal = Number(r.chase.totalAmount);
+        const multUp = r.chase.plan.some(p => Number(p.mult) > 1);
+        if ((chN > 1 || multUp) && isFinite(chTotal) && PAYOUT[id] != null) {
+          const pay = PAYOUT[id];
+          h += '<div class="warn">追号预算护栏：计划总投入 ' + chTotal.toFixed(1) + ' 元；按返奖率 ' + (pay * 100).toFixed(0) +
+            '% 计（docs/randomness-2026-09.md），长期期望净亏约 ' + (chTotal * (1 - pay)).toFixed(1) + ' 元；' +
+            '最坏情况＝' + esc(chN) + ' 期全程不中，累计支出 ' + chTotal.toFixed(1) + ' 元全部沉没' +
+            (multUp ? '（倍投序列会放大后段单期投入）' : '') + '。请确认该上限在可承受预算内。</div>';
+        }
       }
       $('#cout').innerHTML = h + '<div class="muted">' + esc(r.note || '') + '</div></div>';
     } catch (e) { errBox(e, $('#cout')); }

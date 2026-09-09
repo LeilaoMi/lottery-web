@@ -1,5 +1,5 @@
 // 离线缓存：外壳缓存优先，开奖数据以网络为准、断网时回退到上次结果
-const CACHE = "lottery-web-v1";
+const CACHE = "lottery-web-v2";
 const SHELL = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", e => {
