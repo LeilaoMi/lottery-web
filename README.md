@@ -5,7 +5,7 @@
 **8 个彩种 · 统一预测引擎 · 统计诚实性优先**
 
 [![CI](https://github.com/LeilaoMi/lottery-web/actions/workflows/sync.yml/badge.svg)](https://github.com/LeilaoMi/lottery-web/actions/workflows/sync.yml)
-![version](https://img.shields.io/badge/version-0.12.0-blue)
+![version](https://img.shields.io/badge/version-0.13.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
 
@@ -28,6 +28,7 @@ Cloudflare Workers + D1 · 零运行时依赖 · 单页 PWA 前端
 - **杀号**：10 类公式加权投票（票数 + 命中原因）；`/api/kill-calibrated` 给出按分公式回测得到的权重与 `/api/kill-tune` 的阈值寻优。**如实说明：这些校准权重目前只用于展示参考名单，没有接入推荐与胆拖单的出票路径**（`recommendAll` / `ticket` 调的是无权重 `killList`）。未擅自接通，是因为它会改变实际下注号码而权重本身并无统计依据
 - **定胆**：频率 + 遗漏回归 + 邻号 + 重号
 - **胆拖投注单**：一键生成注数金额，可保存收藏 / 复制 / 导出 TXT
+- **批量验奖 `POST /api/verify-batch`**：一沓票贴进来一次验多期（≤200 注 × ≤10 期）。奖级判定**复用**与单注验奖、中奖计算器同一套函数——两套验奖规则迟早分叉，分叉的结果就是「工具说中了、彩票站说没中」。金额只给本站校验过的固定奖级；浮动奖（双色球一二等奖）与规则换过时代的彩种（大乐透）返回 `null` 并说明原因，**不猜数、更不显示成 0**
 - **冷门度 `/api/coldness`（本项目唯一被样本外验证支持的可操作项）**：估计一注号码**万一中了要和多少人分奖**，不改变中奖概率。系数来自双色球全量 3501 期中 3250 期的**真实一等奖中奖注数**（按销量归一），按时间顺序旧 70%（2275 期）拟合、新 30%（975 期）样本外检验：五分位最热 / 最冷 = **1.506 倍**（p=6.2e-10）；安慰剂对照（蓝球特征打在不含蓝球的二等奖上）= **1.006 / 0.993** 干净归零；连号特征因样本外反号（0.992→1.028）被剔除。全生日区 + 热门蓝 ≈ 12 个同奖者，含 32/33 + 尾 4 + 冷门蓝 ≈ 6 个——**期望回报仍为负**。
   复现与月度重验：`node scripts/coldness/ssq-fit.mjs`（产物 `docs/coldness-latest.md`，同时与线上常量对账）
 - **大乐透也拟合过，但没有发布**：目标本身样本外复现了（五分位 1.30×、p=0.007），可预注册的固定奖级安慰剂全灭——大乐透没有任何一档奖金只依赖后区，前区被超买时它的邻域同样被超买，用这份数据**分不清**「实现混淆」和「真实的邻域人气」。按规则 `keep=[]`。负结果与全部中间量见 `docs/coldness-dlt-2026-09.md`（要推进它需要集合外的人气代理数据，不是更多时间）
@@ -82,7 +83,7 @@ Cloudflare Workers + D1 · 零运行时依赖 · 单页 PWA 前端
 | 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
 | 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
 | 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 85 项单元测试（73 worker + 12 统计内核，零依赖离线可跑）+ 真实数据源连通性测试 |
+| 测试 | `node --test` | 103 项单元测试（86 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
 
 ---
 
@@ -136,12 +137,25 @@ npx wrangler secret put API_TOKEN
 | `WORKER_URL` | 如 `https://lottery-web.xxx.workers.dev` |
 | `API_TOKEN` | 与 Worker 的 secret 一致（未设置鉴权则无法同步落库） |
 
+### 6. （可选）D1 备份与开奖推送
+
+两个能力都**默认不生效**，不配 secrets 就打印一行「跳过」——fork 本项目不会莫名多出一个红叉或一个乱说话的机器人。
+
+| 能力 | 打开方式 | 文档 |
+|---|---|---|
+| **D1 每日备份**（`.github/workflows/backup.yml`） | 配 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` / `D1_DATABASE` | [docs/BACKUP.md](docs/BACKUP.md) |
+| **开奖订阅推送**（`sync.yml` 的 `notify` job） | 配 `NOTIFY_WEBHOOK_URL`（+ `NOTIFY_FORMAT` ∈ dingtalk/feishu/slack/telegram/generic） | [docs/NOTIFY.md](docs/NOTIFY.md) |
+
+备份不是「导出来就完事」：workflow 会把 SQL 真还原进一个临时 sqlite 并逐表报行数。推送也不是只报喜：`needs` 里的 job 失败时它照样发，标题变成 ❌——**告警通路在出事时才有价值**。
+
+> 一句风险提示：GitHub **公开仓库**的 Actions 产物不需要登录就能下载。开奖数据是公开的，但 `favs`（你存的自选号）不是。要么配 R2（私有桶），要么设 `BACKUP_INCLUDE_FAVS=0`，要么仓库转私有——详见 docs/BACKUP.md。
+
 ## 💻 本地开发
 
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（60 项，零依赖，离线可跑）
+npm test             # 单元测试（103 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
@@ -156,7 +170,7 @@ npm run dev          # wrangler dev 本地起服务
 | **今日** | 今日开奖日历、破纪录遗漏预警、上期对账、下期快照 |
 | **分析** | 频次/冷热/遗漏/形态转移可视化、遗漏走势图、回测摘要（分年柱图 + 外推检验 + 阈值寻优按钮） |
 | **历史** | 最近 30 期开奖 |
-| **验奖·矩阵** | 按期号验奖、旋转矩阵（覆盖设计） |
+| **验奖·矩阵** | 按期号验奖；**批量验奖**：一沓票贴进来一次验多期（每行一注，坏行只报行号不吞其余票）；旋转矩阵（覆盖设计） |
 | **工具** | 注数/追号计算器、中奖计算器、预测复盘 |
 | **收藏** | 自选号管理（需 D1） |
 
@@ -188,6 +202,7 @@ npm run dev          # wrangler dev 本地起服务
 |---|---|---|
 | `/api/{kind}/latest` / `history?limit=` | — | 最新一期 / 历史 |
 | `/api/{kind}/verify` | ssq: `code&red&blue` · dlt: `code&front&back` · 其余: `code&nums` | 验奖 |
+| `/api/verify-batch` | **POST** + JSON `{"kind","code"或"codes"[],"tickets"[],"mult"}` | 批量验奖（≤200 注 × ≤10 期）。返回逐注奖级/命中/金额 + 每期汇总；`errors[].line` 是你贴进来的原始行号，`amount: null` 表示**该奖级金额本站未校验**（浮动奖或规则分时代），不是 0 |
 | `/api/meta` | — | 彩种元数据 + `stale[]` 数据新鲜度 |
 | `/api/records` | — | 破纪录遗漏预警（当前遗漏 vs 样本内历史最大遗漏） |
 | `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划 |
@@ -244,6 +259,7 @@ lottery-web/
 │   │   ├── index.js        # 路由 / 三级缓存 / CORS / 鉴权 / 落库调度 / 复盘 job
 │   │   ├── predict.js      # 统一预测引擎（8 彩种共用）
 │   │   ├── coldness.js     # 冷门度（分奖人数）评分，系数由 scripts/coldness 拟合
+│   │   ├── verify-batch.js # 批量验奖：解析贴进来的票 → 复用上面的奖级函数逐注判
 │   │   ├── ssq.js          # 双色球取数（500 + cwl + 17500）与验奖
 │   │   ├── dlt.js          # 大乐透取数与验奖
 │   │   ├── small.js        # 6 小彩种解析 / 奖级 / 旋转矩阵
@@ -255,16 +271,22 @@ lottery-web/
 │   │   ├── predict.test.mjs # 预测引擎测试（含 8 彩种一致性）
 │   │   ├── coldness.test.mjs # 冷门度：方向 / 单调 / 输入校验 / 免责声明
 │   │   ├── review.test.mjs # 复盘 job 端到端（假 D1 按 WHERE 过滤）
+│   │   ├── verify-batch.test.mjs # 批量验奖：解析 / 奖级金额 / 位置敏感 / 汇总 + 路由 HTTP 契约
+│   │   ├── ui-render.test.mjs # 前后端契约：真跑后端再让前端渲染函数画一遍（字段改名会被抓住）
 │   │   └── live.test.mjs   # 真实数据源连通性（需联网）
 │   └── wrangler.toml       # 部署模板（database_id 已脱敏为 REPLACE_ME）
 ├── scripts/
 │   ├── build-ui.mjs        # frontend/ → worker/src/ui.js 打包脚本
+│   ├── notify.mjs          # 开奖推送：读 Worker 公开接口 → 按各家格式 POST webhook（默认不发）
+│   ├── notify.test.mjs     # 推送测试：payload 形状 + 本地 http server 真发一次
 │   ├── randomness/         # 随机性审计：8 彩种取数 + A/B/C/D/E 检验（零依赖，见其 README）
 │   └── coldness/           # 冷门度系数拟合 + 样本外验证 + 与线上常量对账
 ├── db/schema.sql           # D1 建表（6 张：draws / dlt_draws / small_draws / predlog / favs / sync_log）
 ├── docs/
 │   ├── CHANGELOG.md        # 全部版本变更记录
 │   ├── PUBLISH.md          # 发布前自检清单
+│   ├── BACKUP.md           # D1 备份与恢复（含公开仓库产物泄露风险、恢复姿势）
+│   ├── NOTIFY.md           # 开奖订阅推送：五家格式、排错、为什么做在 Actions
 │   ├── research.md         # 调研笔记
 │   ├── randomness-2026-09.md      # 双色球随机性基线（深检存档）
 │   ├── randomness-latest.md       # 双色球本月自动产物
@@ -272,7 +294,8 @@ lottery-web/
 │   ├── coldness-latest.md         # 冷门度重拟合与常量对账（自动产物）
 │   └── coldness-dlt-2026-09.md    # 大乐透冷门度：一个负结果的留档
 └── .github/workflows/
-    ├── sync.yml            # CI：测试 → 线上冒烟 → 定时落库 → 复盘对账
+    ├── sync.yml            # CI：测试 → 线上冒烟 → 定时落库 → 复盘对账 →（默认关闭的）开奖推送
+    ├── backup.yml          # 每日 D1 导出 + 还原验证 → R2 或 Actions 产物（不配 secrets 就跳过）
     └── randomness.yml      # 每月：8 彩种随机性审计 + 冷门度重验（不需要 secrets）
 ```
 
@@ -286,7 +309,7 @@ lottery-web/
 
 ## 📜 版本演进
 
-`v0.5` 数据正确性大修 → `v0.6` 统一预测引擎 → `v0.7` 历史回测 → `v0.8` 校准杀号+胆拖单 → `v0.9` 600 期回测+走势图 → `v0.10` 统计诚实性+复盘闭环 → `v0.11` 工程韧性+今日日报 → `v0.12` 结论可证伪化（8 彩种审计 + 冷门度系数可复现 + 复盘闭环修活）
+`v0.5` 数据正确性大修 → `v0.6` 统一预测引擎 → `v0.7` 历史回测 → `v0.8` 校准杀号+胆拖单 → `v0.9` 600 期回测+走势图 → `v0.10` 统计诚实性+复盘闭环 → `v0.11` 工程韧性+今日日报 → `v0.12` 结论可证伪化（8 彩种审计 + 冷门度系数可复现 + 复盘闭环修活）→ `v0.13` 自用顺手与可运维（批量验奖 + 前后端契约测试 + 可选 D1 备份 / 开奖推送，默认关闭）
 
 完整变更记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 

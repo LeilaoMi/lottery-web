@@ -1,6 +1,7 @@
 import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
 import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
 import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
+import { verifyBatch } from "./verify-batch.js";
 import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
 import { coldness } from "./coldness.js";
@@ -20,7 +21,7 @@ export default {
     if (url.pathname === "/sw.js") return new Response(SW, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" } });
     if (url.pathname === "/manifest.json") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } });
     if (url.pathname === "/icon.svg") return new Response(ICON, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800" } });
-    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.12.0", lotteries: LOTS.map(x => x.id) });
+    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.13.0", lotteries: LOTS.map(x => x.id) });
     if (url.pathname === "/api/meta") return metaRoute(env);
     if (url.pathname === "/api/records") return recordsRoute(env);
     if (url.pathname === "/licenses") return htmlLicenses();
@@ -39,6 +40,7 @@ export default {
       return r.error ? json(r, 400, 0) : json(r, 200, 3600);
     }
     if (url.pathname === "/api/prize") return prizeRoute(url);
+    if (url.pathname === "/api/verify-batch") return verifyBatchRoute(request, env, url);
     if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest" || url.pathname === "/api/kill-calibrated" || url.pathname === "/api/kill-tune" || url.pathname === "/api/ticket" || url.pathname === "/api/trend") return predictRoute(request, env, url);
     if (url.pathname === "/api/admin/sync") return adminSync(request, env, ctx);
     if (url.pathname === "/api/admin/review-job") return reviewJob(request, env);
@@ -313,6 +315,24 @@ function prizeRoute(url) {
   if (kind === "dlt") { const r = prizeDLT(g("hitMain"), g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r }, 200, 0); }
   if (kind === "qlc") { const r = prizeQLC(g("hitMain"), g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r }, 200, 0); }
   return json({ kind, prize: g("exact") ? "直选" : "未中", note: "数字型逐位比对，全中即直选" }, 200, 0);
+}
+// 批量验奖：一次贴一沓号码 × 一到多期开奖（POST，body 里的结果不该被缓存）
+async function verifyBatchRoute(request, env, url) {
+  if (request.method !== "POST") return json({ error: "本端点用 POST + JSON body", usage: 'POST /api/verify-batch {"kind":"ssq","code":"2026104","tickets":["01 05 12 22 28 30 + 04"],"mult":1}' }, 405);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "需要 JSON body" }, 400); }
+  const kind = String((body && body.kind) || "ssq").trim();
+  if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
+  const codes = (Array.isArray(body.codes) ? body.codes : [body.code]).map(x => String(x || "").trim()).filter(Boolean);
+  if (!codes.length) return json({ error: "需要 code 或 codes（数组，最多 10 期）" }, 400);
+  // tickets 先校验再取数：取数要打外部源（墙钟 1-4s），空请求不该白跑一次；
+  // 且必须是数组 —— 传成字符串时下游 tickets.map 会抛 TypeError，变成没有说明的 500
+  const tickets = body.tickets;
+  if (!Array.isArray(tickets) || !tickets.length) return json({ error: '需要 tickets（字符串数组，每行一注）', usage: 'POST /api/verify-batch {"kind":"ssq","code":"2026104","tickets":["01 05 12 22 28 30 + 04"]}' }, 400);
+  let draws = [];
+  try { draws = await drawsOf(env, kind, Math.max(60, codes.length + 10)); } catch (e) { return json({ error: "取数失败：" + String(e.message || e) }, 502); }
+  const r = verifyBatch(kind, draws, tickets, codes, (body && body.mult) || 1);
+  return json(r, r.error ? 400 : 200, 0);
 }
 function withMeta(list, draws) { list._sources = draws._sources; list._consistent = draws._consistent; return list; }
 // 鉴权模型：开奖数据是公开信息，读接口（latest/history/analyze/recommend/rotation/trend）无需鉴权；

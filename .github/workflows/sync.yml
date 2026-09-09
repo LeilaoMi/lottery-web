@@ -24,10 +24,12 @@ jobs:
         # review.test.mjs 会 import worker/src/index.js，而 index.js 里 `import { HTML } from "./ui.js"`
         # —— 干净检出时没有这个文件，测试直接 ERR_MODULE_NOT_FOUND（本地因为有产物是绿的）
         run: node scripts/build-ui.mjs
-      - name: 运行单元测试（零依赖：预测引擎 / 冷门度 / 复盘闭环端到端 / 统计内核）
+      - name: 运行单元测试（零依赖：预测引擎 / 冷门度 / 复盘闭环端到端 / 批量验奖 + 前后端契约 / 推送 / 统计内核）
         # 统计内核（12 项）同时被 worker 的 coldness 常量与复盘基线依赖，放在 push 时跑：
         # 只在每月 randomness 作业里跑的话，写坏内核要红一个月才发现
-        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs scripts/randomness/stats.test.mjs
+        # ui-render.test.mjs 读 frontend/index.html 渲染真实后端响应 → 前后端字段改名会在 push 时立刻红
+        # notify.test.mjs 用本地 http server 真发一次 → 「以为在推、其实从没发出去」不会漏过
+        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
 
   smoke:
     name: 线上冒烟
@@ -159,3 +161,32 @@ jobs:
             if (!j.db) { console.error("::error::Worker 未绑定 D1，落库实际未生效"); process.exit(1); }
             console.log("落库完成：" + Object.entries(rs).map(([k, v]) => k + "=" + v.inserted).join(" "));
           '
+
+  notify:
+    name: 开奖推送（默认关闭）
+    # needs 里的 job 失败也要推 —— 告警通路的价值恰恰在出问题的时候，所以用 !cancelled() 而不是默认的成功才跑
+    needs: [sync, review]
+    # 只在定时同步 / 手动 dispatch 后推送：sync.yml 同样在代码 push 时触发，若不排除会「每提交一次就往群里发一条播报」。
+    # 想连代码 push 一起推，去掉后面两个事件名条件即可。
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    env:
+      WORKER_URL: ${{ secrets.WORKER_URL }}
+      NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+      NOTIFY_CHAT_ID: ${{ secrets.NOTIFY_CHAT_ID }}
+      NOTIFY_FORMAT: ${{ vars.NOTIFY_FORMAT }}
+      NEEDS_JSON: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 取今日开奖并推送（未配置 webhook 时如实跳过）
+        run: |
+          set -euo pipefail
+          if [ -z "${NOTIFY_WEBHOOK_URL:-}" ]; then
+            echo "未配置 secrets.NOTIFY_WEBHOOK_URL —— 推送保持关闭（默认状态）。见 docs/NOTIFY.md"
+            exit 0
+          fi
+          # 北京时间：落库窗口是 21:20~21:40 CST，与 UTC 同一自然日，但手动 dispatch 时可能跨天
+          export NOTIFY_DATE="$(TZ=Asia/Shanghai date +%F)"
+          RESULTS="$(node -e 'const n=JSON.parse(process.env.NEEDS_JSON||"{}");process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(n).map(([k,v])=>[k,(v&&v.result)||"unknown"]))))')"
+          echo "job 结果：$RESULTS"
+          node scripts/notify.mjs "$RESULTS"

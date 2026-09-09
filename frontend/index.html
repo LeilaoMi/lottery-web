@@ -100,6 +100,16 @@ async function api(path){
   return j;
 }
 function pad2(x){ return String(x).padStart(2, '0'); }
+async function apiPost(path, body){
+  const b = base();
+  if (!b) throw new Error('请先填写 Worker 地址（保存后自动加载）');
+  const r = await fetch(b + path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, headers()), body: JSON.stringify(body) });
+  const txt = await r.text();
+  let j = null;
+  try { j = JSON.parse(txt); } catch (e) { throw new Error('响应不是 JSON（HTTP ' + r.status + '）：' + txt.slice(0, 200)); }
+  if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  return j;
+}
 // 后端字段类型不统一：双色球的 blue 是字符串 "15"，大乐透的 back 是数组。
 // 统一在这里收敛，避免 "(arr || []).map is not a function"。
 function asArr(x){ if (x == null) return []; return Array.isArray(x) ? x : [x]; }
@@ -746,6 +756,62 @@ function buildTools(id){
 }
 
 // ---------- 验奖 + 矩阵 ----------
+// 批量验奖的示例按彩种给：数字彩连写（922）与红蓝（+）格式不同，占位符统一会让用户照着错的格式贴
+function vbExample(id){
+  return {
+    ssq: '01 05 12 22 28 30 + 04', dlt: '01 05 12 22 30 + 03 07', qlc: '01 05 12 18 22 26 30',
+    kl8: '03 17 28 44 55（选几个写几个）', fc3d: '9 2 2，或连写 922', pl3: '9 2 2，或连写 922',
+    pl5: '9 2 2 1 5', qxc: '3 7 1 4 9 0 12'
+  }[id] || '每行一注';
+}
+// 后端各彩种的命中字段名不同（主/辅、选/中、按位），这里收敛成一行，避免结果表里为空
+function hitText(r){
+  const bits = [];
+  if (r.hitMain !== undefined) bits.push('主 ' + r.hitMain);
+  if (r.hitAux !== undefined) bits.push('辅 ' + r.hitAux);
+  if (r.hitSpecial !== undefined) bits.push('特别号 ' + (r.hitSpecial ? '中' : '未中'));
+  if (r.pick !== undefined) bits.push('选 ' + r.pick + ' 中 ' + r.hitNums);
+  if (r.posHit !== undefined) bits.push('按位 ' + r.posHit + (r.total ? '/' + r.total : ''));
+  return bits.join('　');
+}
+// 批量验奖结果渲染。两处刻意的口径：金额 null 显示「—（见公告）」而不是 0；净差只统计已给金额的奖级。
+function renderVerifyBatch(r){
+  let h = '';
+  if (r.errors && r.errors.length) {
+    h += '<div class="warn">' + r.errors.length + ' 行未通过校验（行号＝粘贴内容的第几行），其余票照常校验：<br>' +
+      r.errors.map(e => '第 ' + esc(e.line) + ' 行「' + esc(e.ticket) + '」→ ' + esc(e.error)).join('<br>') + '</div>';
+  }
+  for (const rd of (r.rounds || [])) {
+    h += '<div class="card"><div class="row"><b>' + esc(rd.code) + '</b>';
+    if (!rd.drawn) { h += '<span class="muted">' + esc(rd.note || '未开奖') + '</span></div></div>'; continue; }
+    const a = rd.actual || {};
+    const pk = ['red', 'front', 'main', 'nums', 'digits'].filter(k => Array.isArray(a[k]))[0];
+    h += (pk ? balls(a[pk]) : '') + (a.blue ? balls(a.blue, 'b') : '') +
+      (Array.isArray(a.back) ? balls(a.back, 'b') : '') + (a.special ? balls(a.special, 'b') : '') + '</div>';
+    const s = rd.summary || {};
+    h += '<div class="muted">已解析 ' + esc(s.tickets) + ' 注 · 倍数 ×' + esc(s.multi) +
+      ' · 中奖 ' + esc(s.winning) + ' 注 · 成本 ' + esc(s.cost) + ' 元（每注 2 元） · 已给金额奖金 ' + esc(s.amountKnown) +
+      ' 元 · 净差 ' + esc(s.netIfKnown) + ' 元（只统计本站给出金额的奖级）</div>';
+    if (s.amountUnknownTier) h += '<div class="warn">另有 ' + esc(s.amountUnknownTier) +
+      ' 注中的是本站未给金额的奖级（浮动奖按当期公告与注数分配，或规则分时代），不要按 0 计算。</div>';
+    const all = (rd.results || []).filter(x => !x.error);
+    const wins = all.filter(x => x.grade !== '未中');
+    const loss = all.length - wins.length;
+    if (wins.length) {
+      h += '<table><tr><th>号码</th><th>奖级</th><th>命中</th><th>金额</th></tr>' +
+        wins.map(w => '<tr><td style="text-align:left">' + esc(w.ticket) + '</td><td>' + esc(w.grade) +
+          '</td><td>' + esc(hitText(w)) + '</td><td>' + (w.amount == null ? '—（见公告）' : esc(w.amount) + ' 元') + '</td></tr>').join('') + '</table>';
+      const notes = [];
+      wins.forEach(w => { if (w.note && notes.indexOf(w.note) < 0) notes.push(w.note); });
+      h += '<div class="muted">' + (loss ? '其余 ' + loss + ' 注未中。' : '') + esc(notes.join(' ')) + '</div>';
+    } else {
+      h += '<div class="muted">本期 ' + esc(loss) + ' 注全部未中。</div>';
+    }
+    h += '</div>';
+  }
+  if (r.amountUnverified && r.amountUnverified.length) h += '<div class="muted">该彩种固定奖金额本站未逐字段校验 → 只给奖级不给金额，理由见每期结果内的说明与 README。</div>';
+  return h + '<div class="muted">' + esc(r.note || '') + '<br>' + esc(r.disclaimer || '') + '</div>';
+}
 function buildVerify(id){
   const l = LOT[id];
   let h = '<h3 style="margin:0 0 8px">验奖</h3><div class="row">' +
@@ -757,6 +823,11 @@ function buildVerify(id){
     h += '<input id="vn" placeholder="号码，逗号分隔" style="flex:1;min-width:220px">';
   }
   h += '<button id="vgo">验奖</button></div><div id="vo"></div>';
+  h += '<h3 style="margin:16px 0 8px">批量验奖（一沓票一次验完）</h3>' +
+    '<div class="row"><input id="bcp" placeholder="期号，多个用逗号分隔；留空＝最近一期" style="flex:1;min-width:200px">' +
+    '<input id="bcm" placeholder="倍数" style="width:70px" value="1"></div>' +
+    '<textarea id="bvt" placeholder="每行一注，例：' + vbExample(id) + '" style="width:100%;box-sizing:border-box;min-height:96px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:ui-monospace,Consolas,monospace;line-height:1.6"></textarea>' +
+    '<div class="row"><button id="bgo">批量验奖</button><span class="muted">最多 200 注、10 期；坏行只报错不吞掉其余票</span></div><div id="bo"></div>';
   h += '<h3 style="margin:16px 0 8px">旋转矩阵（覆盖设计）</h3>' +
     '<div class="row"><input id="mn" placeholder="自选 n" style="width:100px" value="12">' +
     '<input id="mp" placeholder="每注 k" style="width:90px" value="6">' +
@@ -790,6 +861,20 @@ function buildVerify(id){
       if (res.posHit !== undefined) bits.push('按位 ' + res.posHit + '/' + res.total);
       out.innerHTML = '<div class="card"><b>' + esc(res.prize || '已匹配') + '</b><div class="muted">' + esc(bits.join('　')) +
         (res.note ? '<br>' + esc(res.note) : '') + '</div></div>';
+    } catch (e) { errBox(e, out); }
+  };
+
+  $('#bgo').onclick = async () => {
+    const out = $('#bo');
+    try {
+      const lines = ($('#bvt').value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (!lines.length) { out.innerHTML = '<div class="warn">先把票贴进来：每行一注。</div>'; return; }
+      let codes = ($('#bcp').value || '').split(/[^0-9]+/).filter(Boolean);
+      if (!codes.length) { const lt = await api('/api/' + id + '/latest'); codes = [String(lt.code)]; }
+      const m = parseInt($('#bcm').value, 10);
+      out.innerHTML = '<div class="muted">校验 ' + lines.length + ' 注 × ' + codes.length + ' 期…</div>';
+      const r = await apiPost('/api/verify-batch', { kind: id, codes, tickets: lines, mult: m > 0 ? m : 1 });
+      out.innerHTML = renderVerifyBatch(r);
     } catch (e) { errBox(e, out); }
   };
 

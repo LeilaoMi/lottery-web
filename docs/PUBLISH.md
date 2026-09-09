@@ -38,6 +38,33 @@ grep -rInE "cfut_|CLOUDFLARE_API_TOKEN *[:=] *[\"'][A-Za-z0-9_-]{20,}" . --exclu
 
 若由 Worker 提供页面（默认），不需要单独发布，Worker 已内联构建产物。
 
+## CI 能力与所需配置（一张表看全）
+
+| 能力 | 开关 | 不配会怎样 |
+|---|---|---|
+| 单元测试 + 统计内核 + 前后端契约 | 无需配置 | — |
+| 定时落库 / 复盘对账（`sync.yml` 的 `sync` / `review`） | `secrets.WORKER_URL` + `secrets.API_TOKEN` | job **直接失败**——这两项是站点主链路，静默跳过会重演「闭环死了五天而 CI 全绿」 |
+| 线上冒烟（`smoke`） | `secrets.WORKER_URL` | 警告并跳过 |
+| 月度随机性审计 + 冷门度重验（`randomness.yml`） | 无需配置（不打任何私有接口） | — |
+| D1 备份（`backup.yml`） | `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` / `D1_DATABASE`；可选 `vars.R2_BUCKET`、`vars.BACKUP_INCLUDE_FAVS` | 打印「跳过」并绿，不产生红叉 |
+| 开奖推送（`sync.yml` 的 `notify`） | `secrets.NOTIFY_WEBHOOK_URL`（+ `vars.NOTIFY_FORMAT` / `secrets.NOTIFY_CHAT_ID`） | 打印「推送保持关闭」并退出 |
+
+详见 [BACKUP.md](BACKUP.md) 与 [NOTIFY.md](NOTIFY.md)。
+
+## 已知坑：`wrangler.toml` 里带着作者的域名
+
+仓库模板 `worker/wrangler.toml` 顶部有一段：
+
+```toml
+routes = [
+  { pattern = "cp.leilaomi.cc.cd/*", zone_name = "leilaomi.cc.cd" }
+]
+```
+
+这是作者自用的自定义域名。**fork 的人不持有这个 zone，`wrangler deploy` 会在这里失败**——整段删掉，或换成你自己的域名（需该域名已作为 zone 接入你的 Cloudflare 账号）。
+
+作者没有把它默认注释掉，是因为 routes 是**同步语义**：删掉后再部署会真的把线上域名解绑，那是站点所有者需要确认的变更，而不是一个适合顺手改掉的默认值。
+
 ## 不发什么
 
 - 不发任何 Token / Account ID

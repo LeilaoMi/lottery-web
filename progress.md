@@ -1,4 +1,16 @@
-# progress · lottery-web v0.12.0
+# progress · lottery-web v0.13.0
+
+## v0.13.0：批量验奖 + 可选备份 / 推送（开源配齐轮，2026-09-10 深夜）
+
+需求原话：「都做吧，我虽然不用推送，但这个项目开源后可能其他人需要，给用这项目的人配齐」。三件事按「先做完自己每天真会用的」排序执行：批量验奖 → D1 备份 → 开奖推送（**默认关闭 + provider 无关**，不绑任何账号）。
+
+- 证据：`node --test` **103 passed / 0 failed**（86 worker + 12 统计内核 + 5 推送，逐文件单独数过：34/26/8/5/9/4 + 12 + 5）；`scripts/build-ui.mjs` 重建后 `worker/src/ui.js` md5 不变（`fae806d4…`），说明前端源码与产物一致
+- 变异验证（新写的闸门是不是真守卫）：① 前端金额 null 保护改成 `w.amount || 0` → `ui-render` 2 项红；② `summary.amountKnown` 改名 → 1 项红；③ 后端 `tickets` 守卫禁用 → 路由测试红并报出原 `TypeError`；④ `send()` 的 `!r.ok` 抛错去掉 → notify 第 4 项红。四处全部还原后复绿，`diff` 与备份逐字节相同
+- 备份链路是拿真库验的：`wrangler d1 export lottery --remote` → 173 KB / 1007 条 INSERT；用 bundled node 的 `node:sqlite` 还原到内存库 → `small_draws 729 / draws 120 / dlt_draws 120 / predlog 12 / sync_log 23 / favs 0`（合 1004）。两个副产品结论进了文档：导出的 DDL **不带 `IF NOT EXISTS`**（重复导入报 `table draws already exists`），且 wrangler 会把**带签名的预签名下载链接打进 stdout**（公开仓库日志 = 泄露整库），workflow 已过滤
+- 线上仍是上一轮的状态：`/health` → `{"status":"ok","version":"0.12.0",...}`，workers.dev 与 `https://cp.leilaomi.cc.cd` 均 200。**本轮未部署、未推送**
+- 待用户确认的外部操作：本地 commit → `wrangler deploy`（走 `~/lw-deploy` 绕行）→ `git push` → 可选创建备份/推送所需 Actions secrets（推送这条用户说过不用，保持不配即为关闭）
+- 一个刻意没动的坑：`worker/wrangler.toml` 里带着作者自用域名的 `routes`，fork 直接部署会因不持有该 zone 失败；但没有顺手注释掉——routes 是同步语义，删掉后重新部署会**真的把线上域名解绑**。已写进 `docs/PUBLISH.md` 的「已知坑」
+- 细节续接：`docs/continue-2026-09-11.md`
 
 ## v0.12.0：复盘闭环复活 + 冷门度模型 + 诚实性收敛（2026-09-10）
 
