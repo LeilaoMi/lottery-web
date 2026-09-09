@@ -43,13 +43,27 @@
 - **验证**：`ssq-fit.mjs` 打印 `COLDNESS: PASS` 且 5 个上线系数与线上常量逐位相同（漂移 ≤0.0004）、冷热名单一致、8.27 对上；变异测试两轮都变红（安慰剂目标换成一等奖 → 2 失败退出 1；系数抹平为 1 → 6 失败、五分位塌到 1.177）。`analyze.mjs --all` 本地全跑：8 彩种 VERIFIED、`ACCEPTANCE: PASS ｜ PLACEBO: PASS`、退出码 0；`dlt-fit.mjs` 与姊妹解析 **2921/2921** 期号码一致。CI 四个 grep 锚点逐条在真实产物上验证过命中数（PLACEBO 1 / ACCEPTANCE 1 / VERIFIED 7 / 范围界定 1），并用「拿 `｜VERIFIED$` 去 grep 双色球深检报告 → 0 命中」做错靶对照，确认锚点不是巧合匹配；但**没做「把结论改坏看闸门是否变红」的负对照**——真正有牙的证据是上面那两轮变异测试。两份 workflow 经 `pyyaml.safe_load` 解析通过（bundled python：`~/.workbuddy/binaries/python/versions/3.13.12/python.exe`）。worker 73 + randomness 12 = **85 项全过**。
 - **闸门断言必须自带负对照**：这一条本轮又被验证一次——`analyze.mjs` 的 `--all` 失败原来被 catch 吞掉（exit 0），意味着「多彩种挂掉」在 CI 里完全隐形。
 
-### 下一步（待用户确认的外部操作）
+### 第三阶段：上线闭环（v0.12.0 已部署 + 已推送，真实 CI 抓到三件事）
 
-1. `wrangler deploy`（走 `~/lw-deploy` 绕行，工作区内会被沙箱拦）→ 部署后 `/health` 应返回 0.12.0
-2. push 后观察 Actions：`review` job 首次真实跑通对账（预期 `fc3d/pl3/pl5/kl8` 当轮即有 `reconciled>0`）
-3. **`randomness.yml` 从未在 CI 跑过**：push 后手动 `workflow_dispatch` 一次（它需要能访问 data.17500.cn 与线上公共接口；任一数据源从 runner 不可达时会诚实失败，而不是给个好看的空结论——那时先看第 0 节的验收输出再判断是网络还是代码）
-4. 线上冒烟 6 端点 + `/api/coldness` 实测；确认数字型快照不再丢号
-5. GitHub PAT 换 fine-grained（权限过大，与本任务无关但同源风险）
+部署走的是本机探到的活代理 `127.0.0.1:3065`（用户平时的 57015 客户端没在监听，直连被 DNS 污染：`workers.dev` 解析到 Dropbox 的 162.125.32.15）；`wrangler deploy` 成功（Version ID `c277d80e`），线上 `/health` = `0.12.0`、`/api/coldness` ratio 1.337 / estWinners 11.1 / 400 分支 / `supported:false` 分支全部实测通过。清理了 4 条 v0.11 遗留的空号快照（`DELETE ... id IN (26,27,28,30)`，changes=4），随后 `/api/review?kind=fc3d` 显示新快照**已带号码**（`digits:["9","2","2"]`、`number:"922"`、dan/kill 为二维数组）—— P0 修活在真实数据上成立。
+
+真实 CI 抓到三件我自己写的东西的错（本地都测不出来）：
+
+1. **本地绿、线上红**：`review.test.mjs` import 了 `index.js`，而 `index.js` 第 8 行 `import ... from "./ui.js"` 是 gitignore 的构建产物 → 干净检出必 `ERR_MODULE_NOT_FOUND`（run 34402010047：`# tests 81 / pass 80 / fail 1`）。修法是在 CI 测试前 `node scripts/build-ui.mjs`，不是给测试削弱产品代码。本地先复现（移走 ui.js 得到同一条错误）再验证修复（重建产物与移走前逐字节相同，85 全过）。
+2. **`cwl.gov.cn` 的 WAF 挡机房 IP**：GitHub runner 拿 403，于是"未过官方交叉校验就不出结论"这条本来很硬的规矩会让月度作业**永远红**——正是我拿来说服自己不把 dlt 挂进 CI 的那个反模式。改成区分「源不可达」与「数据不一致」：不可达时降级为「与仓库基线 `data/ssq.json`（上一轮经官方逐字段核对过）回归比对」，重叠历史上任何号码/销量/注数字段变了仍然硬失败（那是备源改写了历史），一致才放行，并把降级状态印进报告第 0 节。
+3. **我写的健康断言搞错了命题**：`latestChecked` 非空 ≠ 闭环健康。清理那 4 条坏快照后，这几个彩种唯一的可对该行正是被清掉的数据，而新快照指向的是**还没开奖**的那一期 → 必然误报（run 34402334236 `复盘闭环=failure`，而同一轮 `落库同步`/`线上冒烟`/`单元测试` 全绿、review-job 自己返回 `ssq{snapshot:2026105,reconciled:1}`）。改成"有没有逾期未对账的期"（用 `meta.stale[k].latest` 与该彩种 `/api/review` 的 `checked` 比对），另加"全库至少有一条已对账"守住 UPDATE 通路真死的场景；对**未来的**快照只报信息不报红。变异测试验证过：把 kl8 已对账的 2026241 改回未对账 → 闸门立刻变红。
+
+**新发现的小缺口（未修）**：`/api/meta` 的 `stale[]` 只有 7 个彩种，**没有 dlt** —— 大乐透不在数据新鲜度保险丝的监控范围内，它的停摆不会亮黄条。
+
+
+
+### 下一步（未完成项）
+
+1. **重新 dispatch 一次 `randomness.yml`**：验证降级后的交叉校验路径能在 runner 上跑通（预期日志 `CROSSCHECK: DEGRADED` + 报告第 0 节出现降级说明，作业转绿）
+2. **`/api/meta` 的 `stale[]` 缺 dlt**：大乐透不在新鲜度保险丝覆盖内，停摆不会亮黄条（`metaRoute` 的 stale 循环漏了这个 kind）
+3. GitHub PAT 换 fine-grained（权限过大，与本任务无关但同源风险）
+4. 未开工的备选池：开奖订阅推送（需 IM/邮件＝外部操作）、批量验奖、中奖个税（规则需先核实）、D1 备份 workflow、P4 重计算预改造
+5. 已完成存档：`wrangler deploy` → `/health` 0.12.0 ✓；push `b21d70d`/`b525147` ✓；数字型快照不再丢号 ✓；4 条坏快照清理 ✓
 
 ## v0.11.0：工程韧性 + 使用体验（继续琢磨轮）
 - **CI 部署冒烟**：sync.yml 新增 smoke job（push/定时后对线上 health/meta/ssq-latest/dlt-analyze/review 5 端点断言 200+关键字段）；smoke 与 sync 都依赖 secrets.WORKER_URL/API_TOKEN

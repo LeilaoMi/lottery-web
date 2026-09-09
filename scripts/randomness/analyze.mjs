@@ -2,8 +2,8 @@
 // 用法：node scripts/randomness/analyze.mjs [模拟次数=3000]
 // 输出：stdout 全量报告 + docs/randomness-latest.md（同一份内容，供 Actions 归档）。
 // 第 0 节验收或 D 节安慰剂不过 → exit 1：区分“跑挂了”与“真的是零结果”是这套东西的生命线。
-import { writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   loadDraws, statsOf, simulate, nullSummary, mcP, fmtP, FAMILY, STAT_NAMES,
   rng, drawK, comb, pHyper, pNCHG, chi2Upper, twoSidedZ, pearson, spearman, mannWhitney,
@@ -59,6 +59,13 @@ out(`样本：${N} 期 ${rows[0].code} → ${rows[N - 1].code} ｜ 蒙特卡洛 
 out("");
 out("## 0. 验收检查（先判断这次跑没跑挂，再看结论）");
 out("");
+{ // 本轮数据是被谁核对过的：官方源一致，还是「官方不可达 → 与仓库基线回归比对」的降级路径
+  let xc = null;
+  try { xc = JSON.parse(readFileSync(join(DATA_FILE, "..", "crosscheck.json"), "utf8")); } catch { xc = null; }
+  if (!xc) out("- 交叉校验：无 crosscheck.json —— 本轮数据是仓库里已提交的基线（上一轮经官方逐字段核对过），未经本次 fetch 更新");
+  else if (xc.status === "official-ok") out(`- 交叉校验：官方 cwl 源逐字段一致 —— 可比 ${xc.n} 期，号码一致 ${xc.numOk}，注数/销量全同 ${xc.agree}（${xc.at}）`);
+  else out(`- ⚠ 交叉校验降级：官方源本轮不可达（${xc.note}）→ 改用「与仓库基线回归比对」：重叠 ${xc.n} 期，号码差异 ${xc.numDiff}、字段差异 ${xc.fieldDiff}，基线后新增 ${xc.added} 期**未经官方核对**。本报告的历史结论按「备源未改写历史」成立`);
+}
 check(`钉住的验收窗口 = 前 ${pin.length} 期（≤${REF_PIN_CODE}）`, pin.length >= 3000, `窗口长度不足说明数据被截断，而不是统计函数写坏`);
 for (const k of Object.keys(REF_OBS)) {
   check(`观测值复现 ${k}`, Math.abs(obsPin[k] - REF_OBS[k]) < 5e-4, `本次 ${f4(obsPin[k])} / 基准 ${f4(REF_OBS[k])}`);

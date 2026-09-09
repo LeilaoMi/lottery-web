@@ -96,20 +96,32 @@ jobs:
             console.log("快照已写：" + Object.entries(rs).map(([k, v]) => k + "@" + v.snapshot + "(对账" + v.reconciled + ")").join(" "));
           '
           curl -sS -m 30 -o /tmp/meta.json "$WORKER_URL/api/meta"
+          for k in fc3d pl3 pl5 kl8; do curl -sS -m 30 -o /tmp/rev-$k.json "$WORKER_URL/api/review?kind=$k&limit=50"; done
           node -e '
-            const j = require("/tmp/meta.json");
-            const pl = j.predlog;
+            const m = require("/tmp/meta.json");
+            const pl = m.predlog;
             if (!Array.isArray(pl) || !pl.length) { console.error("::error::/api/meta 无 predlog —— 闭环从未写入或被旧版本 Worker 屏蔽"); process.exit(1); }
+            const latest = {}; (m.stale || []).forEach(s => latest[s.kind] = s.latest);
             const daily = ["fc3d","pl3","pl5","kl8"];
-            const bad = [];
+            const bad = [], info = [];
             for (const k of daily) {
               const e = pl.find(x => x.kind === k);
               if (!e) { bad.push(k + " 无快照记录"); continue; }
               if (e.days === null || e.days > 2) bad.push(k + " 最新快照距今 " + e.days + " 天（每日开奖彩种应 ≤2）");
-              if (!e.latestChecked) bad.push(k + " 从未对账（latestChecked=null）");
+              const rows = (require("/tmp/rev-" + k + ".json").rows) || [];
+              if (!rows.length) { bad.push(k + " /api/review 查不到任何快照行"); continue; }
+              const L = latest[k];
+              // 真正的停摆定义：某期的开奖已经发生，但它仍没被对账。
+              // 「最新快照是还没开的那一期」不是病，是常态——曾经用 latestChecked 非空当健康判据，
+              // 结果一次性清理完遗留坏快照的当天必然误报（那 4 个彩种唯一的可对该行正是被清掉的坏数据）。
+              const overdue = L ? rows.filter(r => !r.checked && String(r.code) <= String(L)) : [];
+              if (overdue.length) bad.push(k + " 逾期未对账 " + overdue.length + " 条（最新开奖 " + L + "，卡住期号 " + overdue.slice(0, 3).map(r => r.code).join(",") + "）");
+              info.push(k + " 快照至 " + e.latestSnapshot + "｜已对账至 " + (e.latestChecked || "无") + "｜未来期待对账 " + rows.filter(r => !r.checked && L && String(r.code) > String(L)).length);
             }
-            if (bad.length) { console.error("::error::复盘闭环停摆：" + bad.join(" ; ")); process.exit(1); }
-            console.log("闭环健康：" + pl.map(e => e.kind + " 快照" + e.latestSnapshot + " 对账至" + e.latestChecked + " 待对账" + e.unreconciled).join(" | "));
+            if (!pl.some(e => e.latestChecked)) bad.push("全库没有任何一条已对账记录 —— UPDATE 通路是死的");
+            if (bad.length) { console.error("::error::复盘闭环异常：" + bad.join(" ; ")); process.exit(1); }
+            console.log("闭环健康：" + info.join(" | "));
+            console.log("全库对账进度：" + pl.map(e => e.kind + "=" + (e.latestChecked || "无")).join(" "));
           '
 
   sync:

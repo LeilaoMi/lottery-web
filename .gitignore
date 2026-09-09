@@ -12,3 +12,5 @@ Thumbs.db
 # fetch 顺手留下的原始下载档（17500 全量 txt，约 4MB）不进仓库；
 # 解析后的 scripts/randomness/data/*.json 才提交 —— 文档里的统计结论要能离线复现。
 scripts/randomness/data/*_asc.txt
+# 最近一次 fetch 的交叉校验状态（临时产物，结论已印进 docs/randomness-latest.md 第 0 节）
+scripts/randomness/data/crosscheck.json

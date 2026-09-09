@@ -92,6 +92,26 @@ function crossCheck(rows, official) {
 
 // ------------------------------------------------------------- 主流程
 const started = new Date().toISOString();
+const safeJson = p => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
+// 与新解析结果和「已提交且上一轮经官方逐字段核对过」的基线逐期比：号码、销量、奖池、一~六等注数
+function baselineCompare(rows, base) {
+  const B = new Map(base.map(r => [String(r.code), r]));
+  let n = 0, numDiff = 0, fieldDiff = 0;
+  for (const r of rows) {
+    const b = B.get(String(r.code)); if (!b) continue;
+    n++;
+    const sameNum = String(r.red.join(",")) === String(b.red ? (Array.isArray(b.red) ? b.red.join(",") : b.red) : "")
+      && String(r.blue) === String(b.blue);
+    if (!sameNum) { numDiff++; continue; }
+    for (const f of ["sales", "pool", "n1", "n2", "n3", "n4", "n5", "n6"]) {
+      if (Number(r[f] || 0) !== Number(b[f] || 0)) { fieldDiff++; break; }
+    }
+  }
+  const lastBase = String(base[base.length - 1].code);
+  const added = rows.filter(r => String(r.code) > lastBase).length;
+  return { n, numDiff, fieldDiff, added };
+}
+
 try {
   log(`[1/4] 下载 ${SOURCE_FILE}`);
   let txt;
@@ -118,24 +138,47 @@ try {
 
   log("[3/4] 与官方 cwl.gov.cn 交叉校验（号码 + 销量/奖池/一~六等注数）");
   let verdict = "跳过（官方源不可达）", fatal = false;
+  let xcheck = { status: "official-ok", at: new Date().toISOString(), note: "" };
   try {
     const official = await fetchOfficial();
     const c = crossCheck(rows, official);
     verdict = `号码一致 ${c.numOk}/${c.n}；注数/销量逐字段全同 ${c.agree}/${c.n}`;
     if (c.issues.length) { verdict += " | 差异：" + c.issues.slice(0, 3).join(" ; "); fatal = true; }
-    if (c.numOk < 10) { verdict += " | 可比样本过少"; fatal = true; }
+    if (c.n < 10) { verdict += " | 可比样本过少"; fatal = true; }
+    xcheck = { status: "official-ok", at: new Date().toISOString(), n: c.n, numOk: c.numOk, agree: c.agree, note: verdict };
   } catch (e) {
-    verdict = `官方源失败：${e.message}`; fatal = true;   // 无法交叉校验 = 不让新数据进分析
+    // 区分两件事：官方源「不可达」（机房 IP 被 WAF 挡，HTTP 403 属此类）与数据「不一致」。
+    // 前者降级为与仓库基线（上一轮经官方逐字段核对过、已提交的 data/ssq.json）做回归比对：
+    // 重叠历史上任何一个字段变了 = 备源改写了历史 = 仍然硬失败；完全一致才放行，但如实标注
+    // 「尾部新增期未经官方核对」。否则月度作业会永远红，而永远红的红灯没人看。
+    verdict = `官方源不可达（${e.message}）→ 降级为仓库基线回归比对`;
+    const base = existsSync(DATA_FILE) ? safeJson(DATA_FILE) : null;
+    if (!base || base.length < 3000) {
+      verdict += "：无可用基线（data/ssq.json 缺失或过短），不放行";
+      fatal = true;
+      xcheck = { status: "unavailable-no-baseline", at: new Date().toISOString(), note: String(e.message) };
+    } else {
+      const c = baselineCompare(rows, base);
+      verdict += `：重叠 ${c.n} 期，号码不一致 ${c.numDiff}，销量/注数不一致 ${c.fieldDiff}，基线之后新增 ${c.added} 期未经官方核对`;
+      if (c.numDiff || c.fieldDiff || c.n < 3000) {
+        verdict += " → 备源改写了已核对过的历史，硬失败";
+        fatal = true;
+      }
+      xcheck = { status: c.numDiff || c.fieldDiff ? "mismatch-vs-baseline" : "degraded-baseline-regression",
+        at: new Date().toISOString(), n: c.n, numDiff: c.numDiff, fieldDiff: c.fieldDiff, added: c.added, note: String(e.message) };
+    }
   }
   log("  " + verdict);
-  if (fatal) throw new Error("交叉校验未通过：宁可不出结果，也不用未经官方源核对的数据下结论");
+  if (fatal) throw new Error("交叉校验未通过：宁可不出结果，也不用未经核对的数据下结论");
 
   log("[4/4] 写出数据文件");
   mkdirSync(OUT_DIR, { recursive: true });
   writeFileSync(DATA_FILE, JSON.stringify(rows));
   writeFileSync(RAW_CACHE, txt);   // 原始 txt 一并留档，便于事后复核解析
+  writeFileSync(join(OUT_DIR, "crosscheck.json"), JSON.stringify(xcheck, null, 1));
   log(`  ${DATA_FILE}（${(JSON.stringify(rows).length / 1024).toFixed(0)} KB，${rows.length} 期）`);
   log(`\nFETCH OK ${started}  ${rows[0].code} → ${rows[rows.length - 1].code}`);
+  log(xcheck.status === "official-ok" ? "CROSSCHECK: OFFICIAL-OK" : "CROSSCHECK: DEGRADED（" + xcheck.status + "）");
 } catch (e) {
   log(`\nFETCH FAILED：${e && e.message ? e.message : e}`);
   log("  原始错误：", e && e.cause ? e.cause : e);

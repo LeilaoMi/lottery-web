@@ -388,7 +388,15 @@ async function adminSync(request, env, ctx) {
       const bad = new Set(cross.mismatch);
       if (bad.size) d = d.filter(x => !bad.has(String(x.code)));
     }
-    out.results.dlt = { fetched: d.length, inserted: await saveDLT(env.DB, d), latest: d[0]?.code, ...(cross ? { crosscheck: { checked: cross.checked, mismatch: cross.mismatch, dropped: cross.mismatch.length } } : {}) };
+    // 补日期：500 解析器给的是 date:""（dlt.js:15），空日期写进 D1 会让 /api/meta 的 stale[]
+    // 直接漏掉大乐透（新鲜度保险丝对它失明），也让分年 eras / 开奖日统计失去依据。
+    // 备源 17500 带日期且刚刚为交叉校验取过，按期号回填即可，不额外花一次请求。
+    let dated = 0;
+    if (alt.length) {
+      const dateBy = new Map(alt.map(x => [String(x.code), String(x.date || "")]));
+      for (const x of d) if (!x.date) { const v = dateBy.get(String(x.code)); if (v) { x.date = v; dated++; } }
+    }
+    out.results.dlt = { fetched: d.length, inserted: await saveDLT(env.DB, d), latest: d[0]?.code, datedFrom: dated, ...(cross ? { crosscheck: { checked: cross.checked, mismatch: cross.mismatch, dropped: cross.mismatch.length } } : {}) };
   } catch (e) { out.results.dlt = { error: String(e.message || e) }; }
   for (const k of LOTS.filter(x => x.id !== "ssq" && x.id !== "dlt").map(x => x.id)) {
     try {
