@@ -19,7 +19,8 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 </div>
 
 > ⚠️ **随机游戏，统计仅供娱乐，不保证中奖。** 本站能改变的只有「万一中了要和多少人分奖」，改变不了中奖概率。
-> 这句话不是免责声明的装饰，它是这个项目全部统计工作的结论（依据见 [docs/randomness-latest.md](docs/randomness-latest.md)）。
+> 这不是套话式的免责声明——它是这个项目把 3501 期真实数据跑完之后得到的结论
+> （依据见 [docs/randomness-latest.md](docs/randomness-latest.md)）。
 
 ---
 
@@ -97,7 +98,7 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 
 > 🔒 一句风险提示：GitHub **公开仓库**的 Actions 产物不需要登录就能下载。开奖数据是公开的，但 `favs`（你存的自选号）不是——
 > 所以备份**默认就不含 `favs`**，且剔除会写在 Job Summary 里。要完整备份：配 `vars.R2_BUCKET` 推到私有桶，
-> 或明确设 `vars.BACKUP_INCLUDE_FAVS=1`。详见 docs/BACKUP.md。
+> 或明确设 `vars.BACKUP_INCLUDE_FAVS=1`。详见 [docs/BACKUP.md](docs/BACKUP.md)。
 
 ---
 
