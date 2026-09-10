@@ -1,5 +1,6 @@
 // 多彩种全量历史：下载 → 结构校验 → 与项目生产 D1 公共接口交叉校验 → 写 data/<kind>.json + data/verify.json
-// 用法：node scripts/randomness/fetch-multi.mjs [kind ...]      默认跑全部 7 个新彩种
+// 用法：node scripts/randomness/fetch-multi.mjs [--api-base=<公共接口地址>] [kind ...]   默认跑全部 7 个新彩种
+//      地址也可用环境变量 LOTTERY_API_BASE 提供；两者都不给 → 只做结构校验，线上号码交叉校验被显式跳过。
 // 零依赖（只用 node 内置 fetch/fs）。任一彩种交叉校验不过 → 该彩种数据【不写出】，并在 verify.json 里记为 UNVERIFIED，
 // multi.mjs 会在报告里点名"哪些彩种没验过、为什么"，绝不悄悄丢弃。
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
@@ -9,7 +10,11 @@ import { UA } from "./lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = pjoin(HERE, "data");
-const API_BASE = "https://lottery-web.horjane.workers.dev";
+// 号码交叉校验的目标公共接口（可选）。源码里不写死任何人的站点地址：
+//   命令行 --api-base="https://lottery-web.<你的子域>.workers.dev"   或   环境变量 LOTTERY_API_BASE
+// 两者都没给 → crossCheck 显式跳过并在 verify.json / 报告里标注「未执行」，该彩种不计入 VERIFIED（闸门不放水，绝不静默当作已通过）。
+const API_BASE = ((process.argv.find(a => a.startsWith("--api-base=")) || "").split("=")[1] || process.env.LOTTERY_API_BASE || "")
+  .trim().replace(/\/+$/, "");
 const log = (...a) => console.log(...a);
 const pad2 = x => String(x).padStart(2, "0");
 
@@ -132,6 +137,7 @@ function structural(kind, sp, txt) {
 }
 
 async function crossCheck(sp, rows) {
+  if (!API_BASE) return { ok: false, skipped: true, err: null, n: 0, match: 0, mis: [], independence: "未配置 --api-base / LOTTERY_API_BASE → 本闸门未执行" };
   let off;
   try { off = await apiGet(sp.api.path); } catch (e) { return { ok: false, err: e.message, independence: sp.id === "dlt" ? "500/未测" : "17500/未测" }; }
   const byCode = new Map(rows.map(r => [r.code, r]));
@@ -154,7 +160,8 @@ export async function fetchOne(kind, { useCache = true } = {}) {
   const st = structural(kind, sp, txt);
   log(`  结构：解析 ${st.rows.length}/${st.total} 行；token 异常 ${st.tokBad}、期号格式错 ${st.codeBad}、值域/结构错误 ${st.valBad}、日期格式异常 ${st.dateBad}、年内跳号 ${st.jumps}`);
   const cc = await crossCheck(sp, st.rows);
-  if (cc.err) log(`  交叉校验：API 不可达 —— ${cc.err}`);
+  if (cc.skipped) log(`  交叉校验：跳过（未配置 --api-base / LOTTERY_API_BASE）→ 本彩种不计入 VERIFIED`);
+  else if (cc.err) log(`  交叉校验：API 不可达 —— ${cc.err}`);
   else log(`  交叉校验 vs D1 API：匹配 ${cc.match}/${cc.n}（${cc.independence}）${cc.ok ? "OK" : " 未全匹配"}`);
   const verified = st.rows.length >= 500 && st.valBad === 0 && st.dateBad === 0 && st.codeBad === 0 && cc.ok;
   return { kind, spec: sp, rows: st.rows, structural: st, crossCheck: cc, verified,
@@ -163,6 +170,8 @@ export async function fetchOne(kind, { useCache = true } = {}) {
 
 async function main() {
   mkdirSync(DATA_DIR, { recursive: true });
+  if (!API_BASE) log("⚠ 未提供线上公共接口地址（--api-base=... 或 LOTTERY_API_BASE=...）：本轮只做结构校验，"
+    + "号码交叉校验闸门不会执行 → 所有彩种都会记为 UNVERIFIED、数据不写出。要出统计结论请指向一个（自建或官方的）公共接口。");
   const kinds = process.argv.slice(2).filter(a => !a.startsWith("--"));
   const run = kinds.length ? kinds : MULTI_KINDS;
   const verify = {}; let allWrite = true;

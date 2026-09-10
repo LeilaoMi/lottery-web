@@ -1,64 +1,187 @@
 <div align="center">
 
-# 🎱 lottery-web · 自用彩票分析站
+# 🎱 lottery-web
 
-**8 个彩种 · 统一预测引擎 · 统计诚实性优先**
+**自托管 · 8 彩种彩票数据分析站**
 
-[![CI](https://github.com/LeilaoMi/lottery-web/actions/workflows/sync.yml/badge.svg)](https://github.com/LeilaoMi/lottery-web/actions/workflows/sync.yml)
-![version](https://img.shields.io/badge/version-0.13.0-blue)
+**统计诚实性优先：每个「有效」结论都要有可复现的检验背书**
+
+![version](https://img.shields.io/badge/version-0.13.1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
+![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-106-brightgreen)
+![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
-Cloudflare Workers + D1 · 零运行时依赖 · 单页 PWA 前端
+Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 
-*开奖查询 · 统计分析 · 杀号定胆 · 历史回测 · 预测复盘 · 注数与中奖计算*
+*开奖查询 · 统计分析 · 杀号定胆 · 历史回测 · 预测复盘 · 批量验奖 · 注数与中奖计算*
 
 </div>
 
-> ⚠️ **随机游戏，统计仅供娱乐，不保证中奖。** 本项目的设计目标是让每个「有效」结论都有统计背书，而不是承诺中奖。
+> ⚠️ **随机游戏，统计仅供娱乐，不保证中奖。** 本站能改变的只有「万一中了要和多少人分奖」，改变不了中奖概率。
+> 这句话不是免责声明的装饰，它是这个项目全部统计工作的结论（依据见 [docs/randomness-latest.md](docs/randomness-latest.md)）。
 
 ---
+
+## 目录
+
+- [它是什么](#它是什么) · [功能特性](#-功能特性) · [统计诚实性](#-统计诚实性本项目的灵魂) · [架构](#-架构)
+- [支持彩种](#-支持彩种) · [快速开始](#-快速开始) · [本地开发](#-本地开发) · [使用说明](#-使用说明)
+- [API 速览](#-api-速览) · [目录结构](#-目录结构) · [文档地图](#-文档地图) · [设计原则](#-设计原则) · [声明](#-声明)
+
+---
+
+## 它是什么
+
+一个**自己部署自己用**的彩票数据站：8 个彩种的开奖数据落到自己的 D1，前端一个单页 PWA 提供分析、
+预测、回测、验奖。它和同类项目最大的区别不在功能数，而在**它愿意把自己的功能判为无效**：
+
+- 冷热号、遗漏回补、蓝球多维加权评分……起步阶段从社区项目吸收的这些「经验法则」，
+  在双色球 3501 期真实数据上**全部没通过检验**，于是被删掉或降级为纯展示；
+- 唯一通过样本外验证的可操作项（冷门度）被留下，并且明确标注它**只影响分奖人数，不影响中奖概率**；
+- 每次代码变更都有 CI、每月随机性审计自动重跑、结论有存档可复现——包括被证伪的那部分。
 
 ## ✨ 功能特性
 
 ### 🎯 统一预测引擎
 
 - **8 个彩种共用同一套引擎**（`worker/src/predict.js`），接口返回结构完全一致——不存在「双色球有推荐、其他彩种只有统计」的割裂
-- **6 套策略推荐**：稳健·热号 / 进取·遗漏 / 均衡 / 区间覆盖 / 杀号缩水 / 随机基准，均带结构分（和值 / 奇偶 / 大小 / 区间 / 跨度 / AC）
-- **杀号**：10 类公式加权投票（票数 + 命中原因）；`/api/kill-calibrated` 给出按分公式回测得到的权重与 `/api/kill-tune` 的阈值寻优。**如实说明：这些校准权重目前只用于展示参考名单，没有接入推荐与胆拖单的出票路径**（`recommendAll` / `ticket` 调的是无权重 `killList`）。未擅自接通，是因为它会改变实际下注号码而权重本身并无统计依据
+- **6 套策略推荐**：稳健·热号 / 进取·遗漏 / 均衡 / 区间覆盖 / 杀号缩水 / 随机基准，均带结构分（和值 / 奇偶 / 大小 / 区间 / 跨度 / AC）。
+  ⚠️ 这 6 套都是**娱乐向**的：冷热与遗漏类策略在开奖侧没有统计依据（见[统计诚实性](#-统计诚实性本项目的灵魂)），站上不做「这套更有效」的承诺
+- **杀号**：10 类公式加权投票（票数 + 命中原因）；`/api/kill-calibrated` 给出按分公式回测得到的权重与 `/api/kill-tune` 的阈值寻优。
+  **如实说明：这些校准权重目前只用于展示参考名单，没有接入推荐与胆拖单的出票路径**（`recommendAll` / `ticket` 调的是无权重 `killList`）。
+  未擅自接通，是因为它会改变实际下注号码，而权重本身并无统计依据
 - **定胆**：频率 + 遗漏回归 + 邻号 + 重号
 - **胆拖投注单**：一键生成注数金额，可保存收藏 / 复制 / 导出 TXT
-- **批量验奖 `POST /api/verify-batch`**：一沓票贴进来一次验多期（≤200 注 × ≤10 期）。奖级判定**复用**与单注验奖、中奖计算器同一套函数——两套验奖规则迟早分叉，分叉的结果就是「工具说中了、彩票站说没中」。金额只给本站校验过的固定奖级；浮动奖（双色球一二等奖）与规则换过时代的彩种（大乐透）返回 `null` 并说明原因，**不猜数、更不显示成 0**
-- **冷门度 `/api/coldness`（本项目唯一被样本外验证支持的可操作项）**：估计一注号码**万一中了要和多少人分奖**，不改变中奖概率。系数来自双色球全量 3501 期中 3250 期的**真实一等奖中奖注数**（按销量归一），按时间顺序旧 70%（2275 期）拟合、新 30%（975 期）样本外检验：五分位最热 / 最冷 = **1.506 倍**（p=6.2e-10）；安慰剂对照（蓝球特征打在不含蓝球的二等奖上）= **1.006 / 0.993** 干净归零；连号特征因样本外反号（0.992→1.028）被剔除。全生日区 + 热门蓝 ≈ 12 个同奖者，含 32/33 + 尾 4 + 冷门蓝 ≈ 6 个——**期望回报仍为负**。
+- **批量验奖 `POST /api/verify-batch`**：一沓票贴进来一次验多期（≤200 注 × ≤10 期）。奖级判定**复用**与单注验奖、
+  中奖计算器同一套函数——两套验奖规则迟早分叉，分叉的结果就是「工具说中了、彩票站说没中」。
+  金额只给本站校验过的固定奖级；浮动奖（双色球一二等奖）与规则换过时代的彩种（大乐透）返回 `null` 并说明原因，**不猜数、更不显示成 0**
+- **冷门度 `/api/coldness`（本项目唯一被样本外验证支持的可操作项）**：估计一注号码**万一中了要和多少人分奖**，不改变中奖概率。
+  系数来自双色球全量 3501 期中 3250 期的**真实一等奖中奖注数**（按销量归一），按时间顺序旧 70%（2275 期）拟合、新 30%（975 期）样本外检验：
+  五分位最热 / 最冷 = **1.506 倍**（p=6.2e-10）；安慰剂对照（蓝球特征打在不含蓝球的二等奖上）= **1.006 / 0.993** 干净归零；
+  连号特征因样本外反号（0.992→1.028）被剔除。
+  全生日区 + 热门蓝 ≈ 12 个同奖者，含 32/33 + 尾 4 + 冷门蓝 ≈ 6 个——**期望回报仍为负**。
   复现与月度重验：`node scripts/coldness/ssq-fit.mjs`（产物 `docs/coldness-latest.md`，同时与线上常量对账）
-- **大乐透也拟合过，但没有发布**：目标本身样本外复现了（五分位 1.30×、p=0.007），可预注册的固定奖级安慰剂全灭——大乐透没有任何一档奖金只依赖后区，前区被超买时它的邻域同样被超买，用这份数据**分不清**「实现混淆」和「真实的邻域人气」。按规则 `keep=[]`。负结果与全部中间量见 `docs/coldness-dlt-2026-09.md`（要推进它需要集合外的人气代理数据，不是更多时间）
-
-### 📊 统计诚实性（本项目的灵魂）
-
-- **全量实证基线**：双色球 2003→2026 共 **3501 期**（含各奖级中奖注数 / 销量 / 奖池，与官方接口逐字段核对一致）已完成一遍随机性检验，存档于 `docs/randomness-2026-09.md`，并由 `scripts/randomness/` 每月自动重跑。结论：**独立性检验全部为 null**（与上期重合数、lag-1 自相关、遗漏分布、蓝球连开、开奖位置都落在随机应有的区间内），即冷热、遗漏、回补类说法在这份数据上没有依据
-  - **推广到 8 个彩种**（`analyze.mjs --all`，各 2063–8750 期，报告 `docs/randomness-multi-latest.md`）：开奖侧「无可利用结构」从双色球一家的**外推**，升级为 8 家的**实测**。数字型（3D / 排列3 / 排列5）样本最大、灵敏度最高，它的「无信号」最有分量
-  - **两条看着像发现的读数，都被证伪而不是被采纳**：大乐透前区 χ²=89.1（p<1e-9）实为 **2007–2014 源数据回填缺陷**（分半相关 r=−0.26，2015+ 重测 p=0.89）；七星彩第 7 位「非均匀」是**规则本身**（0–9 各约 9%、10–14 各约 1.8%），拿 df=14 去检验是模型误设。CI 里每月重跑的正是这套证伪流程
-- **历史回测**：逐期用「当期之前」的数据预测再与真实开奖比对（杜绝未来函数），600 期跨度自动抽样，全部结论对照**随机基线**
-- **显著性检验**：回测与复盘输出二项检验 p 值（正态近似），样本不足如实返回 null。**徽章有样本门槛**：`tested < 100` 时不再显示「有效 / 显著」，改显示「样本不足，无法判断」——「没检出信号」与「没能力检出信号」是两件事
-- **一个写进代码的统计陷阱**：号频 χ² 的零分布均值是 **27 而不是 df=32**（每期 6 个号互斥造成负相关）。若按解析 df=32 计算，真实 p=0.021 会被误判成 p=0.069——所以本站零分布一律用蒙特卡洛。这不是双色球专属：通用式是 `池大小 × (1 − 每期开出数 / 池大小)`，快乐8 的零均值是 **60 而不是 df=79**、大乐透前区 30、七乐彩 23；多彩种套件按各自参数现算，绝不复用别人的数
-- **外推检验（holdout）**：校准权重只用旧 70% 数据拟合、新 30% 验证——检验「同一段数据既调权又报成绩」的过拟合
-- **分年稳定性**：回测按年分桶，策略是长期有效还是最近退化一眼可见（附柱状图）
-- **形态转移**：和值 / 奇偶 / 大小 / 012路 一阶转移矩阵（拉普拉斯平滑），下期形态 Top3（`/api/analyze` 的 `shape` 字段，仅号码池型）
-- **未解决如实标注**：全量检验中余下一个边界性异常（号频 χ² 偏高、和值偏低，联合校正 p≈0.02），但它局域在 2015–2018 与周四、2019 年后消失，且是在 33 号 × 6 年代 = 198 个格子里事后定位出来的，属**提示性而非发现**；本站可用历史约 650 期，而检出 ±10% 单号偏差需要约 3500 期——**当前样本量不足以支撑任何"某号更热"的结论**
+- **大乐透也拟合过，但没有发布**：目标本身样本外复现了（五分位 1.30×、p=0.007），可预注册的固定奖级安慰剂全灭——
+  大乐透没有任何一档奖金只依赖后区，前区被超买时它的邻域同样被超买，用这份数据**分不清**「实现混淆」和「真实的邻域人气」。按规则 `keep=[]`。
+  负结果与全部中间量见 [docs/coldness-dlt-2026-09.md](docs/coldness-dlt-2026-09.md)（要推进它需要集合外的人气代理数据，不是更多时间）
 
 ### 🔁 预测复盘闭环
 
-每日同步自动**快照**下一期推荐 → 开奖后自动**对账** → `/api/review` 公开滚动命中率（推荐 / 定胆 / 杀错率 + 显著性）。预测从「说完就忘」变成可回看的记录。
+每日同步自动**快照**下一期推荐 → 开奖后自动**对账** → `/api/review` 公开滚动命中率（推荐 / 定胆 / 杀错率 + 显著性）。
+预测从「说完就忘」变成可回看的记录。
 
-- **数字型彩种已修通**：`fc3d / pl3 / pl5 / qxc` 的推荐项字段是 `digits` 而非 `main`，此前快照丢号、永久无法对账；现按彩种类型分叉，且数字型严格**逐位比对**
-- **闭环自己也有停摆保险丝**：`/api/meta` 返回 `predlog[]`（各彩种最新快照 / 最新对账 / 待对账条数），CI 的 `review` job 显式触发对账并对每日彩种断言「快照距今 ≤2 天且已有对账记录」。此前它对 `/api/review` 的断言是 `typeof summary === 'object'`——空对象也算通过，于是闭环死了五天而 CI 全绿
+- **数字型彩种已修通**：`fc3d / pl3 / pl5 / qxc` 的推荐项字段是 `digits` 而非 `main`，此前快照丢号、永久无法对账；
+  现按彩种类型分叉，且数字型严格**逐位比对**
+- **闭环自己也有停摆保险丝**：`/api/meta` 返回 `predlog[]`（各彩种最新快照 / 最新对账 / 待对账条数），CI 的 `review` job
+  显式触发对账并对每日彩种断言「快照距今 ≤2 天且已有对账记录」。此前它对 `/api/review` 的断言是 `typeof summary === 'object'`——
+  空对象也算通过，于是闭环死了五天而 CI 全绿
 
 ### 🛡️ 数据可靠性
 
 - **多源交叉校验**：双色球（500 + cwl）、大乐透（500 + 17500）最近 30 期逐期比对，不一致的期号**拒绝落库**
 - **数据新鲜度保险丝**：D1 最新期距今天数暴露在 `/api/meta`，前端任一彩种 ≥4 天自动亮黄条
-- **上游故障降级**：小彩种上游不可用时自动读 D1 缓存，响应标记 `degraded`
+- **上游故障降级**：小彩种上游不可用时自动读 D1 缓存，响应标记 `degraded`；所有上游 fetch 带硬超时
+  （普通 8s / 全量档 20s），境内站点不回包时宁可降级，也不把请求拖到 20–30s
 - **CI 部署冒烟**：push / 定时同步后自动对线上 5 端点断言，线上异常 CI 直接红
+
+### 📦 可选运维能力（默认全关）
+
+| 能力 | 打开方式 | 不配会怎样 | 文档 |
+|---|---|---|---|
+| **D1 每日备份**（`backup.yml`） | 配 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` / `D1_DATABASE` | 打印「跳过」并绿，不产生红叉 | [docs/BACKUP.md](docs/BACKUP.md) |
+| **开奖订阅推送**（`sync.yml` 的 `notify`） | 配 `NOTIFY_WEBHOOK_URL`（+ `NOTIFY_FORMAT` ∈ dingtalk/feishu/slack/telegram/generic） | 打印「推送保持关闭」并退出 | [docs/NOTIFY.md](docs/NOTIFY.md) |
+
+备份不是「导出来就完事」：workflow 会把 SQL 真还原进一个临时 sqlite 并逐表报行数。推送也不是只报喜：
+`needs` 里的 job 失败时它照样发，标题变成 ❌——**告警通路在出事时才有价值**。
+
+> 🔒 一句风险提示：GitHub **公开仓库**的 Actions 产物不需要登录就能下载。开奖数据是公开的，但 `favs`（你存的自选号）不是——
+> 所以备份**默认就不含 `favs`**，且剔除会写在 Job Summary 里。要完整备份：配 `vars.R2_BUCKET` 推到私有桶，
+> 或明确设 `vars.BACKUP_INCLUDE_FAVS=1`。详见 docs/BACKUP.md。
+
+---
+
+## 🧠 统计诚实性（本项目的灵魂）
+
+这一段是本项目与「又一个彩票预测站」的分界线。所有数字都能用 `scripts/randomness/` 复现。
+
+- **全量实证基线**：双色球 2003→2026 共 **3501 期**（含各奖级中奖注数 / 销量 / 奖池，与官方接口逐字段核对一致）已完成一遍随机性检验，
+  存档于 [docs/randomness-2026-09.md](docs/randomness-2026-09.md)，并由 `scripts/randomness/` 每月自动重跑。
+  结论：**独立性检验全部为 null**（与上期重合数、lag-1 自相关、遗漏分布、蓝球连开、开奖位置都落在随机应有的区间内），
+  即冷热、遗漏、回补类说法在这份数据上没有依据
+- **推广到 8 个彩种**（`analyze.mjs --all`，各 2063–8750 期，报告 [docs/randomness-multi-latest.md](docs/randomness-multi-latest.md)）：
+  开奖侧「无可利用结构」从双色球一家的**外推**，升级为 8 家的**实测**。数字型（3D / 排列3 / 排列5）样本最大、灵敏度最高，它的「无信号」最有分量
+- **两条看着像发现的读数，都被证伪而不是被采纳**：大乐透前区 χ²=89.1（p<1e-9）实为 **2007–2014 源数据回填缺陷**
+  （分半相关 r=−0.26，2015+ 重测 p=0.89）；七星彩第 7 位「非均匀」是**规则本身**（0–9 各约 9%、10–14 各约 1.8%），
+  拿 df=14 去检验是模型误设。CI 里每月重跑的正是这套证伪流程
+- **一个写进代码的统计陷阱**：号频 χ² 的零分布均值是 **27 而不是 df=32**（每期 6 个号互斥造成负相关）。
+  若按解析 df=32 计算，真实 p=0.021 会被误判成 p=0.069——所以本站零分布一律用蒙特卡洛。
+  这不是双色球专属：通用式是 `池大小 × (1 − 每期开出数 / 池大小)`，快乐8 的零均值是 **60 而不是 df=79**、大乐透前区 30、七乐彩 23；
+  多彩种套件按各自参数现算，绝不复用别人的数
+- **历史回测**：逐期用「当期之前」的数据预测再与真实开奖比对（杜绝未来函数），600 期跨度自动抽样，全部结论对照**随机基线**
+- **显著性检验**：回测与复盘输出二项检验 p 值（正态近似），样本不足如实返回 null。
+  **徽章有样本门槛**：`tested < 100` 时不再显示「有效 / 显著」，改显示「样本不足，无法判断」——
+  「没检出信号」与「没能力检出信号」是两件事
+- **外推检验（holdout）**：校准权重只用旧 70% 数据拟合、新 30% 验证——检验「同一段数据既调权又报成绩」的过拟合
+- **分年稳定性**：回测按年分桶，策略是长期有效还是最近退化一眼可见（附柱状图）
+- **安慰剂闸门**：六等奖（只看蓝）对红球特征、二等奖（不看蓝）对蓝球特征必须为 NULL。一旦显著，说明实现里有混淆，
+  本轮所有结论作废 → CI 直接失败
+- **形态转移**：和值 / 奇偶 / 大小 / 012路 一阶转移矩阵（拉普拉斯平滑），下期形态 Top3（`/api/analyze` 的 `shape` 字段，仅号码池型）
+- **未解决如实标注**：全量检验中余下一个边界性异常（号频 χ² 偏高、和值偏低，联合校正 p≈0.02），但它局域在 2015–2018 与周四、
+  2019 年后消失，且是在 33 号 × 6 年代 = 198 个格子里事后定位出来的，属**提示性而非发现**；本站可用历史约 650 期，
+  而检出 ±10% 单号偏差需要约 3500 期——**当前样本量不足以支撑任何「某号更热」的结论**
+
+---
+
+## 🏗 架构
+
+```mermaid
+flowchart LR
+  subgraph BR["客户端"]
+    UI["frontend/ 单页 PWA<br/>7 tab · ECharts · Service Worker"]
+  end
+
+  subgraph CF["Cloudflare（免费档）"]
+    W["Worker · index.js<br/>路由 / CORS / 鉴权 / 降级"]
+    CORE["分析内核<br/>predict · verify-batch · coldness · calc"]
+    MEM["isolate 内存缓存"]
+    D1[("D1 (SQLite)<br/>draws · predlog · favs · sync_log")]
+  end
+
+  subgraph UP["上游数据源"]
+    A["500.com"]
+    B["cwl.gov.cn 官方"]
+    C["17500.cn 全量档"]
+  end
+
+  subgraph GH["GitHub Actions"]
+    SY["sync.yml<br/>测试→冒烟→落库→复盘→(推送)"]
+    RA["randomness.yml<br/>月度随机性审计 + 冷门度重验"]
+    BA["backup.yml<br/>每日导出 + 还原验证"]
+  end
+
+  UI -- "JSON (CORS *)" --> W
+  W --> CORE --> D1
+  CORE -- "net.js 带超时" --> A & B & C
+  A & B & C -- "多源交叉校验<br/>不一致拒绝落库" --> CORE
+  CORE --> MEM
+  SY -- "Bearer API_TOKEN" --> W
+  RA -- "只读公共接口" --> W
+  BA -- "wrangler d1 export" --> D1
+```
+
+数据流一句话：**上游 → 双闸门校验 → D1 → 分析内核 → 只读公共接口 → 前端**；重计算（回测、校准）走独立请求，
+避开免费版单请求 10ms CPU 的限制。三级缓存顺序为 isolate 内存 → edge cache → 现算。
+
+## 🛠 技术栈
+
+| 层 | 选型 | 说明 |
+|---|---|---|
+| 运行时 | [Cloudflare Workers](https://workers.cloudflare.com/) | 纯 JS，`fetch(request, env, ctx)` 路由，零 npm 依赖 |
+| 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
+| 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
+| 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
+| 测试 | `node --test` | 106 项单元测试（89 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
 
 ---
 
@@ -75,16 +198,6 @@ Cloudflare Workers + D1 · 零运行时依赖 · 单页 PWA 前端
 | `qxc` | 七星彩 | 7 位 0-9 | 周二·五 |
 | `kl8` | 快乐 8 | 20/80 | 每日 |
 
-## 🛠 技术栈
-
-| 层 | 选型 | 说明 |
-|---|---|---|
-| 运行时 | [Cloudflare Workers](https://workers.cloudflare.com/) | 纯 JS，`fetch(request, env, ctx)` 路由，零 npm 依赖 |
-| 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
-| 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
-| 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 106 项单元测试（89 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
-
 ---
 
 ## 🚀 快速开始
@@ -98,7 +211,8 @@ Cloudflare Workers + D1 · 零运行时依赖 · 单页 PWA 前端
 
 ```bash
 npx wrangler d1 create lottery          # 记下返回的 database_id
-npx wrangler d1 execute lottery --file=db/schema.sql
+# ⚠️ --remote 不能省：不加就只在你本机的 miniflare 里建表，部署后的站点照样没有表
+npx wrangler d1 execute lottery --remote --file=db/schema.sql -y
 ```
 
 ### 2. 部署配置
@@ -106,7 +220,7 @@ npx wrangler d1 execute lottery --file=db/schema.sql
 ```bash
 cp worker/wrangler.toml worker/wrangler.local.toml
 # 编辑 worker/wrangler.local.toml：把 database_id 的 REPLACE_ME 换成第 1 步的 ID
-# 不需要自定义域名就删掉 routes 整段
+# 要绑自定义域名就取消那段 routes 的注释（模板默认注释，原因见 docs/PUBLISH.md）
 ```
 
 > `wrangler.local.toml` 含真实 ID，已在 `.gitignore` 中，不会进仓库。
@@ -123,7 +237,7 @@ npx --yes wrangler deploy --config wrangler.local.toml
 > npm 会在**包目录里**执行脚本（实测：临时 package.json 探针的 `process.cwd()` 落在 prefix 目录），
 > 那条命令实际会去找 `worker/worker/wrangler.local.toml`，根本不存在。
 
-部署成功会输出 `https://lottery-web.<你的子域>.workers.dev`。要绑自己的域名，在你的 `wrangler.local.toml` 里加 `routes`（模板默认注释掉了，原因见 [docs/PUBLISH.md](docs/PUBLISH.md)）。
+部署成功会输出 `https://<你的项目名>.<你的子域>.workers.dev`，打开即是完整站点。
 
 ### 4. （可选）鉴权
 
@@ -131,29 +245,27 @@ npx --yes wrangler deploy --config wrangler.local.toml
 npx wrangler secret put API_TOKEN
 ```
 
-鉴权模型：**开奖数据是公开信息，读接口一律免鉴权**；只有写操作与个人数据（`/api/favs` 全部方法、`/api/admin/sync`）要求 `Authorization: Bearer <API_TOKEN>`。未设置 `API_TOKEN` 时写接口一律拒绝（fail-closed）。
+鉴权模型：**开奖数据是公开信息，读接口一律免鉴权**；只有写操作与个人数据（`/api/favs` 全部方法、`/api/admin/sync`）
+要求 `Authorization: Bearer <API_TOKEN>`。未设置 `API_TOKEN` 时写接口一律拒绝（fail-closed）。
 
-### 5. （可选）定时落库
+### 5. （可选）定时落库与复盘
 
-`.github/workflows/sync.yml` 在 CI 通过后按开奖日触发落库（双色球 / 大乐透 / 每日小彩种），并在同步后自动预热校准缓存、生成复盘快照。需在仓库 *Settings → Secrets and variables → Actions* 配置：
+`.github/workflows/sync.yml` 在 CI 通过后按开奖日触发落库（双色球 / 大乐透 / 每日小彩种），并在同步后自动预热校准缓存、
+生成复盘快照。需在仓库 *Settings → Secrets and variables → Actions* 配置：
 
 | Secret | 值 |
 |---|---|
-| `WORKER_URL` | 如 `https://lottery-web.xxx.workers.dev` |
+| `WORKER_URL` | 你的 Worker 地址，如 `https://<你的项目名>.<你的子域>.workers.dev` |
 | `API_TOKEN` | 与 Worker 的 secret 一致（未设置鉴权则无法同步落库） |
 
-### 6. （可选）D1 备份与开奖推送
+### 6. （可选）月度随机性审计
 
-两个能力都**默认不生效**，不配 secrets 就打印一行「跳过」——fork 本项目不会莫名多出一个红叉或一个乱说话的机器人。
+`.github/workflows/randomness.yml` 每月重跑 8 彩种审计与冷门度拟合。它**不需要任何 secrets**，但如果希望「号码交叉校验」
+这道闸门生效，需配一个**普通变量**（非密钥）：
 
-| 能力 | 打开方式 | 文档 |
-|---|---|---|
-| **D1 每日备份**（`.github/workflows/backup.yml`） | 配 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` / `D1_DATABASE` | [docs/BACKUP.md](docs/BACKUP.md) |
-| **开奖订阅推送**（`sync.yml` 的 `notify` job） | 配 `NOTIFY_WEBHOOK_URL`（+ `NOTIFY_FORMAT` ∈ dingtalk/feishu/slack/telegram/generic） | [docs/NOTIFY.md](docs/NOTIFY.md) |
-
-备份不是「导出来就完事」：workflow 会把 SQL 真还原进一个临时 sqlite 并逐表报行数。推送也不是只报喜：`needs` 里的 job 失败时它照样发，标题变成 ❌——**告警通路在出事时才有价值**。
-
-> 一句风险提示：GitHub **公开仓库**的 Actions 产物不需要登录就能下载。开奖数据是公开的，但 `favs`（你存的自选号）不是——所以备份**默认就不含 `favs`**，且剔除会写在 Job Summary 里。要完整备份：配 `vars.R2_BUCKET` 推到私有桶，或明确设 `vars.BACKUP_INCLUDE_FAVS=1`。详见 docs/BACKUP.md。
+| Variable | 值 |
+|---|---|
+| `PUBLIC_API_BASE` | 你的公共接口地址（同 `WORKER_URL`）。不配 → 该闸门被显式跳过并在报告里标注原因，VERIFIED 闸门会如实失败而不是放水通过 |
 
 ## 💻 本地开发
 
@@ -163,6 +275,15 @@ npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，
 npm test             # 单元测试（106 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
+```
+
+统计与冷门度脚本（同样零依赖，可在离线数据上复现文档里的全部结论）：
+
+```bash
+node scripts/randomness/fetch-ssq.mjs                 # 双色球全量历史 + 官方逐字段交叉校验
+node scripts/randomness/fetch-multi.mjs --api-base="https://<你的站点>"   # 其余 7 彩种（不配则跳过线上校验）
+node scripts/randomness/analyze.mjs --all             # 8 彩种开奖侧审计
+node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与线上常量对账
 ```
 
 ## 📖 使用说明
@@ -208,7 +329,7 @@ npm run dev          # wrangler dev 本地起服务
 | `/api/{kind}/latest` / `history?limit=` | — | 最新一期 / 历史 |
 | `/api/{kind}/verify` | ssq: `code&red&blue` · dlt: `code&front&back` · 其余: `code&nums` | 验奖 |
 | `/api/verify-batch` | **POST** + JSON `{"kind","code"或"codes"[],"tickets"[],"mult"}` | 批量验奖（≤200 注 × ≤10 期）。返回逐注奖级/命中/金额 + 每期汇总；`errors[].line` 是你贴进来的原始行号，`amount: null` 表示**该奖级金额本站未校验**（浮动奖或规则分时代），不是 0 |
-| `/api/meta` | — | 彩种元数据 + `stale[]` 数据新鲜度 |
+| `/api/meta` | — | 彩种元数据 + `stale[]` 数据新鲜度 + `predlog[]` 复盘闭环健康度 |
 | `/api/records` | — | 破纪录遗漏预警（当前遗漏 vs 样本内历史最大遗漏） |
 | `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划 |
 | `/api/prize` | `kind=` + 命中参数 | 奖级与固定奖金额 |
@@ -270,7 +391,7 @@ lottery-web/
 │   │   ├── small.js        # 6 小彩种解析 / 奖级 / 旋转矩阵
 │   │   ├── calc.js         # 注数 / 金额 / 追号 / 快乐8 奖金表
 │   │   ├── db.js           # D1 读写
-│   │   ├── net.js          # 带超时的上游 fetch（境内站点不回包时宁可降级，也不能把请求拖到 20–30s）
+│   │   ├── net.js          # 带超时的上游 fetch（宁可降级，也不把请求拖死）
 │   │   └── ui.js           # ⚠️ 构建产物（不进仓库，先 build:ui）
 │   ├── test/
 │   │   ├── unit.test.mjs   # 基础单元测试
@@ -281,42 +402,50 @@ lottery-web/
 │   │   ├── ui-render.test.mjs # 前后端契约：真跑后端再让前端渲染函数画一遍（字段改名会被抓住）
 │   │   ├── net.test.mjs    # 上游超时：用不回包的本地 server 验超时真的生效
 │   │   └── live.test.mjs   # 真实数据源连通性（需联网）
-│   └── wrangler.toml       # 部署模板（database_id 已脱敏为 REPLACE_ME）
+│   ├── wrangler.toml       # 部署模板（database_id 脱敏为 REPLACE_ME，routes 默认注释）
+│   └── wrangler.local.toml # 你自己的配置（.gitignore，不提交）
 ├── scripts/
 │   ├── build-ui.mjs        # frontend/ → worker/src/ui.js 打包脚本
-│   ├── notify.mjs          # 开奖推送：读 Worker 公开接口 → 按各家格式 POST webhook（默认不发）
+│   ├── notify.mjs          # 开奖推送：读公共接口 → 按各家格式 POST webhook（默认不发）
 │   ├── notify.test.mjs     # 推送测试：payload 形状 + 本地 http server 真发一次
 │   ├── randomness/         # 随机性审计：8 彩种取数 + A/B/C/D/E 检验（零依赖，见其 README）
 │   └── coldness/           # 冷门度系数拟合 + 样本外验证 + 与线上常量对账
 ├── db/schema.sql           # D1 建表（6 张：draws / dlt_draws / small_draws / predlog / favs / sync_log）
-├── docs/
-│   ├── CHANGELOG.md        # 全部版本变更记录
-│   ├── PUBLISH.md          # 发布前自检清单
-│   ├── BACKUP.md           # D1 备份与恢复（含公开仓库产物泄露风险、恢复姿势）
-│   ├── NOTIFY.md           # 开奖订阅推送：五家格式、排错、为什么做在 Actions
-│   ├── research.md         # 调研笔记
-│   ├── randomness-2026-09.md      # 双色球随机性基线（深检存档）
-│   ├── randomness-latest.md       # 双色球本月自动产物
-│   ├── randomness-multi-latest.md # 8 彩种扩展审计（自动产物）
-│   ├── coldness-latest.md         # 冷门度重拟合与常量对账（自动产物）
-│   └── coldness-dlt-2026-09.md    # 大乐透冷门度：一个负结果的留档
+├── docs/                   # 文档地图见下方链接表，索引在 docs/README.md
 └── .github/workflows/
     ├── sync.yml            # CI：测试 → 线上冒烟 → 定时落库 → 复盘对账 →（默认关闭的）开奖推送
     ├── backup.yml          # 每日 D1 导出 + 还原验证 → R2 或 Actions 产物（不配 secrets 就跳过）
     └── randomness.yml      # 每月：8 彩种随机性审计 + 冷门度重验（不需要 secrets）
 ```
 
+## 📚 文档地图
+
+| 我想…… | 看这里 |
+|---|---|
+| 从零部署一个自己的站 | 本文 [🚀 快速开始](#-快速开始) → [docs/PUBLISH.md](docs/PUBLISH.md)（发布 / 自建清单、CI 能力与所需配置总表） |
+| 搞清「哪些结论有依据、哪些被证伪了」 | [docs/research.md](docs/research.md)（假设对账）→ [docs/randomness-2026-09.md](docs/randomness-2026-09.md)（深检基线） |
+| 每月自动重跑的报告长什么样 | [docs/randomness-latest.md](docs/randomness-latest.md) · [docs/randomness-multi-latest.md](docs/randomness-multi-latest.md) · [docs/coldness-latest.md](docs/coldness-latest.md) |
+| 理解冷门度为什么只发双色球、不发大乐透 | [docs/coldness-dlt-2026-09.md](docs/coldness-dlt-2026-09.md)（一个负结果的留档） |
+| 配备份 / 配开奖推送 | [docs/BACKUP.md](docs/BACKUP.md) · [docs/NOTIFY.md](docs/NOTIFY.md) |
+| 看某个版本改了什么、为什么 | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
+| 跑统计脚本 | [scripts/randomness/README.md](scripts/randomness/README.md) · [scripts/coldness/README.md](scripts/coldness/README.md) |
+| 全部文档索引 | [docs/README.md](docs/README.md) |
+
 ## 🧭 设计原则
 
 1. **统计诚实**：任何「有效」结论必须对照随机基线 + 显著性检验；工具的第一句话可能是「别调」（阈值寻优的实测结论）
 2. **杜绝未来函数**：回测只用当期之前的数据
 3. **数据宁缺毋滥**：多源不一致的期号拒绝落库，D1 旧值仍是好的
-4. **免费版友好**：CPU 10ms 限制下自动抽样、三级缓存（isolate 内存 → edge cache → 现算）、重计算走独立请求
-5. **一份事实源**：前端只有 `frontend/` 一份源码，Worker 内联构建产物，杜绝两份 HTML 漂移
+4. **闸门宁可失败不可放水**：数据没验过就标 UNVERIFIED、审计缺项就让 CI 红，「没跑成」不能伪装成「没问题」
+5. **免费版友好**：CPU 10ms 限制下自动抽样、三级缓存（isolate 内存 → edge cache → 现算）、重计算走独立请求
+6. **一份事实源**：前端只有 `frontend/` 一份源码，Worker 内联构建产物，杜绝两份 HTML 漂移
+7. **公开仓库默认不带私人数据**：备份默认不含 `favs`、模板不含真实 ID 与 route、源码与 workflow 不写死任何人的站点地址
 
 ## 📜 版本演进
 
-`v0.5` 数据正确性大修 → `v0.6` 统一预测引擎 → `v0.7` 历史回测 → `v0.8` 校准杀号+胆拖单 → `v0.9` 600 期回测+走势图 → `v0.10` 统计诚实性+复盘闭环 → `v0.11` 工程韧性+今日日报 → `v0.12` 结论可证伪化（8 彩种审计 + 冷门度系数可复现 + 复盘闭环修活）→ `v0.13` 自用顺手与可运维（批量验奖 + 前后端契约测试 + 可选 D1 备份 / 开奖推送，默认关闭）
+`v0.5` 数据正确性大修 → `v0.6` 统一预测引擎 → `v0.7` 历史回测 → `v0.8` 校准杀号+胆拖单 → `v0.9` 600 期回测+走势图 →
+`v0.10` 统计诚实性+复盘闭环 → `v0.11` 工程韧性+今日日报 → `v0.12` 结论可证伪化（8 彩种审计 + 冷门度系数可复现 + 复盘闭环修活）→
+`v0.13` 顺手与可运维（批量验奖 + 前后端契约测试 + 可选 D1 备份 / 开奖推送，默认关闭）
 
 完整变更记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
@@ -324,5 +453,7 @@ lottery-web/
 
 - 自研代码以 MIT 许可发布（见 [LICENSE](LICENSE)）
 - 开奖数据归属原站（500.com / 中彩联 cwl.gov.cn / 17500），本项目仅做统计与缓存
-- 逻辑借鉴（均为自写实现）：sinyu1012/Double-Color-Ball-AI、oahzxd/lottery、BEWINDOWEB/lotterygrabber、longgeyyds/ssq-fusion、Konata/chinese-lottery-predict、zxz0119/lottery-ai-simulator 等 MIT 项目，TheMelody/LotteryTrend（Apache-2.0，保留声明）；完整清单见站内 `/licenses`
-- 随机游戏，统计仅供娱乐，不保证中奖
+- 逻辑借鉴（均为自写实现）：sinyu1012/Double-Color-Ball-AI、oahzxd/lottery、BEWINDOWEB/lotterygrabber、
+  longgeyyds/ssq-fusion、Konata/chinese-lottery-predict、zxz0119/lottery-ai-simulator 等 MIT 项目，
+  TheMelody/LotteryTrend（Apache-2.0，保留声明）；完整清单见站内 `/licenses` 与 [docs/research.md](docs/research.md)
+- **随机游戏，统计仅供娱乐，不保证中奖**

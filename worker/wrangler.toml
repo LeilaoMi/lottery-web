@@ -8,19 +8,19 @@ workers_dev = true
 # 模板里带着别人不持有的 zone，fork 的人直接部署就会失败；换成中性示例更诚实。
 # 要启用：取消注释，改成自己的域名（该域名需已作为 zone 接入你的 Cloudflare 账号）。
 #
-# 注意：作者自己的部署用的是 gitignore 的 `wrangler.local.toml`，那份里**保留着** route，
-# 所以「模板不含 route」不会让线上自定义域名掉绑定 —— 两份文件、两种意图。
+# 注意：自己的部署用的是 gitignore 的 `wrangler.local.toml`，那份里**可以保留** route，
+# 所以「模板不含 route」不会让已经绑好的自定义域名掉绑定 —— 两份文件、两种意图。
 # routes = [
 #   { pattern = "example.com/*", zone_name = "example.com" }
 # ]
 
 [vars]
-VERSION = "0.13.0"
+VERSION = "0.13.1"
 
 # D1 持久化：数据库 lottery（APAC）
 # 注意：database_id 已脱敏，不进仓库。
-# 自建时复制为 wrangler.local.toml 并填入自己的 ID，部署用：
-#   npx wrangler deploy --config worker/wrangler.local.toml
+# 自建时复制为 wrangler.local.toml 并填入自己的 ID。部署在 worker/ 目录内执行（--config 是相对这里的路径）：
+#   cd worker && npm run build:ui && npx --yes wrangler deploy --config wrangler.local.toml
 [[d1_databases]]
 binding = "DB"
 database_name = "lottery"

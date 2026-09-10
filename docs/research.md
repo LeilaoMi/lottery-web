@@ -1,40 +1,76 @@
-# research · 全量吸收（2026-09-07）
+# research · 调研笔记与假设对账
 
-调查：github search `lottery tool ssq` 4条 + `双色球 彩票` 99条 + `lottery web vercel trend` 0条，clone 8库深读。
+这份文档记录两件事：**项目起步时从公开生态里吸收了什么**（2026-09-07 的一次调研），以及
+**这些假设后来在真实全量数据上活得怎么样**。第二部分比第一部分重要——起步阶段的结论大多来自
+别的项目怎么写，而 v0.12 起本站有 3501 期双色球真实开奖（含各奖级中奖注数 / 销量 / 奖池，与官方
+接口逐字段核对一致）可以拿来自我证伪。
 
-## 双源定稿（Workers可用）
-1. 主：`https://datachart.500.com/ssq/history/newinc/history.php?limit=N` HTML表格，正则`<tr>/<td>`，字段期号+红6+蓝+日期+奖池/销量。cwl被WAF 403后的替代，`Lucasyao1985/lottery-skills v6.3`实证。
-2. 官：`https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&issueCount=100&pageNo=1&pageSize=100&systemType=PC`，必须先GET `https://www.cwl.gov.cn/ygkj/wqkjgg/ssq/`拿cookie+UA+Referer，否则result空，`longgeyyds/ssq-fusion`实证。Workers里直试，失败即 fallback。
-3. 备：`http://data.17500.cn/ssq_asc.txt`（及dlt/pl3/pl5/7lc/7xc/kl8），极简txt，实测易429，需缓存+退避。
-4. 体彩：`https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85` DLT，`gameNo=35` PL3类，`Lucasyao1985`+`Konata9`确认。
+复现路径：`scripts/randomness/`（每月由 `.github/workflows/randomness.yml` 自动重跑），
+结论存档 `docs/randomness-latest.md`、`docs/randomness-2026-09.md`、`docs/randomness-multi-latest.md`。
 
-## 校验（强制）
-- SSQ期号7位YYYYNNN（兼容500的5位短号，原样保留比对），红6 01-33无重复排序，蓝01-16。任一失败丢弃，不用模拟。
-- DLT前5/35+后2/12，期号5位YYNNN。
-- 双源都有才比对，不一致标consistent:false+conflict双方，不覆盖。
+## 1. 数据源（仍在使用）
 
-## 分析吸收
-- 多窗口10/20/30/50并行（lottery-skills）
-- 红6策略：稳健热号/进取遗漏狙击/均衡/冷热z-score加权/区间覆盖/随机基准（ssq-fusion strategies.md，源MilkyDragon/Lucasyao1985/LeeX852）
-- 结构分：和值P20-80 +3，奇偶常见+2，大小常见+2，三区全覆盖+2，跨度近均值+1
-- 铁律：避前1期红，蓝冷回补，不追全连号/全顺子/全同尾
-- 蓝独立7维：遗漏0.25+热度0.20+奇偶0.15+区间0.10+振幅0.10+回归0.10，贝叶斯后乘（5期重复×0.7，全缺×1.05）
-- 复盘：新开奖自动对上期预测算红中数/蓝中否/奖等，累计最高/均值
-- 风控：Konata要求必须风险提示“随机/娱乐/不保证”，无真实数据不推荐
+四条摄入路径，全部经过实测；选源的唯一标准是「能不能稳定拿到可校验的结构化字段」。
 
-## 前端吸收（sinyu1012）
-- Tabs：最新预测/图表分析/历史回溯，mobile底 nav，loading屏
-- 图：红频/蓝频/奇偶/和值走势/分区+ECharts，history表+accuracy卡
-- vercel.json头：/data no-cache，nosniff/DENY/XSS
+| 角色 | 端点 | 要点 |
+|---|---|---|
+| 主源 | `datachart.500.com/ssq/history/newinc/history.php?limit=N` | HTML 表格，正则取 `<tr>/<td>`；字段含期号 + 红 6 + 蓝 + 日期 + 奖池 / 销量 |
+| 官方 | `cwl.gov.cn/.../findDrawNotice?name=ssq&issueCount=N` | **必须先 GET 公示页拿 cookie**，再带 UA + Referer 打接口，否则 `result` 为空 |
+| 备源 | `data.17500.cn/{ssq,dlt,3d,pl3,pl5,7lc,7xc,kl8}_asc.txt` | 极简 txt，覆盖 2002~2026 全量；容易 429，必须缓存 + 退避 |
+| 体彩 | `webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85` | 大乐透 `85`，排列三一类 `35` |
 
-## License合规
-- MIT可复用逻辑自写：sinyu1012，oahzxd/lottoery，BEWINDOWEB/lotterygrabber，longgeyyds/ssq-fusion，Konata9，zxz0119
-- Apache-2.0：TheMelody/LotteryTrend，保留声明
-- 无License只借思路不抄码：zepen/predict（1029★），piggyone/chromosphere，wushidiguo/hello-lottery（OCR）
-- OCR单列：hello-lottery扫码查奖，自用二期再说
+踩过的坑，写下来免得下一个人再踩：
 
-## 落到lottery-web
-- worker/src/ssq.js：fetch500/fetchCWL/fetch17500+normalize+validate+analysis+blue引擎+recommend
-- worker/src/index.js：只路由/health/latest/history/analyze/recommend
-- db/schema.sql：draws+sync_log
-- frontend/index.html：单文件先跑通mock，真源后切
+- 官方接口对无 cookie / 无 Referer 的请求返回空数组而不是报错，看起来像「今天没开奖」。
+- 备源早期年份的某些列是 `-` 占位（如大乐透 2007–2008 的开奖顺序列），不能直接 `Number()`。
+- 备源有回填缺陷：大乐透前区 χ²=89.1（p<1e-9）一度像"发现"，分半相关 r=−0.26、只用 2015 年后重测
+  p=0.89 —— 那是 **2007–2014 的数据回填问题**，不是物理偏。数据没有分年代复核前不要出结论。
+
+## 2. 校验策略（采纳，并且是硬闸门）
+
+- 期号格式（双色球 7 位 `YYYYNNN`、大乐透 5 位 `YYNNN`）、值域、去重、排序逐项校验，任一失败即丢弃该期。
+- 多源都有的期次才比对；不一致则记 `consistent:false` 并保留双方值，**不覆盖、不落库**。
+- 任何解析结果都要过一遍结构闸门（值域 / 重复 / 年内跳号）+ 与另一条摄入路径逐期号码交叉校验；
+  不过闸门的彩种在报告里点名标 `UNVERIFIED`，不静默丢弃。
+- 「同源」要说清楚：除大乐透（500 独立源）外，其余彩种的公共接口内部同样读 17500，
+  那几项验证的是**列映射解析是否正确（独立实现）**，不是数据源是否独立。
+
+## 3. 早期分析假设 → 实证对账（本项目最该被读的一节）
+
+起步阶段从社区项目里吸收了不少「选号经验法则」。在 3501 期真实数据上，**它们全部没有通过检验**；
+唯一站得住的是投注侧（人群选号偏好）相关的结论。下面每条都给了对应的检验量。
+
+| 早期假设 | 检验结果（3501 期） | 现在的处理 |
+|---|---|---|
+| 热号会延续（"稳健·热号"） | 分半热号 z 相关 r=0.25（MC p=0.16），两半 Top6 热号只重合 1/6（零分布下 ≥1 的概率 0.73） | 策略保留为**展示与娱乐**，UI 与文档一律不称其"有效" |
+| 遗漏号会回补（"进取·遗漏狙击"） | 红球遗漏均值 5.4923 vs 零分布 5.4929±0.0013（p=0.64）；历史最大遗漏 48 vs 52.7±6.3（p=0.54） | 同上；回测里它与随机基线的差在噪声内 |
+| 避开上期开过的红球（"铁律"） | 与上期重合数 1.0831 vs 理论 1.0909±0.0143（p=0.58） | 该规则只是让人避开一个随机事件，不改变任何概率 |
+| 蓝球冷了该回补 / 蓝球 7 维加权评分 | 蓝球与上期相同比率 0.0691 vs 0.0625±0.0040（p=0.11）；蓝球连开、位置、遗漏均落随机区间 | 删除加权评分引擎；蓝球侧只保留「冷门度」这一个有背书的量 |
+| 形态转移矩阵可指导下期 | 独立性检验全 null；和值 / 奇偶 / 三区的名义显著项无一跨过 Bonferroni，且局域在 2015–2018、2019 年后消失 | 只作展示字段（`/api/analyze` 的 `shape`），明确标注提示性而非发现 |
+| 冷热号有"可利用结构" | 号频 χ² 的零分布均值是 **27 而不是 df=32**（每期 6 号互斥）；按解析 df 会把 p=0.021 误判成 0.069 | 零分布一律蒙特卡洛；通用式 `池 × (1 − 每期开出数 / 池)` |
+| **人群选号偏好可预测**（唯一被证实的方向） | 生日区（≤31）一等奖注数中位比 **1.274**（p<1e-9，纯蓝的六等奖安慰剂 1.006 干净归零）；最热蓝 09 vs 最冷蓝 01 = **1.768**；尾 8 超买、尾 4 忌讳；4 个年代 + 3 个开奖日同号复现 | 这是本站唯一被样本外验证支持的可操作项 → 做成**冷门度 `/api/coldness`**：只改变「万一中了要和多少人分奖」，**不改变中奖概率** |
+
+一句话总结：**避开生日区 + 避开热门蓝球这类选号，期望返奖率的天花板量级是 +4.4 个百分点**
+（约 56.1% → 60.5%，按浮动奖历史均值定价，见 `docs/randomness-latest.md` 经济学一节），
+**且它不改变任何一档的中奖概率**。超出这句话的说法，在这份数据上都没有依据。
+
+## 4. 工程做法层面被吸收下来的
+
+- 多窗口并行统计（10/20/30/50），避免"窗口一换结论就翻"被误读成稳定规律。
+- 复盘闭环：预测必须先快照、开奖后强制对账，命中率公开 + 带显著性检验；不许只留"我说中了"的样本。
+- 风险提示不可省略：随机 / 娱乐 / 不保证，且无真实数据时不给推荐。
+- 前端形态：单页 tab + 移动端底栏 + 走势图；安全响应头（nosniff / DENY / XSS 过滤）随静态托管一起配。
+
+## 5. 第三方项目与许可
+
+调研期间深读过若干开源彩票项目，本站**未复制任何一行源码**，只参考其思路与接口可用性。逐项目许可
+与声明见站内 `/licenses`；README「声明」一节也列了主要参考对象。要点：
+
+- MIT / Apache-2.0 项目：可参考思路，实现自写；Apache-2.0 需保留声明。
+- 无 LICENSE 的仓库：**只读思路，不取代码**（法律上默认保留所有权利，抄了就是侵权）。
+- 涉及 OCR / 扫码识票的项目：能力边界外，未采纳。
+
+## 6. 这份笔记里已经过期的部分
+
+初版调研笔记里的「铁律」与蓝球多维加权那几行已被上面第 3 节的检验结果取代；如果只读第 1~2 节
+（数据源与校验）不会踩坑，读第 3 节时请注意：**它存在的意义是记录我们错在哪，不是提供策略依据**。

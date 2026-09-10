@@ -14,3 +14,7 @@ Thumbs.db
 scripts/randomness/data/*_asc.txt
 # 最近一次 fetch 的交叉校验状态（临时产物，结论已印进 docs/randomness-latest.md 第 0 节）
 scripts/randomness/data/crosscheck.json
+# 内部工作记录：进度日志与跨会话续接文档。它们是给自己用的草稿，会写到本机路径、代理端口、
+# 自己的站点地址，因此不进公开仓库；想留档就在本地放着，或者写到仓库外的目录。
+progress.md
+docs/continue-*.md

@@ -178,7 +178,7 @@ export function runMulti({ sims = 1200 } = {}) {
     const v = verify[kind]; const K = normalize(kind);
     if (kind === "ssq") { out(`- ${KINDS[kind].name}(ssq)：既有基线，data/ssq.json（3501 期，已用 cwl 官方接口逐字段校验）`); if (K) cover.push(K); continue; }
     if (!K || !v || !v.verified) {
-      const why = !K ? "无已验证数据文件" : (v && v.error) ? v.error : (v && v.crossCheck && v.crossCheck.err) ? "交叉校验API不可达" : (v && v.crossCheck && v.crossCheck.match !== v.crossCheck.n) ? `号码匹配 ${v.crossCheck.match}/${v.crossCheck.n}` : (v && v.structural && (v.structural.valBad || v.structural.codeBad)) ? `结构错误 valBad=${v.structural.valBad} codeBad=${v.structural.codeBad}` : "未知";
+      const why = !K ? "无已验证数据文件" : (v && v.error) ? v.error : (v && v.crossCheck && v.crossCheck.skipped) ? "未配置线上公共接口地址（--api-base / LOTTERY_API_BASE），号码交叉校验未执行" : (v && v.crossCheck && v.crossCheck.err) ? "交叉校验API不可达" : (v && v.crossCheck && v.crossCheck.match !== v.crossCheck.n) ? `号码匹配 ${v.crossCheck.match}/${v.crossCheck.n}` : (v && v.structural && (v.structural.valBad || v.structural.codeBad)) ? `结构错误 valBad=${v.structural.valBad} codeBad=${v.structural.codeBad}` : "未知";
       out(`- ${KINDS[kind].name}(${kind})：**未验证，不纳入统计** —— ${why}`); continue;
     }
     out(`- ${KINDS[kind].name}(${kind})：${v.rows} 期 ${v.range[0]}→${v.range[1]}｜结构 0 异常(跳号${v.structural.jumps})｜D1 号码交叉校验 ${v.crossCheck.match}/${v.crossCheck.n}（${v.crossCheck.independence}）｜VERIFIED`);

@@ -22,7 +22,7 @@ export default {
     if (url.pathname === "/sw.js") return new Response(SW, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" } });
     if (url.pathname === "/manifest.json") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } });
     if (url.pathname === "/icon.svg") return new Response(ICON, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800" } });
-    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.13.0", lotteries: LOTS.map(x => x.id) });
+    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.13.1", lotteries: LOTS.map(x => x.id) });
     if (url.pathname === "/api/meta") return metaRoute(env);
     if (url.pathname === "/api/records") return recordsRoute(env);
     if (url.pathname === "/licenses") return htmlLicenses();

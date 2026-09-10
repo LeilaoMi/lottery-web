@@ -6,7 +6,10 @@
 ```bash
 node scripts/randomness/fetch-ssq.mjs    # 拉双色球全量历史 + 与官方接口交叉校验 → data/ssq.json
 node scripts/randomness/analyze.mjs      # A/B/C/D/E 全套检验 → stdout + docs/randomness-latest.md
-node scripts/randomness/fetch-multi.mjs  # 拉其余 7 彩种全量历史 + 结构校验 + 与线上 D1 交叉校验 → data/{kind}.json
+node scripts/randomness/fetch-multi.mjs --api-base=https://lottery-web.<你的子域>.workers.dev
+                                        # 拉其余 7 彩种全量历史 + 结构校验 + 与线上 D1 公共接口逐期号码交叉校验 → data/{kind}.json
+                                        # 地址也可用环境变量 LOTTERY_API_BASE 提供；两者都不给 → 只做结构校验，
+                                        # 号码交叉校验被【显式跳过】并在报告里标注原因，该彩种不计入 VERIFIED（闸门不放水）
 node scripts/randomness/analyze.mjs --all       # 双色球深检之后，再跑 8 彩种扩展审计 → docs/randomness-multi-latest.md
 node --test scripts/randomness/stats.test.mjs   # 统计内核单元测试
 ```
@@ -14,7 +17,8 @@ node --test scripts/randomness/stats.test.mjs   # 统计内核单元测试
 可选：`node scripts/randomness/analyze.mjs 6000`（改模拟次数）；环境变量
 `RANDOMNESS_ALLOW_STALE=1`（离线复现历史结论时跳过新鲜度闸门）、`RANDOMNESS_USE_CACHE=1`
 （fetch 复用本地 `data/ssq_asc.txt`）。`.github/workflows/randomness.yml` 每月 1 日跑一次，
-不需要任何 secrets，并把生成的 markdown 存成 artifact。
+不需要任何 secrets，只需一个**仓库变量** `PUBLIC_API_BASE`（普通变量，不是密钥）指向某个已部署实例的公共接口，
+并把生成的 markdown 存成 artifact。不配这个变量时，多彩种交叉校验会跳过、VERIFIED 闸门如实失败。
 
 数据源：`http://data.17500.cn/{ssq,dlt,3d,pl3,pl5,7lc,7xc,kl8}_asc.txt`（各自 2002~2026 年全量）。
 双色球额外配 `cwl.gov.cn` 官方接口做逐字段交叉校验；其余彩种的公共 API 内部也读 17500，
@@ -72,6 +76,8 @@ node --test scripts/randomness/stats.test.mjs   # 统计内核单元测试
 - `lib-kinds.mjs` — 彩种参数表（池大小 / 每期开出数 / pool vs digit 型）+ 通用组统计与模拟。
   零分布期望一律 `pool × (1 − k/pool)` 现算，**绝不硬编码 33/6/27**（那是双色球的数）。
 - `fetch-multi.mjs` — 7 个彩种的下载 + 结构校验（值域 / 重复 / 跳号）+ 与线上 `D1` 公共接口逐期号码交叉校验。
+  校验地址由 `--api-base=` 或 `LOTTERY_API_BASE` 提供（源码里不写死任何人的站点）；没给就跳过该闸门并在
+  `verify.json` 里记 `skipped`，报告如实写「未执行」，不会伪造成通过。
 - `multi.mjs` — 8 彩种开奖侧引擎（A/B/C + Bonferroni 联合校正 + 检测功效），写 `docs/randomness-multi-latest.md`。
 - `stats.test.mjs` — 内核单元测试，期望值取自教科书/手算（不是从实现里抄的）。
 - `data/*.json` — 已提交的全量历史基线（离线也能复现本仓库文档里的结论）。

@@ -1,8 +1,10 @@
 name: randomness
 
 # 每月一次：重新拉取 8 彩种全量历史 → 随机性审计 → 归档报告。
-# 与 ci(sync.yml) 完全独立，本任务【不需要任何 secrets】（只读公网数据源 + 本地计算 + 只读公共 API）。
-# fetch-multi 会打线上 /api/{kind}/history 做号码交叉校验，但不需要 token。
+# 与 ci(sync.yml) 完全独立，本任务【不需要任何 secrets】（只读公网数据源 + 本地计算 + 只读公共接口）。
+# 号码交叉校验需要一个已部署实例的公共接口地址：把它配成仓库变量 PUBLIC_API_BASE
+# （Settings → Secrets and variables → Actions → Variables），源码里不写死任何人的域名。
+# 不配 → fetch-multi 显式跳过该闸门，下面的「8 彩种 VERIFIED」闸门会如实失败，而不是放水通过。
 on:
   schedule:
     # 每月 1 日 09:15 北京时间（UTC 01:15）；错开 sync.yml 的开奖时段
@@ -34,7 +36,20 @@ jobs:
       - name: 拉取双色球全量历史 + 官方接口逐字段交叉校验
         run: node scripts/randomness/fetch-ssq.mjs
 
+      - name: 检查交叉校验地址是否已配置
+        env:
+          PUBLIC_API_BASE: ${{ vars.PUBLIC_API_BASE }}
+        run: |
+          if [ -z "$PUBLIC_API_BASE" ]; then
+            echo "::warning::仓库变量 PUBLIC_API_BASE 未配置 —— 号码交叉校验不会执行，本轮所有彩种都记为 UNVERIFIED，最后的 VERIFIED 闸门将失败。"
+            echo "::warning::自建部署请把它设为自己的站点地址（如 https://lottery-web.<你的子域>.workers.dev）；暂不需要这条审计链可直接停用本 workflow。"
+          else
+            echo "交叉校验目标：$PUBLIC_API_BASE"
+          fi
+
       - name: 拉取其余 7 彩种全量历史 + 结构校验 + 线上号码交叉校验
+        env:
+          LOTTERY_API_BASE: ${{ vars.PUBLIC_API_BASE }}
         run: node scripts/randomness/fetch-multi.mjs
 
       - name: 审计（A 均匀性 / B 独立性 / C 稳定性 / D 投注侧 / E 经济学 + 8 彩种扩展）
@@ -64,8 +79,8 @@ jobs:
           n=$(grep -c '｜VERIFIED$' docs/randomness-multi-latest.md || true)
           echo "多彩种报告里 VERIFIED 行数：$n（期望 7，双色球作为既有基线单列）"
           [ "$n" -ge 7 ] || {
-            echo "::error::有彩种未通过数据验收，开奖侧结论不完整"
-            grep -n '未通过\|VERIFIED\|结构.*异常' docs/randomness-multi-latest.md | head -30 || true
+            echo "::error::有彩种未通过数据验收，开奖侧结论不完整（最常见原因：仓库变量 PUBLIC_API_BASE 未配置）"
+            grep -n '未通过\|未验证\|VERIFIED\|结构.*异常' docs/randomness-multi-latest.md | head -30 || true
             exit 1
           }
           grep -q '本 `--all` 只做\*\*开奖侧\*\*' docs/randomness-multi-latest.md || {
