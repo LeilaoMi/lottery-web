@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { normNums, pad2, prizeSSQ, prizeDLT, prizeQLC, rotation, verifyCoverage } from "../src/small.js";
+import { normNums, pad2, prizeSSQ, prizeDLT, prizeDLTOld, prizeDLTFor, dltFixedAmount, DLT_CUTOVER, prizeQLC, rotation, verifyCoverage } from "../src/small.js";
 import { valid, norm, normCode, analyze, blueScores, verify, trend, parse17500 } from "../src/ssq.js";
 import { validDLT, normDLT, verifyDLT, analyzeDLT } from "../src/dlt.js";
 
@@ -104,6 +104,37 @@ describe("奖级规则", () => {
     assert.equal(prizeDLT(0, 2), "九等");
     assert.equal(prizeDLT(1, 2), "九等");
     assert.equal(prizeDLT(0, 0), "未中");
+  });
+  test("大乐透旧规则六档（2019-02-20 第19019期之前）", () => {
+    assert.equal(DLT_CUTOVER, "2019-02-20");
+    assert.equal(prizeDLTOld(5, 2), "一等");
+    assert.equal(prizeDLTOld(5, 1), "二等");
+    assert.equal(prizeDLTOld(5, 0), "三等");
+    assert.equal(prizeDLTOld(4, 2), "三等");
+    assert.equal(prizeDLTOld(4, 1), "四等");
+    assert.equal(prizeDLTOld(3, 2), "四等");
+    assert.equal(prizeDLTOld(4, 0), "五等");
+    assert.equal(prizeDLTOld(3, 1), "五等");
+    assert.equal(prizeDLTOld(2, 2), "五等");
+    assert.equal(prizeDLTOld(3, 0), "六等");
+    assert.equal(prizeDLTOld(0, 2), "六等");
+    assert.equal(prizeDLTOld(0, 0), "未中");
+  });
+  test("大乐透按开奖日期选择版本（分界 2019-02-20，缺失日期沿用现行）", () => {
+    assert.equal(prizeDLTFor("2019-02-19", 4, 2), "三等");
+    assert.equal(prizeDLTFor("2019-02-20", 4, 2), "四等");
+    assert.equal(prizeDLTFor("", 4, 2), "四等");
+    assert.equal(prizeDLTFor(null, 4, 2), "四等");
+  });
+  test("大乐透固定奖按版本取常量，浮动奖为 null", () => {
+    assert.equal(dltFixedAmount("三等", "2026-09-16"), 10000);
+    assert.equal(dltFixedAmount("九等", "2026-09-16"), 5);
+    assert.equal(dltFixedAmount("一等", "2026-09-16"), null);
+    assert.equal(dltFixedAmount("二等", "2026-09-16"), null);
+    assert.equal(dltFixedAmount("三等", "2018-01-01"), null);
+    assert.equal(dltFixedAmount("四等", "2018-01-01"), 200);
+    assert.equal(dltFixedAmount("六等", "2018-01-01"), 5);
+    assert.equal(dltFixedAmount("未中", "2026-09-16"), null);
   });
   test("七乐彩七档", () => {
     assert.equal(prizeQLC(7, false), "一等");

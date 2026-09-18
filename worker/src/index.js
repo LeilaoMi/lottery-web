@@ -1,6 +1,6 @@
 import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
 import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
-import { fetchSmall, prizeSSQ, prizeDLT, prizeQLC, rotation } from "./small.js";
+import { fetchSmall, prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC, rotation } from "./small.js";
 import { verifyBatch } from "./verify-batch.js";
 import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
@@ -22,7 +22,7 @@ export default {
     if (url.pathname === "/sw.js") return new Response(SW, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" } });
     if (url.pathname === "/manifest.json") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } });
     if (url.pathname === "/icon.svg") return new Response(ICON, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800" } });
-    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.13.1", lotteries: LOTS.map(x => x.id) });
+    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.14.0", lotteries: LOTS.map(x => x.id) });
     if (url.pathname === "/api/meta") return metaRoute(env);
     if (url.pathname === "/api/records") return recordsRoute(env);
     if (url.pathname === "/licenses") return htmlLicenses();
@@ -92,7 +92,12 @@ async function dltRoute(request, env, url) {
     else if (url.pathname.endsWith("/predict")) res = json(recommendAll("dlt", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), 200, 0);
     else if (url.pathname.endsWith("/verify")) {
       const code = url.searchParams.get("code") || "", f = (url.searchParams.get("front") || "").split(/[ ,]+/).filter(Boolean), b = (url.searchParams.get("back") || "").split(/[ ,]+/).filter(Boolean);
-      const r = verifyDLT(draws, code, f, b); if (r.hit) r.prize = prizeDLT(r.hitFront, r.hitBack); res = json(r);
+      const r = verifyDLT(draws, code, f, b);
+      if (r.hit) {
+        r.prize = prizeDLTFor(r.actual && r.actual.date, r.hitFront, r.hitBack);
+        r.amount = dltFixedAmount(r.prize, r.actual && r.actual.date);
+      }
+      res = json(r);
     } else return json({ error: "not_found" }, 404);
     if (url.pathname.endsWith("/history") || url.pathname.endsWith("/latest")) { const c = res.clone(); c.headers.set("Cache-Control", "public, max-age=600"); try { await cache.put(ck, c); } catch {} }
     return res;
@@ -313,7 +318,11 @@ function prizeRoute(url) {
     return json(digit3Prize(bet, draw), 200, 0);
   }
   if (kind === "ssq") { const r = prizeSSQ(g("hitMain"), !!g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: !!g("hitAux"), prize: r }, 200, 0); }
-  if (kind === "dlt") { const r = prizeDLT(g("hitMain"), g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r }, 200, 0); }
+  if (kind === "dlt") {
+    const dateStr = (url.searchParams.get("date") || "").trim();
+    const r = prizeDLTFor(dateStr, g("hitMain"), g("hitAux"));
+    return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r, amount: dltFixedAmount(r, dateStr) }, 200, 0);
+  }
   if (kind === "qlc") { const r = prizeQLC(g("hitMain"), g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r }, 200, 0); }
   return json({ kind, prize: g("exact") ? "直选" : "未中", note: "数字型逐位比对，全中即直选" }, 200, 0);
 }

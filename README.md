@@ -6,10 +6,10 @@
 
 **统计诚实性优先：每个「有效」结论都要有可复现的检验背书**
 
-![version](https://img.shields.io/badge/version-0.13.1-blue)
+![version](https://img.shields.io/badge/version-0.14.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
-![unit%20tests](https://img.shields.io/badge/unit%20tests-106-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-110-brightgreen)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
 Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
@@ -56,7 +56,7 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 - **胆拖投注单**：一键生成注数金额，可保存收藏 / 复制 / 导出 TXT
 - **批量验奖 `POST /api/verify-batch`**：一沓票贴进来一次验多期（≤200 注 × ≤10 期）。奖级判定**复用**与单注验奖、
   中奖计算器同一套函数——两套验奖规则迟早分叉，分叉的结果就是「工具说中了、彩票站说没中」。
-  金额只给本站校验过的固定奖级；浮动奖（双色球一二等奖）与规则换过时代的彩种（大乐透）返回 `null` 并说明原因，**不猜数、更不显示成 0**
+  金额只给本站校验过的固定奖级：双色球三~六等、大乐透固定奖（按开奖日期选择规则版本，2019-02-20 第19019期为界）；浮动奖返回 `null` 并说明原因，**不猜数、更不显示成 0**
 - **冷门度 `/api/coldness`（本项目唯一被样本外验证支持的可操作项）**：估计一注号码**万一中了要和多少人分奖**，不改变中奖概率。
   系数来自双色球全量 3501 期中 3250 期的**真实一等奖中奖注数**（按销量归一），按时间顺序旧 70%（2275 期）拟合、新 30%（975 期）样本外检验：
   五分位最热 / 最冷 = **1.506 倍**（p=6.2e-10）；安慰剂对照（蓝球特征打在不含蓝球的二等奖上）= **1.006 / 0.993** 干净归零；
@@ -182,7 +182,7 @@ flowchart LR
 | 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
 | 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
 | 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 106 项单元测试（89 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
+| 测试 | `node --test` | 110 项单元测试（93 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
 
 ---
 
@@ -273,7 +273,7 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（106 项，零依赖，离线可跑）
+npm test             # 单元测试（110 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
@@ -329,11 +329,11 @@ node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与
 |---|---|---|
 | `/api/{kind}/latest` / `history?limit=` | — | 最新一期 / 历史 |
 | `/api/{kind}/verify` | ssq: `code&red&blue` · dlt: `code&front&back` · 其余: `code&nums` | 验奖 |
-| `/api/verify-batch` | **POST** + JSON `{"kind","code"或"codes"[],"tickets"[],"mult"}` | 批量验奖（≤200 注 × ≤10 期）。返回逐注奖级/命中/金额 + 每期汇总；`errors[].line` 是你贴进来的原始行号，`amount: null` 表示**该奖级金额本站未校验**（浮动奖或规则分时代），不是 0 |
+| `/api/verify-batch` | **POST** + JSON `{"kind","code"或"codes"[],"tickets"[],"mult"}` | 批量验奖（≤200 注 × ≤10 期）。返回逐注奖级/命中/金额 + 每期汇总；`errors[].line` 是你贴进来的原始行号，`amount: null` 表示**该奖级金额本站未校验**（浮动奖），不是 0；大乐透固定奖按开奖日期选择规则版本（2019-02-20 为界） |
 | `/api/meta` | — | 彩种元数据 + `stale[]` 数据新鲜度 + `predlog[]` 复盘闭环健康度 |
 | `/api/records` | — | 破纪录遗漏预警（当前遗漏 vs 样本内历史最大遗漏） |
 | `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划 |
-| `/api/prize` | `kind=` + 命中参数 | 奖级与固定奖金额 |
+| `/api/prize` | `kind=` + 命中参数（大乐透可选 `date=YYYY-MM-DD` 选规则版本） | 奖级与固定奖金额 |
 | `/api/rotation` | `n=&pick=&hit=` | 旋转矩阵（覆盖设计，注数约理论下界 1.5 倍） |
 | `/api/favs` | GET/POST/DELETE | 收藏（需鉴权） |
 | `/api/admin/sync` | POST | 触发 8 彩种落库（需鉴权），响应含各彩种 `crosscheck` 报告 |

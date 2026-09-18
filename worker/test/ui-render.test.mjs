@@ -75,7 +75,7 @@ test("前端渲染：期号不存在时给可读提示而不是空卡片", () =>
   assert.ok(!html.includes("<table>"), "没有结果就不该渲染中奖表");
 });
 
-test("前端渲染：大乐透只给奖级不给金额（金额未校验的彩种不假装有数）", () => {
+test("前端渲染：大乐透浮动奖仍用见公告占位（固定奖按版本给金额）", () => {
   const draws = [{ code: "26104", date: "2026-09-07", front: ["01", "05", "12", "22", "30"], back: ["03", "07"] }];
   const r = verifyBatch("dlt", draws, ["01 05 12 22 30 + 03 07"], ["26104"], 1);
   assert.equal(r.rounds[0].results[0].grade, "一等");
@@ -85,7 +85,20 @@ test("前端渲染：大乐透只给奖级不给金额（金额未校验的彩�
   assert.ok(html.includes("—（见公告）"), "金额未校验 → 用「见公告」占位");
   assert.ok(!/<td>0 元<\/td>/.test(html), "中奖行不许显示成 0 元（汇总行的 0 元是合法累计值，不在此列）");
   assert.ok(html.includes("另有 1 注中的是本站未给金额的奖级"), "要有注数级别的未给金额提示");
-  assert.ok(html.includes("该彩种固定奖金额本站未逐字段校验"), "要有彩种级别的说明");
+  assert.ok(html.includes("部分奖级金额未校验"), "要有彩种级别的说明");
+});
+
+test("前端渲染：大乐透固定奖按版本给金额（新规则三等 10000，旧规则四等 200）", () => {
+  const draws = [
+    { code: "26106", date: "2026-09-16", front: ["01", "05", "12", "22", "30"], back: ["03", "07"] },
+    { code: "18001", date: "2018-01-03", front: ["01", "05", "12", "22", "30"], back: ["03", "07"] },
+  ];
+  const rNew = verifyBatch("dlt", draws, ["01 05 12 22 30 + 08 09"], ["26106"], 1);
+  assert.equal(rNew.rounds[0].results[0].grade, "三等");
+  assert.equal(rNew.rounds[0].results[0].amount, 10000);
+  const rOld = verifyBatch("dlt", draws, ["01 05 12 22 07 + 03 08"], ["18001"], 1);
+  assert.equal(rOld.rounds[0].results[0].grade, "四等");
+  assert.equal(rOld.rounds[0].results[0].amount, 200);
 });
 
 test("前端渲染：数字彩按位命中与快乐8中奖金额走同一条通路", () => {

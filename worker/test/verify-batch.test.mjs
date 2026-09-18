@@ -45,12 +45,17 @@ test("双色球：奖级与金额（一二等奖为浮动奖，必须给 null �
   assert.equal(scoreTicket("ssq", { main: ["01", "02", "04", "06", "20", "33"], aux: ["01"] }, SSQ).grade, "未中");
 });
 
-test("大乐透：只给奖级，金额显式为 null 并说明原因（规则换过版本，不猜）", () => {
+test("大乐透：固定奖按版本给金额，浮动奖为 null 并说明原因", () => {
   const r = scoreTicket("dlt", { main: ["05", "12", "19", "28", "34"], aux: ["01", "02"] }, DLT);
   assert.deepEqual([r.grade, r.hitMain, r.hitAux], ["三等", 5, 0]);
-  assert.equal(r.amount, null); assert.match(r.note, /2026-02-02/);
+  assert.equal(r.amount, 10000); assert.equal(r.note, undefined);  // 新规则三等固定
+  const r1 = scoreTicket("dlt", { main: ["05", "12", "19", "28", "34"], aux: ["03", "11"] }, DLT);
+  assert.equal(r1.grade, "一等"); assert.equal(r1.amount, null); assert.match(r1.note, /官方公告/);
   assert.equal(scoreTicket("dlt", { main: ["05", "12", "19", "28", "33"], aux: ["03", "11"] }, DLT).grade, "四等");
   assert.equal(scoreTicket("dlt", { main: ["05", "12", "19", "06", "07"], aux: ["03", "11"] }, DLT).grade, "六等");
+  const old = { ...DLT, date: "2018-06-01" };
+  const ro = scoreTicket("dlt", { main: ["05", "12", "19", "06", "07"], aux: ["03", "01"] }, old);
+  assert.deepEqual([ro.grade, ro.amount], ["五等", 10]);  // 旧规则 3+1 为五等 10 元
 });
 
 test("快乐8 按「选几 × 命中个数」查表，给金额", () => {

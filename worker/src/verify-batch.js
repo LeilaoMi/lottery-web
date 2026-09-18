@@ -1,7 +1,7 @@
 // verify-batch：一沓号码一次验完（自用场景：买了 5 注 2 个彩种，想知道昨晚中了什么）
 // 纯函数 + 零依赖，不碰 node 内置模块（Workers 限制）；奖级判定一律复用既有函数，
 // 绝不在这里另写一套奖级规则 —— 两套实现迟早分叉，分叉的就是「验奖说中了、官方说没中」。
-import { prizeSSQ, prizeDLT, prizeQLC } from "./small.js";
+import { prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC } from "./small.js";
 import { kl8Prize, digit3Prize } from "./calc.js";
 
 // 固定奖金额表：**只收录本站有把握的项**，其余一律返回 null 并说明原因。
@@ -9,15 +9,14 @@ import { kl8Prize, digit3Prize } from "./calc.js";
 //   ssq 三~六等：2014 年规则以来恒定的固定奖（一二等为浮动奖，按当期奖池与注数分配 → null）
 //   fc3d / pl3：直选 1040 / 组三 346 / 组六 173（digit3Prize 内置）
 //   kl8：按「选几」查表（kl8Prize 内置）
-//   dlt：固定奖金额在 2026-02-02 换过规则，且历史上有 4 个时代（实测见 docs/coldness-dlt-2026-09.md）
-//        → 不给金额，只给奖级；要钱请看当期官方公告
+//   dlt：按开奖日期选择规则版本（2019-02-20 第19019期为界，见 small.js），固定奖给版本常量，浮动奖 null
 //   qlc / pl5 / qxc：未做逐字段校验，同样只给奖级
 export const FIXED = {
   ssq: { 三等: 3000, 四等: 200, 五等: 10, 六等: 5 },
   dlt: null, qlc: null, pl5: null, qxc: null
 };
 export const AMOUNT_NOTE = {
-  dlt: "大乐透固定奖金额随规则版本变化（2026-02-02 起为新标准），本站只给奖级不给金额",
+  dlt: "浮动奖（一二等）金额以官方公告为准",
   qlc: "七乐彩奖级已按官方规则判定；金额需按当期公告，本站未校验",
   pl5: "排列5 奖级按位判定；金额未校验，故不给出",
   qxc: "七星彩一等奖为浮动奖，其余奖级金额未逐字段校验，故不给出"
@@ -74,7 +73,9 @@ export function scoreTicket(kind, t, d) {
   if (kind === "dlt") {
     const F = new Set((d.front || []).map(pad2)), K = new Set((d.back || []).map(pad2));
     const hm = t.main.filter(x => F.has(x)).length, ha = t.aux.filter(x => K.has(x)).length;
-    return { hitMain: hm, hitAux: ha, grade: prizeDLT(hm, ha), amount: null, note: AMOUNT_NOTE.dlt };
+    const grade = prizeDLTFor(d.date, hm, ha);
+    const amount = grade === "未中" ? 0 : dltFixedAmount(grade, d.date);
+    return { hitMain: hm, hitAux: ha, grade, amount, ...(amount == null ? { note: AMOUNT_NOTE.dlt } : {}) };
   }
   if (kind === "qlc") {
     const M = new Set((d.main || []).map(pad2)), S = pad2(d.special);
@@ -129,7 +130,7 @@ export function verifyBatch(kind, draws, tickets, codes, mult = 1) {
   return {
     kind, name: ({ ssq: "双色球", dlt: "大乐透", qlc: "七乐彩", kl8: "快乐8", fc3d: "福彩3D", pl3: "排列3", pl5: "排列5", qxc: "七星彩" })[kind],
     tickets: parsed.length, parsed: parsed.length - errors.length, errors,
-    // 该彩种的固定奖金额本站未校验 → 只给奖级不给钱（见 AMOUNT_NOTE 的理由）
+    // 该彩种仍有未校验金额的奖级（浮动奖；大乐透固定奖已按版本给出）→ 见 AMOUNT_NOTE 的理由
     amountUnverified: Object.prototype.hasOwnProperty.call(AMOUNT_NOTE, kind) ? [kind] : [],
     rounds,
     note: "注数按每注 2 元计。金额只在本站有把握的奖级给出（null = 未给出而非 0）；奖级判定复用与 /api/prize、/api/{kind}/verify 相同的函数。",

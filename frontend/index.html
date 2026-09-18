@@ -809,7 +809,7 @@ function renderVerifyBatch(r){
     }
     h += '</div>';
   }
-  if (r.amountUnverified && r.amountUnverified.length) h += '<div class="muted">该彩种固定奖金额本站未逐字段校验 → 只给奖级不给金额，理由见每期结果内的说明与 README。</div>';
+  if (r.amountUnverified && r.amountUnverified.length) h += '<div class="muted">该彩种部分奖级金额未校验（浮动奖按当期公告；大乐透固定奖已按开奖日期选择规则版本给出），理由见每期结果内的说明与 README。</div>';
   return h + '<div class="muted">' + esc(r.note || '') + '<br>' + esc(r.disclaimer || '') + '</div>';
 }
 function buildVerify(id){
