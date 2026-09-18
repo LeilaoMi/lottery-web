@@ -96,6 +96,37 @@ export function prizeDLT(hf, hb) {
   return "未中";
 }
 
+// 大乐透规则版本分界：2019-02-20 第19019期起新规则（6 奖级→9 奖级，13 个中奖条件不变）。
+export const DLT_CUTOVER = "2019-02-20";
+
+// 旧规则（2007 上市→2019-02-18）：6 个奖级，一二三等为浮动奖。
+export function prizeDLTOld(hf, hb) {
+  if (hf === 5 && hb === 2) return "一等";
+  if (hf === 5 && hb === 1) return "二等";
+  if ((hf === 5 && hb === 0) || (hf === 4 && hb === 2)) return "三等";
+  if ((hf === 4 && hb === 1) || (hf === 3 && hb === 2)) return "四等";
+  if ((hf === 4 && hb === 0) || (hf === 3 && hb === 1) || (hf === 2 && hb === 2)) return "五等";
+  if ((hf === 3 && hb === 0) || (hf === 2 && hb === 1) || (hf === 1 && hb === 2) || (hf === 0 && hb === 2)) return "六等";
+  return "未中";
+}
+
+// 按开奖日期（YYYY-MM-DD）选择奖级映射；日期缺失或非法时沿用现行规则（保持旧行为）。
+export function prizeDLTFor(dateStr, hf, hb) {
+  const day = String(dateStr || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day) && day < DLT_CUTOVER) return prizeDLTOld(hf, hb);
+  return prizeDLT(hf, hb);
+}
+
+// 大乐透固定奖官方值（基本投注；追加/派奖/特别规定另计）。旧规则三等、新规则一二等为浮动奖。
+export const DLT_FIXED_NEW = { 三等: 10000, 四等: 3000, 五等: 300, 六等: 200, 七等: 100, 八等: 15, 九等: 5 };
+export const DLT_FIXED_OLD = { 四等: 200, 五等: 10, 六等: 5 };
+export function dltFixedAmount(grade, dateStr) {
+  if (!grade || grade === "未中") return null;
+  const day = String(dateStr || "").slice(0, 10);
+  const table = (/^\d{4}-\d{2}-\d{2}$/.test(day) && day < DLT_CUTOVER) ? DLT_FIXED_OLD : DLT_FIXED_NEW;
+  return table[grade] ?? null;
+}
+
 // 七乐彩奖级（官方七档）：hitMain 基本号命中数，hitSpecial 特别号是否命中
 export function prizeQLC(hitMain, hitSpecial) {
   if (hitMain === 7) return "一等";
