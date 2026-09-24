@@ -117,25 +117,22 @@ jobs:
             echo "::warning::未配置 WORKER_URL，跳过部署后健康检查"
             exit 0
           fi
-          for i in 1 2 3 4 5; do
+          # 边缘节点收敛是异步的：实测 /health 已是新版本但 /api/audit 仍 404（另一 PoP 还在跑旧代码），
+          # 所以两个端点都放进同一重试循环，任一未就绪就等下一轮，而不是 health 一绿就立刻判死。
+          for i in 1 2 3 4 5 6; do
             code=$(curl -sS -m 20 -o /tmp/health.json -w "%{http_code}" "$WORKER_URL/health" || true)
-            if [ "$code" = "200" ]; then
+            acode=$(curl -sS -m 20 -o /tmp/audit.json -w "%{http_code}" "$WORKER_URL/api/audit" || true)
+            if [ "$code" = "200" ] && [ "$acode" = "200" ]; then
               cat /tmp/health.json
-              echo "部署后 /health 200"
-              # 新路由必须在部署后立刻存在（上一版线上是 404）
-              acode=$(curl -sS -m 20 -o /tmp/audit.json -w "%{http_code}" "$WORKER_URL/api/audit" || true)
-              if [ "$acode" != "200" ]; then
-                echo "::error::部署后 /api/audit 返回 $acode（期望 200）"
-                cat /tmp/audit.json || true
-                exit 1
-              fi
-              echo "部署后 /api/audit 200"
+              echo "部署后 /health 200 且 /api/audit 200（attempt $i）"
               exit 0
             fi
-            echo "health attempt $i -> $code，重试…"
-            sleep 3
+            echo "attempt $i：/health=$code /api/audit=$acode，重试…"
+            sleep 5
           done
-          echo "::error::部署后 /health 始终不是 200"
+          echo "::error::部署后检查未收敛：/health=$code /api/audit=$acode"
+          cat /tmp/health.json || true
+          cat /tmp/audit.json || true
           exit 1
 
   smoke:
