@@ -27,6 +27,13 @@ th{background:#fafafa}
 .warn{background:#fff7e6;border:1px solid #ffd591;border-radius:8px;padding:8px;font-size:12px;color:#874d00;margin:10px 0}
 .err{background:#fff1f0;border:1px solid #ffa39e;border-radius:8px;padding:8px;font-size:13px;color:#a8071a;white-space:pre-wrap;word-break:break-all;margin:8px 0}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin:6px 0}
+.cal .wd{text-align:center;font-size:11px;color:#888;padding:2px 0}
+.cal .d{min-height:52px;border:1px solid #eee;border-radius:6px;padding:3px;font-size:11px;background:#fafafa;line-height:1.35}
+.cal .d.out{background:#f3f3f3;color:#bbb}
+.cal .d.hit{background:#fff1f0;border-color:#e11;color:#a8071a;font-weight:600}
+.cal .d .amt{display:block;color:#c00;font-weight:600}
+.cal .cum{font-size:11px;color:#666;margin-top:2px}
 </style>
 </head>
 <body>
@@ -323,19 +330,20 @@ async function loadPredict(id){
         '<div><b>' + esc(r.bets) + ' 注 / ' + esc(r.amount) + ' 元</b>　<span class="muted">已剔除 ' + esc(r.excluded) + ' 个杀号</span></div>' +
         '<div id="tkcold" class="muted">本单冷门度（万一中了能独享多少，不改变中奖概率）加载中…</div>' +
         '<div class="muted">' + esc(r.note) + '</div>' +
-        '<div class="row"><button id="tksave">保存到收藏</button><button id="tkcopy">复制文本</button><button id="tkdl">导出 TXT</button></div>';
+        '<div class="row"><button id="tksave">保存到收藏</button><button id="tkcopy">复制文本</button><button id="tkdl">导出 TXT</button><button id="tkshare">分享图片</button></div>';
       coldnessHtml(id, asArr(r.dan).concat(asArr(r.tuo)), r.aux).then(h => {
         const ce = document.getElementById('tkcold');
         if (ce) ce.innerHTML = '本单' + h + '<span class="muted">（衡量"万一中了能独享多少"，不改变中奖概率）</span>';
       });
       document.getElementById('tksave').onclick = async () => {
         try {
-          await fetch(base() + '/api/favs', {
+          const resp = await fetch(base() + '/api/favs', {
             method: 'POST',
             headers: Object.assign({ 'Content-Type': 'application/json' }, headers()),
             body: JSON.stringify({ kind: id, numbers: '胆 ' + r.dan.join(',') + ' 拖 ' + r.tuo.join(',') + (r.aux && r.aux.length ? ' 副 ' + r.aux.join(',') : ''), note: r.bets + '注/' + r.amount + '元' })
           });
-          document.getElementById('tksave').textContent = '已保存 ✓';
+          const j = await resp.json().catch(() => ({}));
+          document.getElementById('tksave').textContent = j.queued ? '已离线排队 ✓' : '已保存 ✓';
         } catch (e) { errBox(e, out); }
       };
       document.getElementById('tkcopy').onclick = async () => {
@@ -352,6 +360,11 @@ async function loadPredict(id){
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       };
+      document.getElementById('tkshare').onclick = async () => {
+        try {
+          await shareCard({ name: r.name, kindName: r.name, dan: r.dan, tuo: r.tuo, aux: r.aux, bets: r.bets, amount: r.amount }, document.getElementById('tkshare'));
+        } catch (e) { errBox(e, out); }
+      };
     } catch (e) { errBox(e, out); }
   };
   await loadAnalyze(id);
@@ -364,6 +377,82 @@ function tkText(r){
     (r.aux && r.aux.length ? '\n副区: ' + r.aux.join(',') : '') +
     '\n注数: ' + r.bets + ' 注 / ' + r.amount + ' 元\n生成时间: ' + new Date().toLocaleString() +
     '\n随机游戏，仅供娱乐，不保证中奖';
+}
+
+// ---------- 分享图片卡片（canvas）：把一注推荐/胆拖单画成可保存、可分享的 PNG ----------
+// 纯函数给布局行，便于 ui-render 契约测试锁住文案与免责声明；绘制只消费这些行。
+// 免责声明必须进图：分享出去的图脱离了页面上下文，图上没有「仅供娱乐」等于在替本站背书。
+function shareCardLines(r){
+  const lines = [];
+  lines.push({ t: (r.kindName || r.name || '') + ' · ' + (r.code || ''), s: 'title' });
+  if (r.dan && r.dan.length) lines.push({ t: '胆 ' + r.dan.join(' '), s: 'row' });
+  if (r.tuo && r.tuo.length) lines.push({ t: '拖 ' + r.tuo.join(' '), s: 'row' });
+  if (r.aux && r.aux.length) lines.push({ t: '副 ' + r.aux.join(' '), s: 'row' });
+  if (r.main && r.main.length && !(r.dan && r.dan.length)) lines.push({ t: '号 ' + r.main.join(' ') + (r.blue ? ' + ' + r.blue : ''), s: 'row' });
+  if (r.digits && r.digits.length) lines.push({ t: r.digits.join(' '), s: 'row' });
+  if (r.bets != null) lines.push({ t: r.bets + ' 注 / ' + r.amount + ' 元', s: 'meta' });
+  lines.push({ t: new Date().toLocaleString(), s: 'meta' });
+  lines.push({ t: '随机游戏，仅供娱乐，不保证中奖', s: 'disclaimer' });
+  return lines;
+}
+function drawShareCard(r){
+  const lines = shareCardLines(r);
+  const W = 640, pad = 28, lhTitle = 44, lhRow = 40, lhMeta = 30, lhDisc = 34;
+  let H = pad * 2 + 16;
+  for (const l of lines) H += l.s === 'title' ? lhTitle : l.s === 'row' ? lhRow : l.s === 'disclaimer' ? lhDisc : lhMeta;
+  const cv = document.createElement('canvas');
+  // DPR 缩放：手机上 1x 画布存图会糊
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d');
+  if (!g) return null;
+  g.scale(dpr, dpr);
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#e11'; g.lineWidth = 4;
+  g.strokeRect(2, 2, W - 4, H - 4);
+  let y = pad + 10;
+  for (const l of lines) {
+    if (l.s === 'title') {
+      g.fillStyle = '#111'; g.font = 'bold 26px system-ui, "Microsoft YaHei", sans-serif';
+      g.fillText(l.t, pad, y + 26); y += lhTitle;
+      g.strokeStyle = '#eee'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(pad, y - 6); g.lineTo(W - pad, y - 6); g.stroke();
+    } else if (l.s === 'row') {
+      g.fillStyle = '#111'; g.font = '22px system-ui, "Microsoft YaHei", sans-serif';
+      g.fillText(l.t, pad, y + 26); y += lhRow;
+    } else if (l.s === 'disclaimer') {
+      g.fillStyle = '#a8071a'; g.font = '15px system-ui, "Microsoft YaHei", sans-serif';
+      g.fillText(l.t, pad, y + 22); y += lhDisc;
+    } else {
+      g.fillStyle = '#666'; g.font = '15px system-ui, "Microsoft YaHei", sans-serif';
+      g.fillText(l.t, pad, y + 20); y += lhMeta;
+    }
+  }
+  return cv;
+}
+async function shareCard(r, btn){
+  try {
+    const cv = drawShareCard(r);
+    if (!cv) throw new Error('当前浏览器不支持 canvas');
+    const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+    if (!blob) throw new Error('图片导出失败');
+    const file = new File([blob], (r.name || 'share') + '-card.png', { type: 'image/png' });
+    // Web Share API（手机主流浏览器）：直接调系统分享面板；不支持则回退为下载 PNG
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: r.name || '推荐单' });
+      if (btn) btn.textContent = '已分享 ✓';
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = file.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    if (btn) btn.textContent = '已下载 ✓';
+  } catch (e) {
+    if (btn) btn.textContent = '分享失败';
+    throw e;
+  }
 }
 
 // ---------- 冷门度：只回答"万一中了能独享多少"，不改变中奖概率 ----------
@@ -648,6 +737,63 @@ async function loadHistory(id){
 }
 
 // ---------- 工具：注数/金额/追号 与 中奖计算器 ----------
+// 追号日历：把 plan[].date 按月铺成日历格。纯函数，ui-render 测试直接调。
+function chaseCalendarHtml(chase) {
+  const plan = (chase.plan || []).filter(p => p.date);
+  if (!plan.length) return '';
+  const byMonth = new Map();
+  let cum = 0;
+  for (const p of plan) {
+    cum += Number(p.amount) || 0;
+    const ym = p.date.slice(0, 7);
+    if (!byMonth.has(ym)) byMonth.set(ym, []);
+    byMonth.get(ym).push({ p, cum });
+  }
+  let h = '<div class="muted" style="margin-top:8px">追号开奖日历（按开奖日推算，累计投入标在格内）</div>';
+  for (const [ym, items] of byMonth) {
+    const [y, m] = ym.split('-').map(Number);
+    const first = new Date(Date.UTC(y, m - 1, 1));
+    const lead = first.getUTCDay(); // 周日起格
+    const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const mark = new Map();
+    for (const it of items) mark.set(Number(it.p.date.slice(8, 10)), it);
+    h += '<div style="margin-top:8px"><b>' + y + ' 年 ' + m + ' 月</b><div class="cal">';
+    for (const w of ['日', '一', '二', '三', '四', '五', '六']) h += '<div class="wd">' + w + '</div>';
+    for (let i = 0; i < lead; i++) h += '<div class="d out"></div>';
+    for (let d = 1; d <= dim; d++) {
+      const hit = mark.get(d);
+      if (hit) {
+        h += '<div class="d hit">' + d + '<span class="amt">第' + hit.p.period + '期</span>' +
+          '<span class="amt">' + esc(hit.p.amount) + '元</span>' +
+          '<span class="cum">累 ' + hit.cum + '</span></div>';
+      } else h += '<div class="d">' + d + '</div>';
+    }
+    h += '</div></div>';
+  }
+  if (chase.calendarNote) h += '<div class="muted">' + esc(chase.calendarNote) + '</div>';
+  return h;
+}
+// 站内审计：聚合 /api/audit 的 checks 成表格。纯函数，ui-render 测试直接调。
+// status 着色：fail 红 / warn 橙 / pass 绿 / skip 灰——skip 绝不渲染成绿。
+function renderAudit(r) {
+  const checks = r.checks || [];
+  if (!checks.length) return '<div class="muted">审计未返回任何检查项</div>';
+  const badge = s => ({ fail: '<b style="color:#a8071a">FAIL</b>', warn: '<b style="color:#b26a00">WARN</b>', pass: '<b style="color:#2e7d32">PASS</b>', skip: '<b style="color:#888">SKIP</b>' }[s] || esc(s));
+  let h = '<div class="card"><b>站内审计</b> · 总体 ' + badge(r.overall) +
+    '<div class="muted">生成于 ' + esc(r.generatedAt || '') + '　' + esc(r.note || '') + '</div>' +
+    '<table><tr><th>检查项</th><th>结果</th><th>说明</th></tr>';
+  for (const c of checks) {
+    h += '<tr><td>' + esc(c.label || c.id) + '</td><td>' + badge(c.status) + '</td><td style="text-align:left">' + esc(c.detail || '') + '</td></tr>';
+  }
+  h += '</table>';
+  // 新鲜度明细：陈旧彩种单独列出来，一眼能看到是哪一家拖后腿
+  const fresh = checks.find(c => c.id === 'data_freshness' && Array.isArray(c.items));
+  if (fresh && fresh.items.length) {
+    const bad = fresh.items.filter(x => typeof x.days === 'number' && x.days >= 3).sort((a, b) => b.days - a.days);
+    if (bad.length) h += '<div class="muted">≥3 天未更新：' + bad.map(x => esc(x.name) + ' ' + x.days + ' 天').join('、') + '</div>';
+  }
+  return h + '</div>';
+}
 // 长期返奖率（期望回收 ÷ 投入），数值取自全量历史审计：docs/randomness-2026-09.md
 const PAYOUT = { ssq: 0.51, dlt: 0.51, qlc: 0.51, kl8: 0.57, fc3d: 0.52, pl3: 0.52, pl5: 0.52, qxc: 0.52 };
 const CALC_FIELDS = {
@@ -676,7 +822,13 @@ function buildTools(id){
     '<h3 style="margin:16px 0 8px">中奖计算器</h3><div class="row" id="prow">' + inputs(pf) + '</div>' +
     '<div class="row"><button id="pgo">判定奖级</button></div><div id="pout" class="muted"></div>' +
     '<h3 style="margin:16px 0 8px">预测复盘</h3><div class="row"><button id="rgo">加载复盘数据</button></div>' +
-    '<div id="rout" class="muted">每日同步会自动快照下一期推荐，开奖后自动对账；此处查看滚动命中率与近期对账明细。</div>';
+    '<div id="rout" class="muted">每日同步会自动快照下一期推荐，开奖后自动对账；此处查看滚动命中率与近期对账明细。</div>' +
+    '<h3 style="margin:16px 0 8px">冷门度 · 观测 vs 预测</h3><div class="row"><button id="cbtg">加载回看数据</button></div>' +
+    '<div id="cbtout" class="muted">按预测指数五分位（冷→热）对照实际一等奖注数/亿元。样本外五分位单调上升 = 拟合不是噪声；只影响分奖人数，不改变中奖概率。</div>' +
+    '<h3 style="margin:16px 0 8px">上游同步健康</h3><div class="row"><button id="synctg">加载同步时序</button></div>' +
+    '<div id="syncout" class="muted">每次定时同步的拉取量 / 落库量时序；交叉校验不一致的批次会标红——同步任务停摆或上游改版时这里先亮。</div>' +
+    '<h3 style="margin:16px 0 8px">站内审计</h3><div class="row"><button id="auditgo">运行站内审计</button></div>' +
+    '<div id="auditout" class="muted">一次聚合数据新鲜度 / 复盘闭环 / 同步健康 / 冷门度回看 / 免责声明五项检查；skip=未部署不等于没问题。</div>';
   const q = (row) => [...row.querySelectorAll('input[data-f]')]
     .filter(i => i.value.trim() !== '')
     .map(i => i.dataset.f + '=' + encodeURIComponent(i.value.trim())).join('&');
@@ -688,8 +840,10 @@ function buildTools(id){
       if (r.chase && r.chase.plan) {
         h += '<div class="muted">追号 ' + esc(r.chase.periods) + ' 期　合计 ' + esc(r.chase.totalBets) +
           ' 注 / ' + esc(r.chase.totalAmount) + ' 元</div>' +
-          r.chase.plan.map(p => '<div class="kv"><span>第 ' + p.period + ' 期 ×' + esc(p.mult) + '</span><span>' +
+          r.chase.plan.map(p => '<div class="kv"><span>第 ' + p.period + ' 期 ×' + esc(p.mult) +
+            (p.date ? ' <span class="muted">' + esc(p.date) + '</span>' : '') + '</span><span>' +
             esc(p.bets) + ' 注 / ' + esc(p.amount) + ' 元</span></div>').join('');
+        if (r.chase.plan.some(p => p.date)) h += chaseCalendarHtml(r.chase);
         // 追号预算护栏：把倍投的资金风险摆到台面上（不是劝退，是让投入上限可见）
         const chN = Number(r.chase.periods) || r.chase.plan.length;
         const chTotal = Number(r.chase.totalAmount);
@@ -720,6 +874,7 @@ function buildTools(id){
       let h = s
         ? '<div class="card"><b>已对账 ' + esc(s.checked) + ' 期</b>' +
           (s.pickHitRate != null ? '<div>推荐号命中率 ' + (s.pickHitRate * 100).toFixed(1) + '%（随机基线 ' + (s.pickBaseline * 100).toFixed(1) + '%）' + pTag(s.pickP) + '</div>' : '') +
+          (s.randHitRate != null ? '<div>随机基准命中率 ' + (s.randHitRate * 100).toFixed(1) + '%（同批期号对照组：与上面接近 = 策略无信息量）' + pTag(s.randP) + '</div>' : '') +
           (s.danHitRate != null ? '<div>定胆命中率 ' + (s.danHitRate * 100).toFixed(1) + '%' + pTag(s.danP) + '</div>' : '') +
           (s.killWrongRate != null ? '<div>杀号杀错率 ' + (s.killWrongRate * 100).toFixed(1) + '%（越低越好，低于基线才有价值）' + pTag(s.killP) + '</div>' : '') +
           '<div id="revchart" style="height:200px;margin-top:8px"></div>' + '</div>'
@@ -742,16 +897,95 @@ function buildTools(id){
             grid: { left: 44, right: 12, top: 30, bottom: 24 },
             legend: { top: 0, textStyle: { fontSize: 11 } },
             tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
-            xAxis: { type: 'category', data: ['推荐命中', '杀号错杀'], axisLabel: { fontSize: 11 } },
+            xAxis: { type: 'category', data: ['推荐命中', '随机基准', '杀号错杀'], axisLabel: { fontSize: 11 } },
             yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => (v * 100).toFixed(0) + '%' } },
             series: [
-              { name: '实际', type: 'bar', data: [s.pickHitRate, s.killWrongRate], itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 10, formatter: p => p.value == null ? '' : (p.value * 100).toFixed(1) + '%' } },
-              { name: '随机基线', type: 'bar', data: [s.pickBaseline, s.pickBaseline], itemStyle: { color: '#bbb' } }
+              { name: '实际', type: 'bar', data: [s.pickHitRate, s.randHitRate, s.killWrongRate], itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 10, formatter: p => p.value == null ? '' : (p.value * 100).toFixed(1) + '%' } },
+              { name: '随机基线', type: 'bar', data: [s.pickBaseline, s.pickBaseline, s.pickBaseline], itemStyle: { color: '#bbb' } }
             ]
           });
         }
       }
     } catch (e) { errBox(e, $('#rout')); }
+  };
+  // 冷门度观测 vs 预测：五分位双轴柱线图。数据由 ssq-fit 烘焙进 Worker，D1 里没有历史注数。
+  $('#cbtg').onclick = async () => {
+    try {
+      const r = await api('/api/coldness/backtest');
+      const qs = r.testQuintiles || [];
+      if (!qs.length) throw new Error('回看数据为空');
+      $('#cbtout').innerHTML =
+        '<div class="card"><b>样本外五分位回看</b>（训练 ' + esc(r.nTrain) + ' 期拟合 → 样本外 ' + esc(r.nTest) + ' 期验证）' +
+        '<div class="muted">最热/最冷 = ' + esc(r.ratioTest) + '（样本内 ' + esc(r.ratioTrain) + '，差距即过拟合量）。' + esc(r.note || '') + '</div>' +
+        '<div id="cbtchart" style="height:240px;margin-top:8px"></div></div>';
+      if (typeof echarts !== 'undefined') {
+        const el = document.getElementById('cbtchart');
+        if (el) {
+          if (window.__cbtchart) window.__cbtchart.dispose();
+          window.__cbtchart = echarts.init(el);
+          window.__cbtchart.setOption({
+            grid: { left: 50, right: 50, top: 34, bottom: 28 },
+            legend: { top: 0, textStyle: { fontSize: 11 } },
+            tooltip: { trigger: 'axis' },
+            xAxis: { type: 'category', data: qs.map(q => 'Q' + q.q + '(冷→热)'), axisLabel: { fontSize: 11 } },
+            yAxis: [
+              { type: 'value', name: '注数/亿', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+              { type: 'value', name: '预测指数', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } }
+            ],
+            series: [
+              { name: '实际注数/亿', type: 'bar', data: qs.map(q => q.observed), itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 10 } },
+              { name: '预测指数', type: 'line', yAxisIndex: 1, data: qs.map(q => q.predicted), itemStyle: { color: '#06c' }, lineStyle: { width: 2 } }
+            ]
+          });
+        }
+      }
+    } catch (e) { errBox(e, $('#cbtout')); }
+  };
+  // 上游同步健康时序：sync_log 的拉取/落库折线 + 交叉校验失败红点。
+  // rows=null 表示表未部署，不得渲染成「0 次同步」的假健康。
+  $('#synctg').onclick = async () => {
+    try {
+      const r = await api('/api/sync-log?limit=50');
+      if (!r.rows) { $('#syncout').innerHTML = '<div class="muted">' + esc(r.note || '同步日志不可用') + '</div>'; return; }
+      if (!r.rows.length) { $('#syncout').innerHTML = '<div class="muted">尚无同步记录：定时任务跑过后逐条累积。</div>'; return; }
+      const rows = r.rows.slice().reverse(); // API 是倒序，图表按时间正序
+      const labels = rows.map(x => (x.ranAt || '').slice(5, 16)); // MM-DD HH:MM
+      const bad = rows.map(x => x.consistent ? null : x.fetched);
+      const s = r.summary || {};
+      $('#syncout').innerHTML =
+        '<div class="card"><b>近 ' + rows.length + ' 次同步</b>' +
+        '<div class="muted">交叉校验一致 ' + (s.consistent || 0) + '/' + (s.total || rows.length) +
+        (s.bad && s.bad.length ? '，不一致批次：' + esc(s.bad.join('、')) : '') +
+        (s.lastRanAt ? '，最近一次 ' + esc(s.lastRanAt) : '') + '</div>' +
+        '<div id="syncchart" style="height:220px;margin-top:8px"></div></div>';
+      if (typeof echarts !== 'undefined') {
+        const el = document.getElementById('syncchart');
+        if (el) {
+          if (window.__syncchart) window.__syncchart.dispose();
+          window.__syncchart = echarts.init(el);
+          window.__syncchart.setOption({
+            grid: { left: 44, right: 12, top: 34, bottom: 40 },
+            legend: { top: 0, textStyle: { fontSize: 11 } },
+            tooltip: { trigger: 'axis' },
+            dataZoom: [{ type: 'inside' }, { type: 'slider', height: 14, bottom: 4 }],
+            xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, rotate: labels.length > 12 ? 40 : 0 } },
+            yAxis: { type: 'value', name: '条数', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+            series: [
+              { name: '拉取', type: 'line', step: 'end', data: rows.map(x => x.fetched), itemStyle: { color: '#06c' }, lineStyle: { width: 2 } },
+              { name: '落库', type: 'line', step: 'end', data: rows.map(x => x.inserted), itemStyle: { color: '#2e7d32' }, lineStyle: { width: 2 } },
+              { name: '校验不一致', type: 'scatter', data: bad, itemStyle: { color: '#c0392b' }, symbolSize: 9, label: { show: true, position: 'top', fontSize: 9, formatter: '✗' } }
+            ]
+          });
+        }
+      }
+    } catch (e) { errBox(e, $('#syncout')); }
+  };
+  // 站内审计：一次性聚合五项保险丝，表格化呈现 fail/warn/skip
+  $('#auditgo').onclick = async () => {
+    try {
+      const r = await api('/api/audit');
+      $('#auditout').innerHTML = renderAudit(r);
+    } catch (e) { errBox(e, $('#auditout')); }
   };
 }
 
@@ -900,13 +1134,15 @@ async function loadFavs(){
     '<button id="fadd">添加</button></div><div id="flist" class="muted">加载中…</div>';
   $('#fadd').onclick = async () => {
     try {
-      await fetch(base() + '/api/favs', {
+      const resp = await fetch(base() + '/api/favs', {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, headers()),
         body: JSON.stringify({ kind: sel.value, numbers: $('#fn').value.trim(), note: $('#fno').value.trim() })
       });
+      const j = await resp.json().catch(() => ({}));
       $('#fn').value = ''; $('#fno').value = '';
-      loadFavs();
+      if (j.queued) $('#flist').innerHTML = '<div class="muted">已离线排队：网络恢复后 Service Worker 自动重放，重放前不显示在列表里。</div>';
+      else loadFavs();
     } catch (e) { errBox(e, $('#flist')); }
   };
   try {
@@ -917,7 +1153,8 @@ async function loadFavs(){
           '<button data-id="' + esc(x.id) + '" class="fdel">删除</button></div>').join('')
       : '<div class="muted">暂无收藏（需在 Worker 配置 D1 与 API_TOKEN）</div>';
     document.querySelectorAll('.fdel').forEach(b => b.onclick = async () => {
-      await fetch(base() + '/api/favs?id=' + b.dataset.id, { method: 'DELETE', headers: headers() });
+      const resp = await fetch(base() + '/api/favs?id=' + b.dataset.id, { method: 'DELETE', headers: headers() }).catch(() => null);
+      if (resp && resp.status === 202) { $('#flist').insertAdjacentHTML('afterbegin', '<div class="muted">删除已离线排队，网络恢复后生效。</div>'); return; }
       loadFavs();
     });
   } catch (e) { errBox(e, $('#flist')); }

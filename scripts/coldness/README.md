@@ -8,16 +8,19 @@ Worker 里只有结果（1.174 / 1.074 / 0.918 / 1.241 / 0.812 / 8.27），没�
 它只影响「万一中了要和多少人分奖」，**不改变中奖概率**，期望回报仍是负的。
 
 ```bash
-node scripts/coldness/ssq-fit.mjs    # 双色球：重拟合 + 样本外验证 + 安慰剂 + 与线上常量对账
-node scripts/coldness/dlt-fit.mjs    # 大乐透：负结果的可复现留档（当前无可发布系数）
+node scripts/coldness/ssq-fit.mjs     # 双色球：重拟合 + 样本外验证 + 安慰剂 + 与线上常量对账
+node scripts/coldness/check-sync.mjs  # 离线快检：线上常量 ↔ out/ssq.json ↔ coldness-backtest（每次 push）
+node scripts/coldness/dlt-fit.mjs     # 大乐透：负结果的可复现留档（当前无可发布系数）
 ```
 
-两者都读 `scripts/randomness/data/*.json` / `*_asc.txt`（先跑 `fetch-ssq.mjs` / `fetch-multi.mjs`），
-零 npm 依赖，`ssq-fit` 的统计内核直接复用 `scripts/randomness/lib.mjs`。
+前两者读的数据不同：`ssq-fit` 要 `scripts/randomness/data/*.json`（先跑 fetch）；
+`check-sync` 只读仓库里已提交的三份产物，纯离线、毫秒级。零 npm 依赖，
+`ssq-fit` 的统计内核直接复用 `scripts/randomness/lib.mjs`。
 
 | 脚本 | 产出 | 进 CI | 结论 |
 |---|---|---|---|
 | `ssq-fit.mjs` | `docs/coldness-latest.md` + `out/ssq.json` | 是（`randomness.yml` 月度） | 5 个特征样本外同号、五分位最热/最冷 **1.506**（MW p=6.2e-10）、安慰剂 1.006/0.993 → **已发布** |
+| `check-sync.mjs` | stdout（非零退出 = 脱节） | 是（`sync.yml` 每次 push） | 手改 `coldness.js` 没重跑拟合、回看数据被掏空、docs 不是 `COLDNESS: PASS` → 红 |
 | `dlt-fit.mjs` | `out/dlt.json`（stdout 为原始报告） | 否，见下 | 目标样本外复现（1.30×），但固定奖级安慰剂全灭 → `keep=[]`，**不发布** |
 
 ## 共同的三条纪律

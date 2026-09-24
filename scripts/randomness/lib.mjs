@@ -56,6 +56,25 @@ export function binomP(k, n, p0) {
   const mu = n * p0, sd = Math.sqrt(n * p0 * (1 - p0));
   return Math.min(1, 2 * (1 - ncdf((Math.abs(k - mu) - 0.5) / sd)));
 }
+// Benjamini–Hochberg FDR 校正：输入一族 p 值，返回与输入同序的 q 值（校正后 p）。
+// 与 Bonferroni 的关系：Bonferroni 控 FWER（"一个假阳性都不许有"，阈值 0.05/m 极保守），
+// BH 控 FDR（"被判显著的那批里允许 5% 是假的"，阈值放宽、功效更高）。
+// 两个都报是纪律：只报更宽松的那个会被质疑"挑校正方法"，只报更严的那个会漏掉真信号。
+// 单调化（从最大 p 往回取 min）保证排序后 q 不减——教科书 BH 的标准步骤。
+export function bhFDR(ps) {
+  const m = ps.length;
+  if (!m) return [];
+  const order = ps.map((p, i) => [p, i]).sort((a, b) => a[0] - b[0]);
+  const q = new Array(m);
+  let prev = 1;
+  for (let r = m; r >= 1; r--) {
+    const [p, i] = order[r - 1];
+    const v = Math.min(prev, (p * m) / r);
+    q[i] = Math.min(1, v);
+    prev = v;
+  }
+  return q;
+}
 export function mannWhitney(a, b) { // 大样本正态近似双侧（带并列校正的秩）
   const na = a.length, nb = b.length, all = a.map(x => [x, 0]).concat(b.map(x => [x, 1]));
   all.sort((x, y) => x[0] - y[0]);

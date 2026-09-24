@@ -5,7 +5,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { rng, drawK, comb, pHyper, pearson, nullSummary, mcP, fmtP, chi2Upper } from "./lib.mjs";
+import { rng, drawK, comb, pHyper, pearson, nullSummary, mcP, fmtP, chi2Upper, bhFDR } from "./lib.mjs";
 import { KINDS, KIND_ORDER, eChi2Pool, groupStats, simulateGroup, detectability, nForRelBias } from "./lib-kinds.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -247,13 +247,16 @@ export function runMulti({ sims = 1200 } = {}) {
     out("");
   }
 
-  // 全族 Bonferroni
+  // 全族多重比较：Bonferroni（控 FWER）+ BH/FDR（控 FDR）双报——只报一个会被质疑挑校正方法
   const nTests = allTests.length, alpha = 0.05 / nTests;
   const surv = allTests.filter(p => p < alpha);
   const nominal = allTests.filter(p => p < 0.05);
+  const qvals = bhFDR(allTests);
+  const fdrSurv = allTests.filter((p, i) => qvals[i] < 0.05);
   out("## 全族多重比较校正"); out("");
   out(`- 本次 ` + "`--all`" + ` 实际跑出的检验数 **nTests=${nTests}**，Bonferroni 阈值 α=${alpha.toExponential(2)}（=0.05/${nTests}）。`);
   out(`- 名义 p<0.05：${nominal.length} 项；跨过 Bonferroni：**${surv.length} 项**${surv.length ? "（" + surv.map(x => fmtP(x)).join("、") + "）" : "（无）。"}`);
+  out(`- BH/FDR 校正（q<0.05，控假发现率而非族错误率，比 Bonferroni 宽）：**${fdrSurv.length} 项**${fdrSurv.length ? "（" + fdrSurv.map((p, i) => fmtP(p)).join("、") + "）" : "（无）。"} Bonferroni 跨阈项必然也是 FDR 跨阈项；FDR 多出来的若存在，须过下方数据完整性诊断才算数。`);
   if (surv.length) {
     out(`- 跨阈项的处置：全部指向"数据完整性诊断"节里已定位的【源数据缺陷 / 模型误设】——大乐透 2007–2014 早期回填非均匀（负 split-half + 2015 后回归 + 独立源 60/60 均匀）与七星彩第7位设计非均匀。**没有一条能通过【年代可复现 + 独立源一致 + 与球偏物理方向一致】三重检验**，故均非可交易边。诚实结论是"发现了一个假显著并把它证伪"，不是"漏掉了边"。`);
   }

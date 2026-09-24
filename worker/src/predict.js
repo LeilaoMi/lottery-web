@@ -41,8 +41,17 @@ export function auxOf(d, kind) {
 }
 
 function uniqSorted(a) { return [...new Set(a)].sort(); }
-// 先去重再抽样：否则候选池里带重复项时「先切 n 个再去重」会不足 n 个
-function pickN(arr, n) { return [...new Set(arr)].sort(() => Math.random() - 0.5).slice(0, n).sort(); }
+// 先去重再 Fisher–Yates 抽样：sort(() => Math.random()-0.5) 是有偏洗牌（比较器随机时
+// 各排列不等概），随机基准策略拿它当对照会失真；去重放最前，否则候选池带重复项时
+// 「先切 n 个再去重」会不足 n 个
+function pickN(arr, n) {
+  const a = [...new Set(arr)];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, n).sort();
+}
 
 export function acValue(nums) {
   const n = nums.map(Number), set = new Set();
@@ -50,18 +59,39 @@ export function acValue(nums) {
   return set.size - (n.length - 1);
 }
 
-// ---------- 统计显著性：二项检验 p 值（正态近似，双侧） ----------
+// ---------- 统计显著性：精确二项检验 p 值（双侧，较小尾 ×2） ----------
 // 观察 hits/n 是否显著偏离基线 p0。n < 20 返回 null：样本不足不做显著性宣称。
 // p < 0.05 视为「显著偏离」；对杀号而言方向是越低越好，p 只回答「是否偏离」，方向由调用方判断。
+// 为什么不用正态近似：小样本 / 贴边界（k=0 或 k=n）时近似误差大，而复盘与回测的
+// 杀错率经常落在这些区域——既然标榜统计诚实，内核就该处处精确（log 空间 logsumexp
+// 求尾概率，避免大 n 下 (1-p0)^n 下溢；只朝尾部方向求和，偏离均值越远项数越少）。
+function logFactTable(n) {
+  const t = new Float64Array(n + 1);
+  for (let i = 2; i <= n; i++) t[i] = t[i - 1] + Math.log(i);
+  return t;
+}
 export function binomP(hits, n, p0) {
   if (!(n >= 20) || !(p0 > 0 && p0 < 1) || !(hits >= 0 && hits <= n)) return null;
-  const se = Math.sqrt(p0 * (1 - p0) / n);
-  const z = Math.abs((hits / n - p0) / se);
-  if (!Number.isFinite(z)) return null;
-  const t = 1 / (1 + 0.2316419 * z);
-  const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
-  const tail = 0.3989423 * Math.exp(-z * z / 2) * poly;
-  return +Math.min(1, Math.max(0, 2 * tail)).toFixed(4);
+  const k = Math.round(hits);
+  const lp = Math.log(p0), lq = Math.log1p(-p0);
+  const L = logFactTable(n); // L[i] = ln(i!)
+  const logPmf = i => L[n] - L[i] - L[n - i] + i * lp + (n - i) * lq;
+  // 双侧口径与原正态近似一致：取较小一侧尾概率 ×2 再夹到 [0,1]
+  const lower = k <= n * p0;
+  let max = -Infinity, sum = 0;
+  if (lower) {
+    for (let i = 0; i <= k; i++) {
+      const t = logPmf(i);
+      if (t > max) { sum = sum * Math.exp(max - t) + 1; max = t; } else sum += Math.exp(t - max);
+    }
+  } else {
+    for (let i = n; i >= k; i--) {
+      const t = logPmf(i);
+      if (t > max) { sum = sum * Math.exp(max - t) + 1; max = t; } else sum += Math.exp(t - max);
+    }
+  }
+  const tail = Math.exp(max + Math.log(sum));
+  return +Math.min(1, 2 * tail).toFixed(4);
 }
 
 // 期号 → 年代桶：优先 date 字段取年份，退化用 code 前缀（7 位=2026103，5 位=26103）

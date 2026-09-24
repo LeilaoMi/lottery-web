@@ -17,6 +17,7 @@
 //
 // 用法：node scripts/coldness/ssq-fit.mjs [ssq.json 路径]
 // 产出：stdout 报告 + docs/coldness-latest.md + scripts/coldness/out/ssq.json
+//       + worker/src/coldness-backtest.js（站内「观测 vs 预测」回看数据，D1 无 n1/sales 只能烘焙）
 // 退出码：安慰剂显著 / 样本外反号 / 五分位比塌掉 → 1（"跑挂了或结论崩了"，不是"结果不好看"）
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -174,14 +175,50 @@ if (fails.length) for (const s of fails) out("  - " + s);
 const text = L.join("\n") + "\n";
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(DOC_FILE, text);
+// 站内回看数据：D1 的 draws 表没有 n1/sales，历史同奖注数只存在于本脚本读的数据文件里，
+// 所以「观测 vs 预测」必须在这里烘焙成 Worker 可 import 的模块，而不是运行时现算。
+// 五分位（按预测指数排序）：predicted = 指数均值（训练段系数、样本外期），observed = 实际注数/亿元。
+// 前端只画这张表；系数变了重跑本脚本即可，别手改生成文件。
+const quintiles = arr => {
+  const sorted = arr.slice().sort((a, b) => a[0] - b[0]);
+  const per = Math.floor(sorted.length / 5);
+  const qs = [];
+  for (let i = 0; i < 5; i++) {
+    const part = sorted.slice(i * per, i === 4 ? sorted.length : (i + 1) * per);
+    qs.push({
+      q: i + 1,
+      n: part.length,
+      predicted: +mean(part.map(x => x[0])).toFixed(4),
+      observed: +mean(part.map(x => x[1])).toFixed(3)
+    });
+  }
+  return qs;
+};
+const bt = {
+  generated: new Date().toISOString(),
+  kind: "ssq",
+  nTrain: train.length,
+  nTest: test.length,
+  trainQuintiles: quintiles(tr.map((v, i) => [v, train[i].n1 / (train[i].sales / 1e8)])),
+  testQuintiles: quintiles(ord),
+  ratioTest: +ratio.toFixed(3),
+  ratioTrain: +trRatio.toFixed(3),
+  mwP: mw.p,
+  note: "predicted = 组合指数（训练段系数）均值，observed = 实际一等奖注数/亿元；样本外五分位单调上升 = 拟合不是噪声。只影响分奖人数，不改变中奖概率。",
+  disclaimer: "随机游戏，统计仅供娱乐，不保证中奖。"
+};
+writeFileSync(join(ROOT, "worker", "src", "coldness-backtest.js"),
+  "// ⚠️ 由 scripts/coldness/ssq-fit.mjs 生成，勿手改。重跑脚本会覆盖本文件。\n" +
+  "// 站内「观测 vs 预测」回看：D1 无历史注数/销量列，只能在拟合时烘焙。\n" +
+  "export const COLDBT = " + JSON.stringify(bt, null, 1) + ";\n");
 writeFileSync(join(OUT_DIR, "ssq.json"), JSON.stringify({
   generated: new Date().toISOString(), nAll: all.length, nTrain: train.length, nTest: test.length,
   Mtr, Mte, placebo: plc, ratio, trRatio, mwP: mw.p,
   avgFirstWinners: +avgN1all.toFixed(3), avgFirstWinnersGivenWinners: +avgN1pos.toFixed(3), zeroWinnerRate: +zeroRate.toFixed(4),
-  shipped, drift, listsInSync, fails
+  shipped, drift, listsInSync, fails, backtest: bt
 }, null, 1));
 console.log(text);
-console.error(`报告已写入 ${rel(DOC_FILE)}｜机器可读产物 ${rel(join(OUT_DIR, "ssq.json"))}`);
+console.error(`报告已写入 ${rel(DOC_FILE)}｜机器可读产物 ${rel(join(OUT_DIR, "ssq.json"))}｜站内回看 ${rel(join(ROOT, "worker", "src", "coldness-backtest.js"))}`);
 if (fails.length) {
   console.error(`\n!! 冷门度结论不再成立（${fails.length} 项）：\n   ${fails.join("\n   ")}`);
   console.error("COLDNESS: FAIL");

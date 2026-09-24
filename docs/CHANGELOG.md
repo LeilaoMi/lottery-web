@@ -2,6 +2,19 @@
 
 所有历史版本的完整变更记录。当前版本见 README 顶部徽章。
 
+## 未发布 · 15 项改进清单执行中（2026-09-24）
+
+按用户给出的 15 项总表顺序推进（任务 1–8 见前序会话记录；本轮完成 9–15）：
+
+- **任务 9 分享图片卡片** — `shareCardLines` / `drawShareCard` / `shareCard`：canvas 导出胆拖/纯推荐布局，免责声明强制入图；Web Share 优先回退下载 PNG
+- **任务 10 追号开奖日历** — `calc.js` 增 `DRAW_DAYS` / `isDrawDay` / `chaseDrawDates`；`chase>1` 时 `calcBet` 给 `plan[].date` + `chase.dates` + `calendarNote`（不含休市，以官方公告为准）；前端按月铺格
+- **任务 11 站内审计 `/api/audit` + 站内审计页** — 5 项检查（新鲜度 / 复盘闭环 / 同步健康 / 冷门度回看 / 免责）；`overall = fail > warn > skip > pass`（有 skip 绝不算 pass）；前端徽章着色，`skip` 灰字绝不渲染成绿
+- **任务 12 CI 冷门度系数对账** — 新增 `scripts/coldness/check-sync.mjs`（离线快检：线上常量 ↔ `out/ssq.json` ↔ `coldness-backtest.js` ↔ docs `COLDNESS: PASS`）；挂进 `sync.yml` push 路径；与月度联网重拟合（`ssq-fit.mjs`）分工
+- **任务 13 D1 迁移版本化** — `db/migrations/0001_baseline.sql` 为事实源，`db/schema.sql` = 按序拼接的 bootstrap；`unit.test`「D1 迁移版本化」3 项锁死编号连续 / schema≡拼接 / 6 表齐全；CI 增 `node:sqlite` 真执行冒烟（Node&lt;22.5 如实 skip）
+- **任务 14 `docs/why.md`** — 12 条关键设计决策的为什么（零依赖 / 鉴权 / 先快照再对账 / 冷门度只发 ssq / skip≠pass / 迁移版本化 / 金额宁缺毋假…）；挂进 README 文档地图与 `docs/README.md`
+- **任务 15 全量验证** — `build-ui` + 10 个测试文件 **137 项全过**（+3 迁移测试）；`check-sync.mjs` EXIT=0；README 徽章 `110 → 137`；`worker/package.json` 的 `test` 补上遗漏的 `sw-queue.test.mjs`，新增 `test:cold` 快检脚本
+- 顺带：README API 速览补 `/api/sync-log` / `/api/audit` / `/api/coldness/backtest`，`/api/calc` 注明追号日期投影；目录结构补 `db/migrations/`
+
 ## v0.14.0 · 大乐透奖级版本化（2026-09-18）
 
 - **新增：大乐透按开奖日期选择规则版本** — 2019-02-20 第19019期为界：此前 6 奖级（一二三等浮动），此后 9 奖级（一二等浮动），13 个中奖条件两版相同（`small.js: prizeDLTOld / prizeDLTFor / dltFixedAmount`，`prizeDLT` 保持现行映射不变）

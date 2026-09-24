@@ -2,6 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { coldness, COLD_KINDS } from "../src/coldness.js";
+import { COLDBT } from "../src/coldness-backtest.js";
+import worker from "../src/index.js";
 
 test("全部 ≤31 + 热门蓝球 = 最热组合，ratio > 1", () => {
   const r = coldness("ssq", ["01", "05", "12", "19", "23", "31"], ["09"]);
@@ -56,4 +58,24 @@ test("容忍前导零与数字混传，且输出统一补零两位", () => {
   assert.equal(r.error, undefined, "宽松解析不应报错");
   assert.deepEqual(r.main, ["01", "05", "12", "19", "23", "31"]);
   assert.deepEqual(r.aux, ["09"]);
+});
+test("观测 vs 预测回看数据：五分位齐全、样本外 observed 单调上升（非噪声的最低门槛）", () => {
+  assert.ok(Array.isArray(COLDBT.testQuintiles) && COLDBT.testQuintiles.length === 5, "样本外必须有 5 个五分位");
+  assert.ok(Array.isArray(COLDBT.trainQuintiles) && COLDBT.trainQuintiles.length === 5, "训练段必须有 5 个五分位");
+  for (const q of COLDBT.testQuintiles) {
+    assert.ok(q.n > 0 && q.predicted > 0 && q.observed > 0, "五分位字段应为正数: " + JSON.stringify(q));
+  }
+  // 预测指数排序后 observed 应大致递增：Q5/Q1 就是 ratioTest 的口径
+  const obs = COLDBT.testQuintiles.map(q => q.observed);
+  assert.ok(obs[4] / obs[0] > 1.2, "样本外最热/最冷应 >1.2，实际 " + (obs[4] / obs[0]).toFixed(3));
+  assert.ok(Math.abs(obs[4] / obs[0] - COLDBT.ratioTest) < 0.05, "五分位比应与 ratioTest 一致");
+  assert.match(COLDBT.note, /不改变中奖概率/);
+});
+test("GET /api/coldness/backtest 公开可读且带五分位", async () => {
+  const r = await worker.fetch(new Request("http://x/api/coldness/backtest"), {}, {});
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.kind, "ssq");
+  assert.equal(j.supported, true);
+  assert.ok(j.testQuintiles && j.testQuintiles.length === 5);
 });

@@ -38,12 +38,111 @@ jobs:
         # ui-render.test.mjs 读 frontend/index.html 渲染真实后端响应 → 前后端字段改名会在 push 时立刻红
         # notify.test.mjs 用本地 http server 真发一次 → 「以为在推、其实从没发出去」不会漏过
         # net.test.mjs 用不回包的本地 server 验超时真的会掐断 → 上游挂死把请求拖到 30s 会有人管
-        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs worker/test/net.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
+        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs worker/test/net.test.mjs worker/test/sw-queue.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
+      - name: 冷门度系数对账（线上常量 ↔ 拟合产物 ↔ 站内回看，离线快检）
+        # 月度 ssq-fit 要联网重拟合（分钟级）；push 时只做三份已提交产物的一致性断言（毫秒级）。
+        # 抓「手改 coldness.js 没重跑拟合」「回看数据被掏空」——单测不会红，但站上系数来历不明。
+        run: node scripts/coldness/check-sync.mjs
+      - name: D1 迁移文件语法冒烟（schema.sql 真执行；Node≥22.5 才有 node:sqlite，低版本跳过）
+        # unit.test 只比字符串；这里用 SQLite 真跑一遍，抓「测试漏掉的语法错误」。
+        # CI 固定 node 20（与 README ≥20 一致）—— 无 node:sqlite 时如实 skip，不伪装成已验证。
+        run: node scripts/db/schema-smoke.mjs
+
+  deploy:
+    name: 部署 Worker
+    needs: test
+    # 只在 main 的 push / 手动触发时部署；PR 与定时任务不重发 Worker
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_VERSION: "4"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+      # 可选：自定义域名 route（与本机 wrangler.local.toml 一致）。未配置则只发 workers.dev
+      WORKER_ROUTE_PATTERN: ${{ vars.WORKER_ROUTE_PATTERN }}
+      WORKER_ROUTE_ZONE: ${{ vars.WORKER_ROUTE_ZONE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 未配置凭证则跳过（fork 友好）
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${D1_DATABASE_ID:-}" ]; then
+            echo "::warning::未配置 CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / D1_DATABASE_ID，跳过部署"
+            echo "### 未部署" >> "$GITHUB_STEP_SUMMARY"
+            echo "需要 3 个 secrets 才会启用部署，见 workflow 顶部说明" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "DEPLOY_ENABLED=1" >> "$GITHUB_ENV"
+      - name: 构建前端产物
+        if: env.DEPLOY_ENABLED == '1'
+        run: node scripts/build-ui.mjs
+      - name: 生成部署配置（database_id 来自 secret，不进仓库）
+        if: env.DEPLOY_ENABLED == '1'
+        run: |
+          set -euo pipefail
+          # 以模板为底，注入真实 D1 ID；有 route 变量时一并写入（同步语义：这里写了什么线上就绑什么）
+          cp worker/wrangler.toml worker/wrangler.ci.toml
+          node -e '
+            const fs = require("fs");
+            const p = "worker/wrangler.ci.toml";
+            let t = fs.readFileSync(p, "utf8");
+            t = t.replace(/database_id = "[^"]*"/, `database_id = "${process.env.D1_DATABASE_ID}"`);
+            const pat = process.env.WORKER_ROUTE_PATTERN || "";
+            const zone = process.env.WORKER_ROUTE_ZONE || "";
+            if (pat && zone) {
+              const block = `routes = [\n  { pattern = ${JSON.stringify(pat)}, zone_name = ${JSON.stringify(zone)} }\n]\n`;
+              t = t.replace(/routes = \[[\s\S]*?\]\n/, "");
+              t = t.replace(/\[vars\]/, block + "\n[vars]");
+            }
+            fs.writeFileSync(p, t);
+          '
+          # 不打印整份配置（含 database_id）
+          echo "config ready (VERSION=$(grep VERSION worker/wrangler.ci.toml | head -1))"
+      - name: wrangler deploy
+        if: env.DEPLOY_ENABLED == '1'
+        run: |
+          set -euo pipefail
+          npx --yes "wrangler@$WRANGLER_VERSION" deploy --config worker/wrangler.ci.toml
+      - name: 部署后健康检查
+        if: env.DEPLOY_ENABLED == '1'
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKER_URL:-}" ]; then
+            echo "::warning::未配置 WORKER_URL，跳过部署后健康检查"
+            exit 0
+          fi
+          for i in 1 2 3 4 5; do
+            code=$(curl -sS -m 20 -o /tmp/health.json -w "%{http_code}" "$WORKER_URL/health" || true)
+            if [ "$code" = "200" ]; then
+              cat /tmp/health.json
+              echo "部署后 /health 200"
+              # 新路由必须在部署后立刻存在（上一版线上是 404）
+              acode=$(curl -sS -m 20 -o /tmp/audit.json -w "%{http_code}" "$WORKER_URL/api/audit" || true)
+              if [ "$acode" != "200" ]; then
+                echo "::error::部署后 /api/audit 返回 $acode（期望 200）"
+                cat /tmp/audit.json || true
+                exit 1
+              fi
+              echo "部署后 /api/audit 200"
+              exit 0
+            fi
+            echo "health attempt $i -> $code，重试…"
+            sleep 3
+          done
+          echo "::error::部署后 /health 始终不是 200"
+          exit 1
 
   smoke:
     name: 线上冒烟
-    needs: test
-    if: github.event_name != 'pull_request'
+    # deploy 缺 secrets 时会 skip；不能让 smoke 被连带跳过（定时任务也要冒烟）
+    needs: [test, deploy]
+    if: always() && github.event_name != 'pull_request' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: 部署冒烟（push / 定时同步后验证线上端点仍健康）

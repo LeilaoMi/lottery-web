@@ -9,7 +9,7 @@
 ![version](https://img.shields.io/badge/version-0.14.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
-![unit%20tests](https://img.shields.io/badge/unit%20tests-110-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-137-brightgreen)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
 Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
@@ -182,7 +182,7 @@ flowchart LR
 | 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
 | 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
 | 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 110 项单元测试（93 worker + 12 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约测试）+ 真实数据源连通性测试 |
+| 测试 | `node --test` | 137 项单元测试（96 worker + 12 统计内核 + 5 推送 + 24 其余，零依赖离线可跑，含批量验奖的前后端契约、SW 离线队列、D1 迁移版本化）+ 真实数据源连通性测试 |
 
 ---
 
@@ -273,7 +273,7 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（110 项，零依赖，离线可跑）
+npm test             # 单元测试（137 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
@@ -331,8 +331,11 @@ node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与
 | `/api/{kind}/verify` | ssq: `code&red&blue` · dlt: `code&front&back` · 其余: `code&nums` | 验奖 |
 | `/api/verify-batch` | **POST** + JSON `{"kind","code"或"codes"[],"tickets"[],"mult"}` | 批量验奖（≤200 注 × ≤10 期）。返回逐注奖级/命中/金额 + 每期汇总；`errors[].line` 是你贴进来的原始行号，`amount: null` 表示**该奖级金额本站未校验**（浮动奖），不是 0；大乐透固定奖按开奖日期选择规则版本（2019-02-20 为界） |
 | `/api/meta` | — | 彩种元数据 + `stale[]` 数据新鲜度 + `predlog[]` 复盘闭环健康度 |
+| `/api/sync-log?limit=` | — | 上游同步健康时序（最近 N 次落库的 fetched / inserted / 交叉校验结果），前端「同步健康」图 |
+| `/api/audit` | — | 站内健康审计（5 项检查聚合）：数据新鲜度 / 复盘闭环 / 同步健康 / 冷门度回看 / 免责声明。`overall` 语义 `fail > warn > skip > pass`——有 skip 绝不算 pass |
+| `/api/coldness/backtest` | — | 冷门度样本外回看（烘焙的观测 vs 预测五分位），D1 无历史注数列故由拟合脚本烘焙进 Worker |
 | `/api/records` | — | 破纪录遗漏预警（当前遗漏 vs 样本内历史最大遗漏） |
-| `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划 |
+| `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划（`chase>1` 时附 `plan[].date` / `chase.dates` 开奖日历投影 + 免责说明） |
 | `/api/prize` | `kind=` + 命中参数（大乐透可选 `date=YYYY-MM-DD` 选规则版本） | 奖级与固定奖金额 |
 | `/api/rotation` | `n=&pick=&hit=` | 旋转矩阵（覆盖设计，注数约理论下界 1.5 倍） |
 | `/api/favs` | GET/POST/DELETE | 收藏（需鉴权） |
@@ -411,7 +414,9 @@ lottery-web/
 │   ├── notify.test.mjs     # 推送测试：payload 形状 + 本地 http server 真发一次
 │   ├── randomness/         # 随机性审计：8 彩种取数 + A/B/C/D/E 检验（零依赖，见其 README）
 │   └── coldness/           # 冷门度系数拟合 + 样本外验证 + 与线上常量对账
-├── db/schema.sql           # D1 建表（6 张：draws / dlt_draws / small_draws / predlog / favs / sync_log）
+├── db/
+│   ├── schema.sql           # D1 bootstrap = 按序拼接的全部迁移（6 张表，unit.test 锁死与 migrations 一致）
+│   └── migrations/          # 版本化迁移 0001_baseline.sql…（已发布不许改，改动只许新增 00NN_）
 ├── docs/                   # 文档地图见下方链接表，索引在 docs/README.md
 └── .github/workflows/
     ├── sync.yml            # CI：测试 → 线上冒烟 → 定时落库 → 复盘对账 →（默认关闭的）开奖推送
@@ -427,6 +432,7 @@ lottery-web/
 | 搞清「哪些结论有依据、哪些被证伪了」 | [docs/research.md](docs/research.md)（假设对账）→ [docs/randomness-2026-09.md](docs/randomness-2026-09.md)（深检基线） |
 | 每月自动重跑的报告长什么样 | [docs/randomness-latest.md](docs/randomness-latest.md) · [docs/randomness-multi-latest.md](docs/randomness-multi-latest.md) · [docs/coldness-latest.md](docs/coldness-latest.md) |
 | 理解冷门度为什么只发双色球、不发大乐透 | [docs/coldness-dlt-2026-09.md](docs/coldness-dlt-2026-09.md)（一个负结果的留档） |
+| 关键设计决策当初为什么这么做（零依赖 / 鉴权 / skip≠pass / 迁移版本化…） | [docs/why.md](docs/why.md) |
 | 配备份 / 配开奖推送 | [docs/BACKUP.md](docs/BACKUP.md) · [docs/NOTIFY.md](docs/NOTIFY.md) |
 | 看某个版本改了什么、为什么 | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
 | 跑统计脚本 | [scripts/randomness/README.md](scripts/randomness/README.md) · [scripts/coldness/README.md](scripts/coldness/README.md) |

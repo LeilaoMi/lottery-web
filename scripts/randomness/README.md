@@ -78,7 +78,7 @@ node --test scripts/randomness/stats.test.mjs   # 统计内核单元测试
 - `fetch-multi.mjs` — 7 个彩种的下载 + 结构校验（值域 / 重复 / 跳号）+ 与线上 `D1` 公共接口逐期号码交叉校验。
   校验地址由 `--api-base=` 或 `LOTTERY_API_BASE` 提供（源码里不写死任何人的站点）；没给就跳过该闸门并在
   `verify.json` 里记 `skipped`，报告如实写「未执行」，不会伪造成通过。
-- `multi.mjs` — 8 彩种开奖侧引擎（A/B/C + Bonferroni 联合校正 + 检测功效），写 `docs/randomness-multi-latest.md`。
+- `multi.mjs` — 8 彩种开奖侧引擎（A/B/C + Bonferroni + BH/FDR 双重比较校正 + 检测功效），写 `docs/randomness-multi-latest.md`。
 - `stats.test.mjs` — 内核单元测试，期望值取自教科书/手算（不是从实现里抄的）。
 - `data/*.json` — 已提交的全量历史基线（离线也能复现本仓库文档里的结论）。
   `data/*_asc.txt` 是 fetch 顺手留下的原始档，不进仓库。

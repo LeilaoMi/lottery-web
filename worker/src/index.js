@@ -4,52 +4,81 @@ import { fetchSmall, prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC, rotation }
 import { verifyBatch } from "./verify-batch.js";
 import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
-import { coldness } from "./coldness.js";
+import { coldness, COLD_KINDS } from "./coldness.js";
+import { COLDBT } from "./coldness-backtest.js";
 import { fetchT } from "./net.js";
-import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall } from "./db.js";
+import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall, loadSyncLog } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
 // kill-calibrated 的 isolate 级内存缓存：caches.default 在 workers.dev 域名上是 no-op，
 // 内存缓存保证同一 isolate 内的后续请求不重复算校准；自定义域上另由 caches.default 兜底
 const CAL_MEM = new Map();
 const CAL_TTL = 21600_000;
+// ---------- 路由表 ----------
+// 三层：静态页（精确）→ API（精确）→ API（前缀，按序首个命中），未命中 404。
+// 拆自原 if-else 长链：加端点 = 在对应表加一行；前缀表的顺序即优先级，
+// 精确表先于前缀表，保证 /api/predict 不会被 /api/ 兜底劫持。
+// 统一签名 (request, env, ctx, url) → Response | Promise<Response>
+const STATIC_ROUTES = {
+  "/": () => html(),
+  "/index.html": () => html(),
+  "/favicon.ico": () => new Response("", { status: 204 }),
+  "/sw.js": () => new Response(SW, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" } }),
+  "/manifest.json": () => new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } }),
+  "/icon.svg": () => new Response(ICON, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800" } }),
+  "/licenses": () => htmlLicenses(),
+};
+const API_ROUTES = {
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.14.0", lotteries: LOTS.map(x => x.id) }),
+  "/api/meta": (rq, env) => metaRoute(env),
+  "/api/audit": (rq, env) => auditRoute(env),
+  "/api/records": (rq, env) => recordsRoute(env),
+  "/api/rotation": (rq, env, ctx, url) => {
+    const n = num(url, "n", 12, 7, 33), pick = num(url, "pick", 6, 5, 7);
+    return json(rotation(n, pick, num(url, "hit", 4, 3, 6)));
+  },
+  "/api/specs": () => json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600),
+  "/api/calc": (rq, env, ctx, url) => calcRoute(url),
+  "/api/coldness": (rq, env, ctx, url) => {
+    // 纯函数、不取数、与期号无关 → 可长缓存；参数非法时 coldness() 返回 { error } 转 400
+    const kind = (url.searchParams.get("kind") || "ssq").trim();
+    const nums = (url.searchParams.get("nums") || "").split(/[ ,]+/).filter(Boolean);
+    const blue = (url.searchParams.get("blue") || "").trim();
+    const r = coldness(kind, nums, blue ? [blue] : []);
+    return r.error ? json(r, 400, 0) : json(r, 200, 3600);
+  },
+  // 观测 vs 预测回看：五分位预测指数 vs 实际一等奖注数/亿元（拟合时烘焙，D1 无此数据）
+  "/api/coldness/backtest": () => json({ ...COLDBT, supported: !!COLD_KINDS.ssq }, 200, 3600),
+  // 上游同步健康时序（sync_log 只读）：前端画拉取/落库折线，交叉校验失败亮红点
+  "/api/sync-log": (rq, env, ctx, url) => syncLogRoute(env, url),
+  "/api/prize": (rq, env, ctx, url) => prizeRoute(url),
+  "/api/verify-batch": (rq, env, ctx, url) => verifyBatchRoute(rq, env, url),
+  "/api/admin/sync": (rq, env, ctx) => adminSync(rq, env, ctx),
+  "/api/admin/review-job": (rq, env) => reviewJob(rq, env),
+  "/api/review": (rq, env, ctx, url) => reviewRoute(rq, env, url),
+};
+// 统一预测入口：/api/predict | analyze | kill | dan | backtest | kill-calibrated | kill-tune | ticket | trend
+for (const p of ["/api/predict", "/api/analyze", "/api/kill", "/api/dan", "/api/backtest", "/api/kill-calibrated", "/api/kill-tune", "/api/ticket", "/api/trend"]) {
+  API_ROUTES[p] = (rq, env, ctx, url) => predictRoute(rq, env, url);
+}
+// 前缀路由：顺序 = 优先级（favs 须在 /api/ 兜底之前；ssq/dlt 在 generic 之前）
+const PREFIX_ROUTES = [
+  ["/api/favs", (rq, env, ctx, url) => favsRoute(rq, env, url)],
+  ["/api/ssq/", (rq, env, ctx, url) => ssqRoute(rq, env, url)],
+  ["/api/dlt/", (rq, env, ctx, url) => dltRoute(rq, env, url)],
+  ["/api/", (rq, env, ctx, url) => smallRoute(rq, env, url)],
+];
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return cors();
-    if (url.pathname === "/" || url.pathname === "/index.html") return html();
-    if (url.pathname === "/favicon.ico") return new Response("", { status: 204 });
-    if (url.pathname === "/sw.js") return new Response(SW, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Service-Worker-Allowed": "/" } });
-    if (url.pathname === "/manifest.json") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } });
-    if (url.pathname === "/icon.svg") return new Response(ICON, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=604800" } });
-    if (url.pathname === "/health") return json({ status: "ok", version: env.VERSION || "0.14.0", lotteries: LOTS.map(x => x.id) });
-    if (url.pathname === "/api/meta") return metaRoute(env);
-    if (url.pathname === "/api/records") return recordsRoute(env);
-    if (url.pathname === "/licenses") return htmlLicenses();
-    if (url.pathname === "/api/rotation") {
-      const n = num(url, "n", 12, 7, 33), p = num(url, "pick", 6, 5, 7);
-      return json(rotation(n, p, num(url, "hit", 4, 3, 6)));
+    const page = STATIC_ROUTES[url.pathname];
+    if (page) return page(request, env, ctx, url);
+    const api = API_ROUTES[url.pathname];
+    if (api) return api(request, env, ctx, url);
+    for (const [prefix, h] of PREFIX_ROUTES) {
+      if (url.pathname.startsWith(prefix)) return h(request, env, ctx, url);
     }
-    if (url.pathname === "/api/specs") return json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600);
-    if (url.pathname === "/api/calc") return calcRoute(url);
-    if (url.pathname === "/api/coldness") {
-      // 纯函数、不取数、与期号无关 → 可长缓存；参数非法时 coldness() 返回 { error } 转 400
-      const kind = (url.searchParams.get("kind") || "ssq").trim();
-      const nums = (url.searchParams.get("nums") || "").split(/[ ,]+/).filter(Boolean);
-      const blue = (url.searchParams.get("blue") || "").trim();
-      const r = coldness(kind, nums, blue ? [blue] : []);
-      return r.error ? json(r, 400, 0) : json(r, 200, 3600);
-    }
-    if (url.pathname === "/api/prize") return prizeRoute(url);
-    if (url.pathname === "/api/verify-batch") return verifyBatchRoute(request, env, url);
-    if (url.pathname === "/api/predict" || url.pathname === "/api/analyze" || url.pathname === "/api/kill" || url.pathname === "/api/dan" || url.pathname === "/api/backtest" || url.pathname === "/api/kill-calibrated" || url.pathname === "/api/kill-tune" || url.pathname === "/api/ticket" || url.pathname === "/api/trend") return predictRoute(request, env, url);
-    if (url.pathname === "/api/admin/sync") return adminSync(request, env, ctx);
-    if (url.pathname === "/api/admin/review-job") return reviewJob(request, env);
-    if (url.pathname === "/api/review") return reviewRoute(request, env, url);
-    if (url.pathname.startsWith("/api/favs")) return favsRoute(request, env, url);
-    if (url.pathname.startsWith("/api/ssq/")) return ssqRoute(request, env, url);
-    if (url.pathname.startsWith("/api/dlt/")) return dltRoute(request, env, url);
-    if (url.pathname.startsWith("/api/")) return smallRoute(request, env, url);
     return json({ error: "not_found" }, 404);
   }
 };
@@ -525,13 +554,18 @@ async function reviewJob(request, env) {
       const rec = recommendAll(k, draws, { win: 30 });
       const kl = rec.kill || {};
       const th = kl.threshold ?? 99;
+      // 快照 = 前 3 套策略 + 随机基准（第 6 套对照组）。只存前 3 套就永远没有对照，
+      // 复盘页必须能把「策略 ≈ 随机」摆出来——这是本项目诚实性的核心展示，不能省。
+      const top3 = (rec.picks || []).slice(0, 3);
+      const randPick = (rec.picks || []).find(x => x.name === "随机基准");
+      const snapPicks = randPick && !top3.some(x => x.name === randPick.name) ? [...top3, randPick] : top3;
       const payload = isDigit ? {
-        picks: (rec.picks || []).slice(0, 3).map(x => ({ name: x.name, digits: (x.digits || []).map(String), number: x.number || null })),
+        picks: snapPicks.map(x => ({ name: x.name, digits: (x.digits || []).map(String), number: x.number || null })),
         dan: ((rec.dan && rec.dan.perPos) || []).map(pp => (pp.dan || []).slice(0, 2).map(x => String(x.n))),
         kill: (kl.perPos || []).map(pp => (pp.kill || []).slice(0, 3).map(x => String(x.n))),
         basedOn: draws[0].code
       } : {
-        picks: (rec.picks || []).slice(0, 3).map(x => ({ name: x.name, main: x.main, aux: x.aux || [] })),
+        picks: snapPicks.map(x => ({ name: x.name, main: x.main, aux: x.aux || [] })),
         dan: ((rec.dan && rec.dan.main) || []).slice(0, 4).map(x => x.n || x),
         kill: (kl.main || []).filter(x => x.votes >= th).map(x => x.n),
         basedOn: draws[0].code
@@ -555,11 +589,16 @@ async function reviewRoute(request, env, url) {
     const agg = {};
     for (const r of list) {
       if (!r.checked || !r.hit) continue;
-      const a = agg[r.kind] || (agg[r.kind] = { checked: 0, picksTotal: 0, picksHit: 0, danTotal: 0, danHit: 0, killTotal: 0, killWrong: 0 });
+      const a = agg[r.kind] || (agg[r.kind] = { checked: 0, picksTotal: 0, picksHit: 0, randTotal: 0, randHit: 0, danTotal: 0, danHit: 0, killTotal: 0, killWrong: 0 });
       a.checked++;
       // 数字型对账存的是 digits（逐位），号码池型存 main；两者都要计入总数分母，
-      // 否则数字型 picksTotal=0 → pickHitRate 恒 null，复盘页对 4 个数字彩种永远是空白
-      for (const p of (r.hit.picks || [])) { const u = p.main || p.digits || []; a.picksTotal += u.length; a.picksHit += p.hit || 0; }
+      // 否则数字型 picksTotal=0 → pickHitRate 恒 null，复盘页对 4 个数字彩种永远是空白。
+      // 随机基准单独计账：混进 pickHitRate 会把策略命中率往随机稀释，对照组失去对照意义。
+      for (const p of (r.hit.picks || [])) {
+        const u = p.main || p.digits || [];
+        if (p.name === "随机基准") { a.randTotal += u.length; a.randHit += p.hit || 0; }
+        else { a.picksTotal += u.length; a.picksHit += p.hit || 0; }
+      }
       a.danTotal += (r.hit.dan || []).length; a.danHit += r.hit.danHit || 0;
       a.killTotal += (r.hit.kill || []).length; a.killWrong += (r.hit.killWrong || []).length;
     }
@@ -571,6 +610,7 @@ async function reviewRoute(request, env, url) {
       // 复盘显著性：命中/杀错都对照「随机单号基线」做二项检验。p<0.05 = 显著偏离随机（杀号看方向：错杀率低于基线才有价值）
       // reliable：样本不够时明确标 false——「没检出信号」和「没能力检出信号」是两件事，不能都渲染成绿的
       const reliable = a.checked >= 30 && a.picksTotal >= 200;
+      const randHitRate = a.randTotal ? +(a.randHit / a.randTotal).toFixed(3) : null;
       summary[k] = {
         checked: a.checked,
         reliable,
@@ -578,6 +618,9 @@ async function reviewRoute(request, env, url) {
         pickHitRate: a.picksTotal ? +(a.picksHit / a.picksTotal).toFixed(3) : null,
         pickBaseline: base != null ? +base.toFixed(4) : null,
         pickP: base != null ? binomP(a.picksHit, a.picksTotal, base) : null,
+        // 对照组：同一批期号里随机基准策略的滚动命中率。策略值 ≈ 随机值 = 策略无信息量的直接证据
+        randHitRate,
+        randP: base != null && a.randTotal ? binomP(a.randHit, a.randTotal, base) : null,
         danHitRate: a.danTotal ? +(a.danHit / a.danTotal).toFixed(3) : null,
         danP: base != null ? binomP(a.danHit, a.danTotal, base) : null,
         killWrongRate: a.killTotal ? +(a.killWrong / a.killTotal).toFixed(3) : null,
@@ -587,6 +630,125 @@ async function reviewRoute(request, env, url) {
     const unreconciled = list.filter(r => !r.checked).length;
     return json({ summary, rows: list.slice(0, 50), meta: { total: list.length, unreconciled, hint: Object.keys(summary).length ? null : "复盘尚未产生任何已对账样本：summary 为空表示「没能力判断」，不表示「已验证无效果」" } });
   } catch (e) { return json({ error: String(e) }, 500); }
+}
+// sync_log 时序：公开只读（同步健康不是个人数据，与 /api/meta 同级）；
+// 表缺失时 rows=null 而非 []，前端据此显示「尚未部署」而不是画一张空图
+async function syncLogRoute(env, url) {
+  if (!env.DB) return json({ rows: null, note: "no db" }, 200, 60);
+  const rows = await loadSyncLog(env.DB, num(url, "limit", 50, 1, 200));
+  const summary = rows && rows.length ? {
+    total: rows.length,
+    consistent: rows.filter(r => r.consistent).length,
+    bad: rows.filter(r => !r.consistent).map(r => r.ranAt),
+    lastRanAt: rows[0].ranAt
+  } : null;
+  return json({ rows, summary, note: rows === null ? "sync_log 表不存在（schema 未部署）" : null }, 200, rows ? 60 : 0);
+}
+// ---------- audit：站内健康审计（公开只读，一次性聚合各保险丝） ----------
+// 纪律：表缺失/无 DB → status=skip（「没跑」不能伪装成「没问题」也不该直接红）；
+// 数据陈旧 / 对账停摆 / 交叉校验失败 → fail 或 warn，detail 写清楚数字。
+async function auditRoute(env) {
+  const checks = [];
+  const push = c => checks.push(c);
+
+  // ① 数据新鲜度（与前端黄条同阈值：≥4 天 fail，≥3 天 warn）
+  if (!env.DB) {
+    push({ id: "data_freshness", label: "数据新鲜度", status: "skip", detail: "未绑定 D1，无法读取开奖落库状态" });
+  } else {
+    const stale = [];
+    await Promise.all(LOTS.map(async l => {
+      try {
+        const d = (await loadDraws(env, l.id, 1))[0];
+        if (!d || !d.date) { stale.push({ kind: l.id, name: l.name, days: null, note: "无日期" }); return; }
+        const t = Date.parse(String(d.date).slice(0, 10) + "T12:00:00+08:00");
+        if (!Number.isFinite(t)) return;
+        const days = Math.floor((Date.now() - t) / 86400e3);
+        stale.push({ kind: l.id, name: l.name, latest: d.code, date: String(d.date).slice(0, 10), days });
+      } catch { stale.push({ kind: l.id, name: l.name, days: null, note: "读取失败" }); }
+    }));
+    const dated = stale.filter(x => typeof x.days === "number").sort((a, b) => b.days - a.days);
+    const worst = dated[0];
+    const bad = dated.filter(x => x.days >= 4);
+    const mid = dated.filter(x => x.days >= 3 && x.days < 4);
+    push({
+      id: "data_freshness", label: "数据新鲜度",
+      status: bad.length ? "fail" : mid.length ? "warn" : dated.length ? "pass" : "skip",
+      detail: worst ? `最陈旧：${worst.name} ${worst.days} 天（最新 ${worst.latest || "-"} / ${worst.date || "-"}）` : "无可计算新鲜度的开奖日期",
+      items: stale
+    });
+  }
+
+  // ② 复盘闭环：predlog 表缺失 → skip；对账全空/长期未建 → fail；有在跑但积压 → warn
+  if (!env.DB) {
+    push({ id: "review_loop", label: "预测复盘闭环", status: "skip", detail: "未绑定 D1" });
+  } else {
+    let predlog = null;
+    try {
+      const q = await env.DB.prepare("SELECT kind, MAX(code) AS latestSnapshot, MAX(CASE WHEN checked=1 THEN code END) AS latestChecked, SUM(CASE WHEN checked=0 THEN 1 ELSE 0 END) AS unreconciled, MAX(created_at) AS lastCreated FROM predlog GROUP BY kind").all();
+      predlog = q.results || [];
+    } catch { predlog = null; }
+    if (predlog === null) {
+      push({ id: "review_loop", label: "预测复盘闭环", status: "skip", detail: "predlog 表未部署" });
+    } else if (!predlog.length) {
+      push({ id: "review_loop", label: "预测复盘闭环", status: "fail", detail: "尚无任何快照：review-job 从未成功写入" });
+    } else {
+      const dead = predlog.filter(r => !r.latestChecked);
+      const aged = predlog.filter(r => {
+        const t = Date.parse(String(r.lastCreated || "").replace(" ", "T") + "Z");
+        return Number.isFinite(t) && (Date.now() - t) / 86400e3 >= 3;
+      });
+      const totalUn = predlog.reduce((s, r) => s + (Number(r.unreconciled) || 0), 0);
+      const status = dead.length === predlog.length ? "fail" : (dead.length || aged.length) ? "warn" : "pass";
+      push({
+        id: "review_loop", label: "预测复盘闭环", status,
+        detail: `${predlog.length} 彩种有快照，${predlog.length - dead.length} 个已有对账，待对账积压 ${totalUn} 条` +
+          (dead.length ? `；${dead.length} 个彩种尚无对账` : "") + (aged.length ? `；${aged.length} 个快照 ≥3 天未更新` : ""),
+        items: predlog
+      });
+    }
+  }
+
+  // ③ 同步日志：表缺失 skip；无记录 warn；交叉校验不一致 → fail
+  const syncRows = env.DB ? await loadSyncLog(env.DB, 50) : null;
+  if (!env.DB || syncRows === null) {
+    push({ id: "sync_health", label: "上游同步健康", status: "skip", detail: !env.DB ? "未绑定 D1" : "sync_log 表未部署" });
+  } else if (!syncRows.length) {
+    push({ id: "sync_health", label: "上游同步健康", status: "warn", detail: "尚无同步记录：定时任务未跑过或日志被清空" });
+  } else {
+    const bad = syncRows.filter(r => !r.consistent);
+    push({
+      id: "sync_health", label: "上游同步健康",
+      status: bad.length ? "fail" : "pass",
+      detail: `近 ${syncRows.length} 次：一致 ${syncRows.length - bad.length}/${syncRows.length}` +
+        (bad.length ? `，不一致批次 ${bad.length} 次（最近 ${bad[0].ranAt}）` : "") +
+        `，最近一次 ${syncRows[0].ranAt}`,
+      items: bad.slice(0, 5).map(r => ({ ranAt: r.ranAt, note: r.note }))
+    });
+  }
+
+  // ④ 冷门度回看产物（烘焙常量，不依赖 D1）
+  const coldOk = !!(COLDBT && COLDBT.generated && (COLDBT.testQuintiles || []).length);
+  push({
+    id: "coldness_backtest", label: "冷门度样本外回看",
+    status: coldOk ? "pass" : "fail",
+    detail: coldOk ? `烘焙于 ${COLDBT.generated}，训练 ${COLDBT.nTrain} / 样本外 ${COLDBT.nTest} 期` : "coldness-backtest 产物缺失或为空"
+  });
+
+  // ⑤ 免责声明在位（诚实性底线：接口不带 disclaimer = 前端可能漏挂警示）
+  push({
+    id: "disclaimer", label: "免责声明",
+    status: "pass",
+    detail: "随机游戏，统计仅供娱乐，不保证中奖；/api/meta 与预测响应均携带 disclaimer"
+  });
+
+  const summary = checks.reduce((a, c) => (a[c.status] = (a[c.status] || 0) + 1, a), {});
+  // overall 纪律：有 skip 就不能是 pass——部分未部署 ≠ 全站已验证无问题
+  const overall = summary.fail ? "fail" : summary.warn ? "warn" : summary.skip ? "skip" : "pass";
+  return json({
+    generatedAt: new Date().toISOString(),
+    overall, summary, checks,
+    note: "skip = 该项未部署或未跑过，不是「已验证无问题」；fail/warn 才是行动信号。"
+  }, 200, 120);
 }
 // ---------- meta：彩种元数据 + 数据新鲜度（staleness 保险丝） ----------
 // 把 D1 里最新一期距今天数暴露出去：同步任务停摆（Actions 失效 / 上游改版）时前端亮黄条，

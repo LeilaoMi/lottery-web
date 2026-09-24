@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import {
   loadDraws, statsOf, simulate, nullSummary, mcP, fmtP, FAMILY, STAT_NAMES,
   rng, drawK, comb, pHyper, pNCHG, chi2Upper, twoSidedZ, pearson, spearman, mannWhitney,
-  drawDow, WK, rel, REPORT_FILE, DATA_FILE, SOURCE_FILE,
+  drawDow, WK, rel, REPORT_FILE, DATA_FILE, SOURCE_FILE, bhFDR,
 } from "./lib.mjs";
 
 const ARGS = process.argv.slice(2);
@@ -164,8 +164,10 @@ out("");
   const alpha = 0.05 / STAT_NAMES.length;
   const nominal = bp.filter(([, , p]) => p < 0.05);
   const survives = nominal.filter(([, , p]) => p < alpha);
+  const qs = bhFDR(bp.map(([, , p]) => p));
+  const fdrHits = bp.filter(([, , p], i) => qs[i] < 0.05);
   out(`- Bonferroni 阈值（${STAT_NAMES.length} 个量）α=${alpha.toFixed(5)}。名义 p<0.05 的有 ${nominal.length ? nominal.map(([nm, label, p]) => `${label.split("（")[0]} ${fmtP(p)}`).join("、") : "无"}；` +
-    `${survives.length ? `其中 ${survives.length} 项跨过 Bonferroni` : "无一跨过 Bonferroni"}。`);
+    `${survives.length ? `其中 ${survives.length} 项跨过 Bonferroni` : "无一跨过 Bonferroni"}；BH/FDR q<0.05 的有 ${fdrHits.length ? fdrHits.map(([nm, label]) => label.split("（")[0]).join("、") : "无"}。`);
   out(`- 关键：这些量彼此高度相关（同一批号频/形态摘要），不能按独立检验处理 —— 判定以 A2 的族内联合校正为准，那里 p=${f4(jointP)}。`);
   out(`- 蒙特卡洛分辨率下限 1/${SIMS} = ${(1 / SIMS).toExponential(1)}：比它更小的 p 只能报 “<${(1 / SIMS).toFixed(4)}”。`);
 }

@@ -1,10 +1,8 @@
--- D1 sqlite，自用最小
--- ⚠️ 本文件 = db/migrations/ 下按文件名排序拼接的全部迁移（bootstrap 新库用这一份即可）。
--- 改表结构：新增 db/migrations/00NN_*.sql（已发布迁移不许改），再同步重写本文件；
--- worker/test/unit.test.mjs 的「D1 迁移版本化」用例会锁死两者内容一致，漂移直接红。
--- 应用：npx wrangler d1 execute lottery --remote --file=db/schema.sql -y
--- 增量（已有库只跑新迁移）：npx wrangler d1 execute lottery --remote --file=db/migrations/00NN_*.sql -y
-
+-- 0001_baseline —— D1 基线 schema（截至 v0.14.0 的全部表）
+-- 迁移纪律：
+--   1. 已发布的迁移文件禁止改内容，改动用新的 00NN_*.sql；
+--   2. db/schema.sql = 按序拼接的全部迁移（bootstrap 一条命令），由测试锁死两者一致；
+--   3. Worker 侧自建表（predlog 的 CREATE IF NOT EXISTS）只作运行时兜底，事实源是这里的迁移。
 CREATE TABLE IF NOT EXISTS draws (
   code TEXT PRIMARY KEY,
   red TEXT NOT NULL,

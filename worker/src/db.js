@@ -74,3 +74,17 @@ export async function saveKind(db, table, draws, map) {
 export async function logSync(db, sources, fetched, inserted, consistent, note = "") {
   try { await db.prepare("INSERT INTO sync_log(sources,fetched,inserted,consistent,note) VALUES(?,?,?,?,?)").bind(sources, fetched, inserted, consistent ? 1 : 0, note).run(); } catch {}
 }
+// 同步健康时序：最近 limit 次 adminSync 的拉取量/落库量/交叉校验结果。
+// 表不存在时返回 null（未部署 schema 的环境不得渲染成「故障」，与 /api/meta 的 predlog 同约定）
+export async function loadSyncLog(db, limit = 50) {
+  const r = await dbGet(db, "SELECT ran_at, sources, fetched, inserted, consistent, note FROM sync_log ORDER BY id DESC LIMIT ?", [limit]);
+  if (!r) return null;
+  return (r.results || []).map(x => ({
+    ranAt: x.ran_at || "",
+    sources: String(x.sources || "").split(",").filter(Boolean),
+    fetched: Number(x.fetched) || 0,
+    inserted: Number(x.inserted) || 0,
+    consistent: x.consistent === 1 || x.consistent === true,
+    note: x.note || ""
+  }));
+}

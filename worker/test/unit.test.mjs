@@ -1,6 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { normNums, pad2, prizeSSQ, prizeDLT, prizeDLTOld, prizeDLTFor, dltFixedAmount, DLT_CUTOVER, prizeQLC, rotation, verifyCoverage } from "../src/small.js";
+import { chaseDrawDates, calcBet, isDrawDay } from "../src/calc.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { valid, norm, normCode, analyze, blueScores, verify, trend, parse17500 } from "../src/ssq.js";
 import { validDLT, normDLT, verifyDLT, analyzeDLT } from "../src/dlt.js";
 
@@ -211,6 +215,77 @@ describe("统计分析", () => {
     const a = analyzeDLT(d, 30);
     assert.equal(a.hotFront[0], "01");
     assert.equal(a.count, 2);
+  });
+});
+
+describe("追号开奖日历投影", () => {
+  test("双色球：2026-09-21（周一）起 4 期落在二/四/日", () => {
+    // 2026-09-21 是周一 → 下个开奖日 09-22 二、09-24 四、09-27 日、09-29 二
+    const d = chaseDrawDates("ssq", 4, "2026-09-21");
+    assert.deepEqual(d, ["2026-09-22", "2026-09-24", "2026-09-27", "2026-09-29"]);
+  });
+  test("每日彩种：从起始日连续取", () => {
+    assert.deepEqual(chaseDrawDates("fc3d", 3, "2026-09-21"), ["2026-09-21", "2026-09-22", "2026-09-23"]);
+  });
+  test("起始日当天是开奖日则包含当天（含边界）", () => {
+    // 2026-09-22 是周二，ssq 开奖日
+    assert.equal(chaseDrawDates("ssq", 1, "2026-09-22")[0], "2026-09-22");
+  });
+  test("跨月且跨年：12-31 起大乐透（一三六）", () => {
+    // 2026-12-31 周四 → 2027-01-02 六、01-04 一
+    const d = chaseDrawDates("dlt", 2, "2026-12-31");
+    assert.deepEqual(d, ["2027-01-02", "2027-01-04"]);
+  });
+  test("isDrawDay：七乐彩周五开、周二不开", () => {
+    assert.equal(isDrawDay("qlc", new Date(Date.UTC(2026, 8, 25))), true); // 周五
+    assert.equal(isDrawDay("qlc", new Date(Date.UTC(2026, 8, 22))), false); // 周二
+  });
+  test("calcBet：chase>1 的 plan 带 date 与 dates 长度一致", () => {
+    const r = calcBet("ssq", { red: 6, blue: 1, chase: 3, from: "2026-09-21" });
+    assert.equal(r.chase.plan.length, 3);
+    assert.deepEqual(r.chase.dates, ["2026-09-22", "2026-09-24", "2026-09-27"]);
+    assert.deepEqual(r.chase.plan.map(p => p.date), r.chase.dates);
+    assert.ok(r.chase.calendarNote.includes("休市"));
+  });
+  test("calcBet：单期（chase=1）不带 plan/dates（保持旧行为）", () => {
+    const r = calcBet("ssq", { red: 6, blue: 1, chase: 1 });
+    assert.equal(r.chase.plan, undefined);
+    assert.equal(r.chase.dates, undefined);
+  });
+});
+
+describe("D1 迁移版本化", () => {
+  const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const migDir = path.join(ROOT, "db", "migrations");
+  // 只比 SQL 语句序列：忽略注释行与空白差异，schema 与迁移才不会因排版误报漂移
+  const statements = s => s.replace(/\r\n/g, "\n").split("\n")
+    .filter(l => { const t = l.trim(); return t && !t.startsWith("--"); })
+    .join("\n").replace(/\s+/g, " ").trim();
+
+  test("迁移文件按 00NN_ 前缀连续编号，无缺口", () => {
+    const files = fs.readdirSync(migDir).filter(f => f.endsWith(".sql")).sort();
+    assert.ok(files.length >= 1, "db/migrations/ 至少应有一个迁移");
+    files.forEach((f, i) => {
+      const n = parseInt(f.slice(0, 4), 10);
+      assert.equal(n, i + 1, `迁移序号应连续：期望 ${String(i + 1).padStart(4, "0")}，实得 ${f}`);
+      assert.match(f, /^\d{4}_[a-z0-9_]+\.sql$/, "文件名须为 00NN_snake_case.sql：" + f);
+    });
+  });
+
+  test("db/schema.sql ≡ 按序拼接的全部迁移（bootstrap 与增量不可能漂移）", () => {
+    const files = fs.readdirSync(migDir).filter(f => f.endsWith(".sql")).sort();
+    const concat = files.map(f => fs.readFileSync(path.join(migDir, f), "utf8")).join("\n");
+    const schema = fs.readFileSync(path.join(ROOT, "db", "schema.sql"), "utf8");
+    assert.equal(statements(schema), statements(concat),
+      "schema.sql 与 migrations/ 拼接不一致：改表结构要同时新增迁移并重写 schema.sql");
+  });
+
+  test("基线迁移覆盖全部 6 张表（与 README / 架构描述一致）", () => {
+    const sql = fs.readdirSync(migDir).filter(f => f.endsWith(".sql")).sort()
+      .map(f => fs.readFileSync(path.join(migDir, f), "utf8")).join("\n");
+    for (const t of ["draws", "dlt_draws", "small_draws", "favs", "predlog", "sync_log"]) {
+      assert.ok(new RegExp("CREATE TABLE IF NOT EXISTS\\s+" + t + "\\b").test(sql), "缺表 " + t);
+    }
   });
 });
 

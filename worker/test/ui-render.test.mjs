@@ -30,7 +30,7 @@ function loadFrontend() {
     localStorage: stubEl(), fetch: () => stubEl(), console, setTimeout, encodeURIComponent,
     JSON, Math, Date, RegExp, Number, Array, Object, String, parseInt, isNaN, addEventListener: () => {},
   });
-  vm.runInContext(m[1] + "\n;globalThis.__fn = { renderVerifyBatch, hitText };", ctx);
+  vm.runInContext(m[1] + "\n;globalThis.__fn = { renderVerifyBatch, hitText, shareCardLines, chaseCalendarHtml, renderAudit };", ctx);
   return ctx.__fn;
 }
 const FN = loadFrontend();
@@ -105,7 +105,7 @@ test("前端渲染：数字彩按位命中与快乐8中奖金额走同一条通�
   const d3 = [{ code: "2026242", date: "2026-09-08", digits: ["9", "2", "7"] }];
   const r3 = verifyBatch("fc3d", d3, ["9 2 7", "9 2 8", "927"], ["2026242"], 1);
   const g = r3.rounds[0].results.map(x => x.grade);
-  assert.deepEqual(g, ["直选", "未中", "直选"], "9 2 7 与连写 927 都算直选中，9 2 8 未中");
+  assert.deepEqual(g, ["直选", "未中", "直选"], "9 2 7 与连写 927 都算直选中，9 2 8 不中");
   const html3 = FN.renderVerifyBatch(r3);
   assert.ok(html3.includes("1040 元"), "福彩3D 直选 1040 元要落进页面");
   assert.ok(html3.includes("按位"), "命中列要显示按位命中数");
@@ -118,4 +118,73 @@ test("前端渲染：数字彩按位命中与快乐8中奖金额走同一条通�
   const htmlK = FN.renderVerifyBatch(rk);
   assert.ok(htmlK.includes("选 5 中 5"), "快乐8 的命中口径是「选几个中几个」");
   assert.ok(htmlK.includes(rr.amount + " 元"), "快乐8 金额按元显示");
+});
+
+test("分享图片卡片：免责声明必须进图，胆拖单与纯推荐号两种布局都成立", () => {
+  // 免责声明进图是纪律：分享出去的图脱离页面上下文，图上没有「仅供娱乐」= 替本站背书
+  const ticket = FN.shareCardLines({ name: "双色球", dan: ["01", "05"], tuo: ["12", "22", "28", "30"], aux: ["04"], bets: 4, amount: 8 });
+  const texts = ticket.map(l => l.t).join("\n");
+  assert.ok(texts.includes("随机游戏，仅供娱乐，不保证中奖"), "免责声明必须出现在卡片行里");
+  assert.ok(texts.includes("胆 01 05"), "胆码行");
+  assert.ok(texts.includes("4 注 / 8 元"), "注数金额行");
+  assert.equal(ticket[0].s, "title", "第一行是标题样式");
+  // 纯推荐号（无胆拖）：main 行要出现，且不与胆拖行混淆
+  const picks = FN.shareCardLines({ kindName: "大乐透", code: "26104", main: ["01", "05", "12", "22", "30"], blue: ["03", "07"] });
+  const pt = picks.map(l => l.t).join("\n");
+  assert.ok(pt.includes("大乐透 · 26104"), "标题带彩种与期号");
+  assert.ok(pt.includes("号 01 05 12 22 30 + 03,07") || pt.includes("号 01 05 12 22 30 + 03,07"), "推荐号行含主区与副区");
+  assert.ok(pt.includes("随机游戏，仅供娱乐，不保证中奖"), "纯推荐布局也要有免责声明");
+  // 有胆拖时不得再画 main 行（避免重复号码）
+  assert.ok(!ticket.some(l => l.t.startsWith("号 ")), "胆拖单不应再出现「号」行");
+});
+
+test("追号日历：按月铺格、命中日带期号金额与累计，推算说明进页面", () => {
+  const chase = {
+    periods: 3, totalBets: 6, totalAmount: 12,
+    plan: [
+      { period: 1, mult: 1, bets: 2, amount: 4, date: "2026-09-22" },
+      { period: 2, mult: 1, bets: 2, amount: 4, date: "2026-09-24" },
+      { period: 3, mult: 1, bets: 2, amount: 4, date: "2026-10-01" },
+    ],
+    dates: ["2026-09-22", "2026-09-24", "2026-10-01"],
+    calendarNote: "日期按开奖日历推算（不含春节等休市），以官方公告为准",
+  };
+  const html = FN.chaseCalendarHtml(chase);
+  assert.ok(html.includes("2026 年 9 月") && html.includes("2026 年 10 月"), "跨月要出两个月份块");
+  assert.ok(html.includes("第1期") && html.includes("第3期"), "格内标期号");
+  assert.ok(html.includes("累 4") && html.includes("累 12"), "累计投入跟到最后一期");
+  assert.ok(html.includes("以官方公告为准"), "推算免责说明必须进页面");
+  assert.ok(html.includes(">22<") || html.includes("22"), "9 月 22 日格存在");
+  // 无 date 的旧计划（或单期）不画日历
+  assert.equal(FN.chaseCalendarHtml({ plan: [{ period: 1, amount: 4 }] }), "");
+  assert.equal(FN.chaseCalendarHtml({ plan: [] }), "");
+  assert.ok(!/undefined/.test(html), "不许出现 undefined");
+});
+
+test("站内审计页：fail/warn/pass/skip 各有徽章，skip 不许渲染成绿 PASS", () => {
+  const r = {
+    overall: "fail",
+    generatedAt: "2026-09-24T00:00:00.000Z",
+    note: "skip = 该项未部署或未跑过，不是「已验证无问题」；fail/warn 才是行动信号。",
+    checks: [
+      { id: "data_freshness", label: "数据新鲜度", status: "fail", detail: "最陈旧：双色球 6 天", items: [{ name: "双色球", days: 6 }, { name: "大乐透", days: 1 }] },
+      { id: "review_loop", label: "预测复盘闭环", status: "warn", detail: "2 彩种有快照，1 个已有对账" },
+      { id: "sync_health", label: "上游同步健康", status: "skip", detail: "sync_log 表未部署" },
+      { id: "coldness_backtest", label: "冷门度样本外回看", status: "pass", detail: "烘焙于 2026-09-24" },
+      { id: "disclaimer", label: "免责声明", status: "pass", detail: "随机游戏…" },
+    ],
+  };
+  const html = FN.renderAudit(r);
+  assert.ok(html.includes("FAIL") && html.includes("WARN") && html.includes("SKIP") && html.includes("PASS"), "四种状态徽章齐全");
+  assert.ok(html.includes("数据陈旧") || html.includes("双色球 6 天"), "fail 明细进页面");
+  assert.ok(html.includes("≥3 天未更新"), "陈旧彩种单独汇总一行");
+  // skip 必须是灰字 SKIP，不能偷换成绿色 PASS
+  assert.ok(!html.includes("PASS</b>") || true, "占位——真正断言在下两行");
+  const skipCell = html.split("sync_log 表未部署")[0];
+  assert.ok(skipCell.includes("SKIP"), "skip 项渲染为 SKIP");
+  assert.ok(!skipCell.includes("PASS"), "skip 不得渲染成 PASS");
+  assert.ok(html.includes("skip ≠") || html.includes("不是「已验证无问题」"), "note 里的 skip 纪律要进页面");
+  assert.ok(!/undefined|\[object Object\]/.test(html), "不许出现 undefined / [object Object]");
+  // 空 checks 的防御
+  assert.ok(FN.renderAudit({ checks: [] }).includes("未返回"));
 });

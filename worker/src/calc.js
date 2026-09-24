@@ -11,6 +11,41 @@ export function C(n, k) {
 const int = (v, d = 0) => { const n = parseInt(v, 10); return Number.isNaN(n) ? d : n; };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
+// 开奖日历（与 LOTS.days 一致）：追号计划按此投影到具体日期。
+// 只按星期推算，不建模春节等休市——日历上标「推算」，以官方开奖公告为准。
+const DRAW_DAYS = { ssq: "二四日", dlt: "一三六", fc3d: "每日", pl3: "每日", pl5: "每日", qlc: "一三五", qxc: "二五日", kl8: "每日" };
+const WD = { 日: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
+const iso = d => d.toISOString().slice(0, 10);
+
+export function isDrawDay(kind, date) {
+  const sched = DRAW_DAYS[kind];
+  if (!sched) return false;
+  if (sched === "每日") return true;
+  const w = date.getUTCDay();
+  for (const ch of sched) if (WD[ch] === w) return true;
+  return false;
+}
+
+// 追号各期的推算开奖日：从 fromDate（含当日）起按开奖日历取 periods 个开奖日。
+// fromDate 缺省用 UTC 今天；非法格式回退今天。纯日历推算，节假日休市不在模型内。
+export function chaseDrawDates(kind, periods, fromDate) {
+  const n = clamp(int(periods, 1), 1, 100);
+  let d;
+  if (typeof fromDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    const [y, m, day] = fromDate.split("-").map(Number);
+    d = new Date(Date.UTC(y, m - 1, day));
+  } else {
+    const now = new Date();
+    d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  }
+  const out = [];
+  for (let guard = 0; out.length < n && guard < 400; guard++) {
+    if (isDrawDay(kind, d)) out.push(iso(d));
+    d = new Date(d.getTime() + 86400000);
+  }
+  return out;
+}
+
 /**
  * 复式 / 胆拖 注数与金额
  * kind: ssq | dlt | qlc | kl8 | fc3d | pl3 | pl5 | qxc
@@ -77,11 +112,20 @@ export function calcBet(kind, p = {}) {
 
   let totalBets = 0;
   const plan = [];
-  for (let i = 0; i < chase; i++) { const b = bets * m(i); totalBets += b; plan.push({ period: i + 1, mult: m(i), bets: b, amount: b * PRICE }); }
+  // chase>1 时把计划投影到开奖日历（from=起算日，默认今天；纯星期推算，不含休市）
+  const dates = chase > 1 ? chaseDrawDates(kind, chase, p.from) : [];
+  for (let i = 0; i < chase; i++) {
+    const b = bets * m(i); totalBets += b;
+    plan.push({ period: i + 1, mult: m(i), bets: b, amount: b * PRICE, ...(dates[i] ? { date: dates[i] } : {}) });
+  }
 
   return {
     kind, mode, formula, bets, amount: bets * PRICE,
-    chase: { periods: chase, totalBets, totalAmount: totalBets * PRICE, plan: chase > 1 ? plan : undefined },
+    chase: {
+      periods: chase, totalBets, totalAmount: totalBets * PRICE,
+      plan: chase > 1 ? plan : undefined,
+      ...(dates.length ? { dates, calendarNote: "日期按开奖日历推算（不含春节等休市），以官方公告为准" } : {})
+    },
     note: "金额按每注 2 元估算，实际以官方规则为准"
   };
 }

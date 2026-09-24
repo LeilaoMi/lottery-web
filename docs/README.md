@@ -10,6 +10,7 @@
 | 这站能干什么、怎么装起来 | [../README.md](../README.md) | 手写 |
 | 发布前 / 自建部署要检查什么、CI 各能力要配哪些 secrets | [PUBLISH.md](PUBLISH.md) | 手写 |
 | 版本改了什么、为什么这么改 | [CHANGELOG.md](CHANGELOG.md) | 手写（每版一条） |
+| 关键设计决策当初为什么这么做 | [why.md](why.md) | 手写 |
 | 「冷热 / 遗漏 / 回补」这些说法有没有依据 | [research.md](research.md) §3 假设对账 | 手写（数据变了要更新） |
 | 双色球随机性深检的完整读数 | [randomness-2026-09.md](randomness-2026-09.md) | 手工存档（当期基线） |
 | 本月双色球审计 | [randomness-latest.md](randomness-latest.md) | **自动产物**，由 `scripts/randomness/analyze.mjs` 覆写，勿手改 |

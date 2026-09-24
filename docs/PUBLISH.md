@@ -15,8 +15,9 @@
 # 1. 确认无敏感文件会被提交
 git status --porcelain | grep -E "wrangler.local|dev.vars|credential" # 应无输出
 
-# 2. 单元测试 + 前端构建
-cd worker && npm test && npm run build:ui && cd ..
+# 2. 单元测试 + 前端构建 + 冷门度常量对账 + D1 schema 冒烟
+cd worker && npm test && npm run build:ui && npm run test:cold && cd ..
+node scripts/db/schema-smoke.mjs
 
 # 3. 扫一遍是否出现疑似密钥
 grep -rInE "cfut_|CLOUDFLARE_API_TOKEN *[:=] *[\"'][A-Za-z0-9_-]{20,}" . --exclude-dir=node_modules

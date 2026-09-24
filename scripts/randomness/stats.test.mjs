@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   chi2Upper, ncdf, binomP, mannWhitney, pearson, spearman, rng, drawK,
-  comb, pHyper, pNCHG, dow, statsOf, simulate, nullSummary, validateRow,
+  comb, pHyper, pNCHG, dow, statsOf, simulate, nullSummary, validateRow, bhFDR,
 } from "./lib.mjs";
 
 test("正态 CDF 对已知分位数", () => {
@@ -29,6 +29,29 @@ test("二项检验（连续性校正）", () => {
   const p = binomP(60, 100, 0.5);                 // z=(10-0.5)/5=1.9 → p=0.0574
   assert.ok(Math.abs(p - 0.05735) < 1e-3, String(p));
   assert.equal(binomP(5, 10, 0.5), null);        // 小样本拒绝出 p
+});
+
+test("BH/FDR：教科书例子 + 单调性 + 空输入", () => {
+  // 教科书标准例（Benjamini-Hochberg 1995）：m=10, 期望 FDR=0.05
+  // p 排序后 q_i = min_{j>=i} (m/j)·p_j，再与 0.05 比
+  const ps = [0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205, 0.212, 0.216];
+  const q = bhFDR(ps);
+  assert.equal(q.length, 10);
+  // q 必须不小于 p（校正只会把 p 推大）
+  for (let i = 0; i < 10; i++) assert.ok(q[i] + 1e-12 >= ps[i], `q[${i}]=${q[i]} < p=${ps[i]}`);
+  // 手算校验：p1=0.001, m=10, r=1 → 10×0.001/1=0.01；p2=0.008,r=2 → 0.04，回扫 min 保持
+  assert.ok(Math.abs(q[0] - 0.01) < 1e-9, String(q[0]));
+  assert.ok(Math.abs(q[1] - 0.04) < 1e-9, String(q[1]));
+  // 单调化回扫：q_r = min_{j>=r} (m/j)·p_j，故 q3 = min(0.13, 0.1025, 0.084, 0.10, ...) = 0.084
+  assert.ok(Math.abs(q[2] - 0.084) < 1e-9, String(q[2]));
+  // 全部不显著的族：q 不得凭空变显著
+  const q2 = bhFDR([0.2, 0.3, 0.4, 0.5]);
+  assert.ok(q2.every(x => x >= 0.2), JSON.stringify(q2));
+  // 空输入
+  assert.deepEqual(bhFDR([]), []);
+  // 输入顺序打乱后，对应位置的 q 应跟着走（稳定性）
+  const q3 = bhFDR([0.2, 0.001, 0.3]);
+  assert.ok(q3[1] < q3[0] && q3[1] < q3[2], JSON.stringify(q3));
 });
 
 test("Mann-Whitney：同分布应为零，位移后应显著", () => {
