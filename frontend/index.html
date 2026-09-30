@@ -496,33 +496,62 @@ function drawChart(title, cats, vals){
   }, true);
 }
 
+// 多系列柱图：数字型彩种没有「号码池」，冷热是按位看的（百/十/个位各一张频次表），
+// 画在同一张图上按位分组才看得出「十位比个位热」这类结构。drawChart 只能画单系列，
+// 硬套它就得一个位一张图，反而看不出位间差异。
+const GROUP_COLORS = ['#e11', '#16a', '#2a7', '#d80', '#7a3', '#0a7', '#a4a', '#c0c'];
+function drawGroupedChart(title, cats, series, elId){
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），下方统计数值仍可用。</div>'; return; }
+  const inst = window['__g_' + elId] || (window['__g_' + elId] = echarts.init(el));
+  inst.setOption({
+    title: { text: title, textStyle: { fontSize: 14 } },
+    tooltip: { trigger: 'axis' },
+    legend: { data: series.map(s => s.name), textStyle: { fontSize: 10 }, top: 24 },
+    grid: { left: 40, right: 12, top: 52, bottom: 30 },
+    xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: series.map((s, i) => ({ name: s.name, type: 'bar', data: s.vals, itemStyle: { color: GROUP_COLORS[i % GROUP_COLORS.length] } }))
+  }, true);
+}
+
+// 数据来源横幅：mock 占位必须自己喊出来。getDraws 三源全挂时会返回一条编造的单期，
+// /analyze 的 count 变成 1、freq 仍是满池 33 个键 —— 不提示的话就是一张「看起来正常」
+// 的频次图，而它是假的。这跟「单源却报一致」是同一类问题：让假数据自己开口。
+function sourceBanner(an){
+  const s = an.sources || [];
+  if (!s.length) return '';
+  if (s.indexOf('mock') >= 0)
+    return '<div class="err" style="padding:8px 10px;border-radius:6px;margin-bottom:8px"><b>当前不是真实开奖数据</b><br>' +
+      '<span class="muted">上游数据源全部不可用，页面显示的是占位示例（单期 ' + esc(an.count) + ' 条）。' +
+      '下面的频次/冷热/遗漏全部不成立，请勿据此判断，也别把它当成统计结论。</span></div>';
+  const tag = '<div class="muted" style="margin-bottom:6px">数据源 ' + esc(s.join(' + ')) +
+    (s.length < 2 ? '（本次只有单一源应答，未经第二源交叉校验）' : '（双源已交叉校验）') + '</div>';
+  return tag;
+}
+
 // 统一分析：号码池型看频次/遗漏/形态，数字型按位看冷热
 async function loadAnalyze(id){
   try {
     const an = await api('/api/' + id + '/analyze?win=30');
-    if (an.perPos) {
-      const p0 = an.perPos[0], ks = Object.keys(p0.freq).sort();
-      drawChart(LOT[id].name + ' 第 1 位频次（近 ' + an.count + ' 期）', ks, ks.map(k => p0.freq[k]));
-      $('#stats').innerHTML = an.perPos.map(p =>
-        '第' + p.pos + '位　热 ' + esc(p.hot.join(',')) + '　冷 ' + esc(p.cold.join(','))).join('<br>') +
-        '<br>平均和值 ' + esc(an.avgSum) + '　平均大数个数 ' + esc(an.avgBigSmall) +
-        (an.form ? '<br>近 ' + esc(an.count) + ' 期形态：组三 ' + esc(an.form.group3) +
-          ' / 组六 ' + esc(an.form.group6) + ' / 豹子 ' + esc(an.form.bail) : '');
-    }
+    const isDigit = !!an.perPos;
+    $('#stats').innerHTML = sourceBanner(an);
+    if (isDigit) return await analyzeDigit(an, id);
     const ks = Object.keys(an.freq || {}).sort();
     drawChart(LOT[id].name + ' 号码频次（近 ' + an.count + ' 期）', ks, ks.map(k => an.freq[k]));
     const om = an.omission || {};
     const maxOm = om.max ? Math.max.apply(null, Object.values(om.max)) : '-';
     const auxTop = an.auxFreq && Object.keys(an.auxFreq).length
       ? Object.entries(an.auxFreq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => x[0]).join(',') : '';
-    $('#stats').innerHTML =
+    $('#stats').insertAdjacentHTML('beforeend',
       '热号 ' + esc((an.hot || []).join(',')) + '　冷号 ' + esc((an.cold || []).join(',')) + '<br>' +
       '奇偶比 ' + esc(an.oddRatio) + '　大小比 ' + esc(an.bigRatio) + '　质合比 ' + esc(an.primeRatio) + '<br>' +
       '均和 ' + esc(an.avgSum) + '　平均AC ' + esc(an.avgAC) + '　平均连号 ' + esc(an.avgConsec) + '　平均重号 ' + esc(an.avgRepeat) + '<br>' +
       '012路 ' + esc((an.road012 || []).join('/')) + '　区间分布 ' + esc((an.zoneDist || []).join('/')) + '<br>' +
       '历史最大遗漏 ' + esc(maxOm) + ' 期' + (auxTop ? '<br>副区高频 ' + esc(auxTop) : '') +
       '<br><b>当前遗漏 Top10</b>　' + Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
-        .map(([k, v]) => esc(k) + '(' + v + '期·均值' + esc(om.avg[k] != null ? om.avg[k] : '-') + ')').join(' ');
+        .map(([k, v]) => esc(k) + '(' + v + '期·均值' + esc(om.avg[k] != null ? om.avg[k] : '-') + ')').join(' '));
     await loadBacktest(id);
     // 形态转移卡片（号码池型）：上一期形态 → 下期最可能形态
     if (an.shape && an.shape.sum) {
@@ -546,6 +575,49 @@ async function loadAnalyze(id){
       drawNoiseChart(id, an);
     }
   } catch (e) { errBox(e, $('#a')); }
+}
+
+// 数字型（福彩3D / 排列3 / 排列5 / 七星彩）分析：按位看。
+//
+// 旧实现在这里留下两个叠加的缺陷，四个数字型彩种的分析页因此几乎是空的：
+//  1) 先把按位冷热写进 #stats，随后号码池那版整体 innerHTML 赋值把它整个抹掉；
+//  2) 先把按位频次图画进 #chart，紧接着又用空的 an.freq（数字型没有号码池）覆盖同一个
+//     #chart，setOption(..., true) 直接把图擦成空白。
+// 数字型没有「号码频次」这张图，不该去画一张空的；该画的是按位分组频次 + 按位当前遗漏。
+async function analyzeDigit(an, id){
+  const ps = an.perPos || [];
+  const cats = [...new Set(ps.flatMap(p => Object.keys(p.freq || {})))].sort();
+  drawGroupedChart(LOT[id].name + ' 各位置数字频次（近 ' + an.count + ' 期）', cats,
+    ps.map(p => ({ name: '第' + p.pos + '位', vals: cats.map(c => Number(p.freq[c]) || 0) })), 'chart');
+  $('#stats').insertAdjacentHTML('beforeend',
+    ps.map(p => {
+      const f = p.freq || {}, top = Object.entries(f).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + '(' + x[1] + ')').join(' ');
+      const om = p.omission || {};
+      const cur = Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1])[0];
+      return '<b>第 ' + p.pos + ' 位</b>　热 ' + esc(p.hot.join(',')) + '　冷 ' + esc(p.cold.join(',')) +
+        '　奇偶比 ' + esc(p.oddRatio) + '<br><span class="muted">高频 ' + esc(top) +
+        (cur ? '　当前最深遗漏 ' + esc(cur[0]) + '(' + cur[1] + '期·均值' + esc(om.avg ? om.avg[cur[0]] : '-') + ')' : '') +
+        '　历史最大遗漏 ' + esc(om.max ? Math.max.apply(null, Object.values(om.max)) : '-') + ' 期</span>';
+    }).join('<br>') +
+    '<br><b>整体</b>　平均和值 ' + esc(an.avgSum) + '　平均大数个数 ' + esc(an.avgBigSmall) +
+    (an.form ? '<br>近 ' + esc(an.count) + ' 期形态：组三 ' + esc(an.form.group3) +
+      ' / 组六 ' + esc(an.form.group6) + ' / 豹子 ' + esc(an.form.bail) : ''));
+  await loadBacktest(id);
+  // 形态转移只对号码池型有意义（shapeTrans 对数字型返回 note），把 note 显示出来而不是静默跳过
+  if (an.shape && an.shape.note) {
+    $('#stats').insertAdjacentHTML('beforeend',
+      '<div class="muted" style="margin-top:8px">形态转移：' + esc(an.shape.note) + '</div>');
+  }
+  // 遗漏走势是「号码」的逐期序列，数字型没有号码池 —— 直说不适用，并给出按位当前遗漏这张能画的图
+  $('#stats').insertAdjacentHTML('beforeend',
+    '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>各位置当前遗漏</b> ' +
+    '<span class="muted">（每位数字当期连续未出期数；数字型无号码池，故不提供号码维度的逐期遗漏走势）</span>' +
+    '<div id="chart4" style="height:300px"></div></div>');
+  drawGroupedChart(LOT[id].name + ' 各位置当前遗漏（近 ' + an.count + ' 期）', cats,
+    ps.map(p => {
+      const cur = (p.omission || {}).cur || {};
+      return { name: '第' + p.pos + '位', vals: cats.map(c => Number(cur[c]) || 0) };
+    }), 'chart4');
 }
 
 // 遗漏走势：统一引擎 /api/trend?kind=xx（trendPool），每条折线是一个号码的逐期遗漏

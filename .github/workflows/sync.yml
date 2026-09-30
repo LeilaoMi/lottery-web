@@ -38,7 +38,7 @@ jobs:
         # ui-render.test.mjs 读 frontend/index.html 渲染真实后端响应 → 前后端字段改名会在 push 时立刻红
         # notify.test.mjs 用本地 http server 真发一次 → 「以为在推、其实从没发出去」不会漏过
         # net.test.mjs 用不回包的本地 server 验超时真的会掐断 → 上游挂死把请求拖到 30s 会有人管
-        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs worker/test/net.test.mjs worker/test/sw-queue.test.mjs worker/test/regress.test.mjs worker/test/small-route.test.mjs worker/test/crosscheck.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
+        run: node --test "worker/test/*.test.mjs" scripts/randomness/stats.test.mjs scripts/notify.test.mjs
       - name: 冷门度系数对账（线上常量 ↔ 拟合产物 ↔ 站内回看，离线快检）
         # 月度 ssq-fit 要联网重拟合（分钟级）；push 时只做三份已提交产物的一致性断言（毫秒级）。
         # 抓「手改 coldness.js 没重跑拟合」「回看数据被掏空」——单测不会红，但站上系数来历不明。
@@ -111,7 +111,7 @@ jobs:
         if: env.DEPLOY_ENABLED == '1'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          EXPECT_VERSION: 0.15.4
+          EXPECT_VERSION: 0.15.5
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then
@@ -262,7 +262,7 @@ jobs:
         # 这类行会静默把 sync_health 染绿，且没有任何迹象表明它来自旧代码。
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          EXPECT_VERSION: 0.15.4
+          EXPECT_VERSION: 0.15.5
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then

@@ -29,7 +29,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.4", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.5", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -129,11 +129,14 @@ async function dltRoute(request, env, url) {
     let draws = [], degraded = false;
     try { draws = await fetchDLT(60); } catch {}
     if (!draws.length) { draws = await fetch17500DLT(); degraded = true; } // 主源（500）拿不到才退回 17500 静态文件
+    // 分析页要靠 sources 提示「本次只有单一源应答」；不给就是让前端无从判断真假
+    draws._sources = degraded ? ["17500"] : ["500"];
+    draws._degraded = degraded;
     let res;
     if (url.pathname.endsWith("/latest")) res = json({ ...draws[0], ...(degraded ? { degraded } : {}) }, 200, 300);
     // history 是数组，JSON 序列化会丢掉自定义属性，degraded 标记进不了响应体——只在不写缓存这一步体现
     else if (url.pathname.endsWith("/history")) res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
-    else if (url.pathname.endsWith("/analyze")) res = json({ kind: "dlt", ...analyzeAll("dlt", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("dlt", draws, { window: 400 }) }, 200, 300);
+    else if (url.pathname.endsWith("/analyze")) res = json({ kind: "dlt", ...analyzeAll("dlt", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("dlt", draws, { window: 400 }), sources: draws._sources, degraded }, 200, 300);
     else if (url.pathname.endsWith("/kill")) res = json({ kind: "dlt", ...killList("dlt", draws) }, 200, 300);
     else if (url.pathname.endsWith("/dan")) res = json({ kind: "dlt", ...danList("dlt", draws, num(url, "win", 30, 5, 100)) }, 200, 300);
     else if (url.pathname.endsWith("/predict")) res = json(recommendAll("dlt", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), 200, 0);
@@ -167,6 +170,10 @@ async function smallRoute(request, env, url) {
       if (!draws.length) throw e;
       degraded = true;
     }
+    // 小彩种上游是 datachart.500.com（与 ssq/dlt 同源站），降级时读的是 D1 里的旧数据。
+    // 分析页要靠 sources 告诉用户「这批数字是实时拉的还是库里存的」，不给就无从判断。
+    draws._sources = degraded ? ["d1"] : ["500"];
+    draws._degraded = degraded;
     let res;
     if (act === "latest") res = json(draws[0], 200, 600);
     else if (act === "history") res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
@@ -182,7 +189,9 @@ async function smallRoute(request, env, url) {
         ? json({ kind, ...killList(kind, draws), degraded }, 200, 300)
         : json({ kind, ...danList(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
     }
-    else if (act === "analyze") res = json({ kind, ...analyzeAll(kind, draws, num(url, "win", 30, 5, 100)), ...(SPECS[kind].type === "pool" ? { shape: shapeTrans(kind, draws, { window: 400 }) } : {}), degraded }, 200, 300);
+    // shape 一律带上：号码池型有真实内容，数字型 shapeTrans 返回 {note:"该彩种不支持形态转移"}，
+    // 前端据此显示「不适用」而不是静默不显示。sources 让分析页能自己声明数据来源。
+    else if (act === "analyze") res = json({ kind, ...analyzeAll(kind, draws, num(url, "win", 30, 5, 100)), shape: shapeTrans(kind, draws, { window: 400 }), sources: draws._sources, degraded }, 200, 300);
     else if (act === "predict") res = json({ ...recommendAll(kind, draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), degraded }, 200, 0);
     else if (act === "trend") res = json({ kind, rows: trendPool(kind, draws, num(url, "limit", 30, 5, 60)), degraded }, 200, 600);
     else {
