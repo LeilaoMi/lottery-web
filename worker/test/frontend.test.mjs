@@ -58,3 +58,41 @@ test("前端 index.html：mock 占位必须自己喊出来（不许把编造数�
   assert.ok(html.includes("$('#stats').innerHTML = sourceBanner(an)"),
     "分析页未渲染来源横幅");
 });
+
+// 图表 0 宽事故的回归锁。
+//
+// ECharts 在 display:none 的容器上 init 出来量到 0 宽，之后必须 resize 才会重排。
+// 分析页/审计页的图是在页面加载时（标签页还没显示）就画好的，切页时得补一次 resize。
+// 原实现手写三个 if（__chart/__chart2/__chart3）逐个 resize —— 加了新图就忘了补：
+// 分年柱图与审计页那三张图一直没人 resize，点开是空白；v0.15.5 新增的按位分组图
+// 又踩了一次（数字型彩种改走 drawGroupedChart，新实例不在名单里）。
+// 现在统一走 __charts 登记表 + resizeCharts()，这两条断言防止有人再写回逐个 if。
+test("前端 index.html：所有图表实例必须登记，且切页时统一 resize（防 0 宽空白图）", () => {
+  const html = readFileSync(HTML_PATH, "utf8");
+
+  const inits = [...html.matchAll(/echarts\s*\.\s*init/g)];
+  // 只允许 regChart 内部这一处直接 init
+  assert.equal(inits.length, 1,
+    "echarts.init 应只在 regChart 里出现一次，实际 " + inits.length + " 处（新增图表请走 regChart）");
+  const idx = html.indexOf("function regChart(");
+  assert.ok(idx >= 0, "缺少 regChart 登记表");
+  assert.ok(html.indexOf("echarts.init") >= idx,
+    "echarts.init 必须位于 regChart 内部");
+
+  assert.match(html, /function resizeCharts\(/, "缺少 resizeCharts");
+  assert.match(html, /setTimeout\(resizeCharts, 0\)/, "切页时未调用 resizeCharts");
+
+  // 不允许再出现「按名字逐个 resize」的旧写法
+  assert.doesNotMatch(html, /window\.__(chart|chart2|chart3|btchart|revchart|cbtchart|syncchart)\b/,
+    "仍存在绕过登记表、直接引用 window.__xxx 图表实例的写法");
+});
+
+test("前端 index.html：重画前必须 dispose 旧实例并从登记表删除（防泄漏与复用已销毁实例）", () => {
+  const html = readFileSync(HTML_PATH, "utf8");
+  assert.match(html, /function disposeChart\(/, "缺少 disposeChart");
+  // dispose 后必须 delete 登记项，否则 regChart 会把已 dispose 的实例当成可用实例返回
+  assert.match(html, /dispose\(\)[\s\S]{0,80}delete __charts\[key\]/, "disposeChart 未从登记表删除 key");
+  // 审计页那两块是「点加载就重建容器」，必须先销毁
+  assert.match(html, /disposeChart\('cbtchart'\)/, "冷门度回看图重画前未销毁旧实例");
+  assert.match(html, /disposeChart\('syncchart'\)/, "同步时序图重画前未销毁旧实例");
+});

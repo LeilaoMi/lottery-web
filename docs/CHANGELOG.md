@@ -2,6 +2,48 @@
 
 所有历史版本的完整变更记录。当前版本见 README 顶部徽章。
 
+## 未发布 · 逐页核对：8 个图表实例只有 3 个会被 resize（2026-09-30）
+
+用户要求"认真核对每一个页面显示"。先写了 `scripts/page-audit.mjs` 把 7 个标签页 × 8 个彩种的接口逐个打一遍（数据层确认干净：无空响应、无空字段），然后转向**渲染层** —— 数据有、但页面画不出来，是这类工具最坏的 bug。
+
+**找到的真问题：图表 0 宽**
+
+ECharts 在 `display:none` 的容器上 `init` 出来量到的是 **0 宽**，之后必须 `resize()` 才会按可见宽度重排。分析页与审计页的图是在页面加载时（对应标签页还没显示）就画好的，所以切页时必须补一次 resize。
+
+原实现是手写三个 `if`：
+
+```js
+if (b.dataset.t === 'a' && window.__chart) setTimeout(() => window.__chart.resize(), 0);
+if (b.dataset.t === 'a' && window.__chart2) ...   // 只有这三个
+```
+
+而全站有 **8 个** `echarts.init`。漏掉的 5 个：
+
+| 实例 | 位置 | 症状 |
+|---|---|---|
+| `__btchart` | 分析页分年柱图 | 打开分析页看不到「分年稳定性」图 |
+| `__revchart` | 审计页复盘图 | 空白 |
+| `__cbtchart` | 审计页冷门度回看图 | 空白 |
+| `__syncchart` | 审计页同步时序图 | 空白 |
+| `__g_chart` / `__g_chart4` | v0.15.5 新增按位图 | **数字型彩种分析页仍然空白** |
+
+最后一条是 v0.15.5 自己踩的：数字型彩种改走 `drawGroupedChart` 生成新实例，而 resize 名单还在 resize 旧的 `__chart` —— 加了图没补名单，症状与修之前一模一样。
+
+**改法**：新增 `__charts` 登记表 + `regChart(key, el)` + `resizeCharts()` + `disposeChart(key)`，8 个实例全部改走登记表，切页时统一 `setTimeout(resizeCharts, 0)`（不再只限 `'a'` 页）。`disposeChart` 会 `dispose()` 后 `delete __charts[key]` —— 否则 `regChart` 会把已销毁的实例当成可用实例返回；审计页那两块"点加载就重建容器"原本靠 `window.__x.dispose()` 清理，改登记表后不清理就是泄漏。
+
+**顺带修的**
+
+- `renderNums` 里快乐8 分支自己拼 `class="ball"`（没有 `balls()` 给的尾空格），与其余 7 个彩种标记不一致 → 统一走 `balls()`
+- 新增 `scripts/page-audit.mjs`（逐页 × 8 彩种巡检脚本，不进 CI，作为排查工具留用）
+- 分析页两段统计文字抽成纯函数 `analyzePoolText()` / `analyzeDigitText()`，让渲染层可测
+
+**测试**
+
+- 新增 `worker/test/page-render.test.mjs`（7 项）：用 `analyzeAll` + `SPECS` 现场造出与线上同构的响应（字段名一律取自 `SPECS.fMain`/`fAux`，不手写），喂进前端真正的渲染函数，断言 —— 8 个彩种历史页每行都渲染出号码球（且主号码个数正确）、号码池型 12 个统计标签逐个后面都有值且无 `undefined`/`NaN`、数字型每一位都渲染出热/冷/高频、`form` 只在 3 位型出现、数字型文字**不含**号码池专属字段（v0.15.5 事故的原始形态）、来源横幅 4 种情况、胆拖单导出文本 8 个彩种都带免责声明与注数
+- `worker/test/frontend.test.mjs` 增 2 项：`echarts.init` 只允许出现在 `regChart` 内、切页必须调 `resizeCharts`、不允许再出现按名字逐个 resize 的旧写法；`disposeChart` 必须同时删登记项
+- 两组新测试都做过变异测试验证断言有效（数字型串用号码池字段 → 挂 2 项；`renderNums` 丢 `digits` 分支 → 挂 1 项；切页改回逐个 resize → 挂 1 项；绕过登记表裸 init → 挂 1 项）
+- **194 → 203 项离线全过**
+
 ## 未发布 · 分析页：4 个数字型彩种几乎是空白的（2026-09-30）
 
 用户报"分析页只有双色球有图表数据"。实测确认，并顺带扫出同类问题。

@@ -126,7 +126,7 @@ function errBox(e, el){ el.innerHTML = '<div class="err">请求失败：' + esc(
 function renderNums(o){
   if (!o) return '';
   if (o.digits) return balls(o.digits);
-  if (o.nums) return o.nums.map(n => '<span class="ball">' + n + '</span>').join('');
+  if (o.nums) return balls(o.nums); // 快乐8：20 个号没有主/副之分，走 balls() 保持与其他彩种同一套标记
   if (o.main) return balls(o.main) + (o.special ? ' <span class="muted">特别</span>' + balls([o.special], 'b') : '');
   if (o.front) return balls(o.front) + balls(o.back, 'b');
   if (o.red) return balls(o.red) + balls(o.blue, 'b');
@@ -138,9 +138,10 @@ document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () =
   document.querySelectorAll('header button[data-t]').forEach(x => x.classList.remove('on'));
   b.classList.add('on');
   ['d','p','a','h','v','t','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
-  if (b.dataset.t === 'a' && window.__chart) setTimeout(() => window.__chart.resize(), 0);
-  if (b.dataset.t === 'a' && window.__chart2) setTimeout(() => window.__chart2.resize(), 0);
-  if (b.dataset.t === 'a' && window.__chart3) setTimeout(() => window.__chart3.resize(), 0);
+  // 切页后统一 resize 全部图表实例：分析页与审计页的图是在页面加载时（标签页还 display:none）
+  // 就画好的，ECharts 那时量到的是 0 宽，不 resize 就永远画不出来。
+  // 原来只写了三个 if（__chart/__chart2/__chart3），分年柱图与审计页三张图一直漏着。
+  setTimeout(resizeCharts, 0);
   if (b.dataset.t === 'd') loadDaily();
   if (b.dataset.t === 'f') loadFavs();
 });
@@ -483,11 +484,36 @@ async function coldnessHtml(kind, main, aux){
 }
 
 // ---------- 分析 ----------
+// 图表实例登记表：所有图都必须经 regChart 进这里，切页时统一 resize。
+//
+// 为什么要有这张表：ECharts 在 display:none 的容器上 init 出来是 0 宽，
+// 之后必须 resize 才会按可见宽度重排。分析页/审计页的图是在页面加载时
+// （对应标签页还没显示）就画好的，所以切页时得补一次 resize。
+// 原来的写法是手写三个 if（__chart/__chart2/__chart3），加了新图就忘了补 ——
+// 分年柱图与审计页那三张图一直没人 resize，点开就是一片空白。
+const __charts = {};
+function regChart(key, el){
+  if (typeof echarts === 'undefined') return null;
+  if (!el) return null;
+  if (!__charts[key]) { try { __charts[key] = echarts.init(el); } catch { return null; } }
+  return __charts[key];
+}
+function resizeCharts(){
+  Object.keys(__charts).forEach(k => { try { __charts[k].resize(); } catch {} });
+}
+// 重画前销毁旧实例：审计页那几块每次点「加载」都会重建容器，旧实例挂在已脱离 DOM 的节点上
+// 不销毁就等于泄漏（resizeCharts 会一直去 resize 死实例）。销毁后必须同时删掉登记，
+// 否则 regChart 会把已经 dispose 的实例当成可用的返回。
+function disposeChart(key){
+  const inst = __charts[key];
+  if (!inst) return;
+  try { inst.dispose(); } catch {}
+  delete __charts[key];
+}
 function drawChart(title, cats, vals){
-  const el = document.getElementById('chart');
-  if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），下方统计数值仍可用。</div>'; return; }
-  if (!window.__chart) window.__chart = echarts.init(el);
-  window.__chart.setOption({
+    const el = document.getElementById('chart');
+    if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），下方统计数值仍可用。</div>'; return; }
+    regChart('chart', el).setOption({
     title: { text: title, textStyle: { fontSize: 14 } },
     grid: { left: 40, right: 12, top: 40, bottom: 30 },
     xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 10 } },
@@ -504,7 +530,8 @@ function drawGroupedChart(title, cats, series, elId){
   const el = document.getElementById(elId);
   if (!el) return;
   if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），下方统计数值仍可用。</div>'; return; }
-  const inst = window['__g_' + elId] || (window['__g_' + elId] = echarts.init(el));
+  const inst = regChart(elId, el);
+  if (!inst) return;
   inst.setOption({
     title: { text: title, textStyle: { fontSize: 14 } },
     tooltip: { trigger: 'axis' },
@@ -531,6 +558,39 @@ function sourceBanner(an){
   return tag;
 }
 
+// 分析页的两段统计文字。抽成纯函数是为了能进 ui-render 契约测试：
+// 这些字符串是按字段名取值的后端响应拼出来的，后端改名/改口径时页面不会报错，
+// 只会把「热号 01,05」渲染成「热号 」。对着 8 个彩种的真实响应形状逐一断言非空，
+// 比人工点一遍页面可靠。
+function analyzePoolText(an){
+  const om = an.omission || {};
+  const maxOm = om.max ? Math.max.apply(null, Object.values(om.max)) : '-';
+  const auxTop = an.auxFreq && Object.keys(an.auxFreq).length
+    ? Object.entries(an.auxFreq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => x[0]).join(',') : '';
+  return '热号 ' + esc((an.hot || []).join(',')) + '　冷号 ' + esc((an.cold || []).join(',')) + '<br>' +
+    '奇偶比 ' + esc(an.oddRatio) + '　大小比 ' + esc(an.bigRatio) + '　质合比 ' + esc(an.primeRatio) + '<br>' +
+    '均和 ' + esc(an.avgSum) + '　平均AC ' + esc(an.avgAC) + '　平均连号 ' + esc(an.avgConsec) + '　平均重号 ' + esc(an.avgRepeat) + '<br>' +
+    '012路 ' + esc((an.road012 || []).join('/')) + '　区间分布 ' + esc((an.zoneDist || []).join('/')) + '<br>' +
+    '历史最大遗漏 ' + esc(maxOm) + ' 期' + (auxTop ? '<br>副区高频 ' + esc(auxTop) : '') +
+    '<br><b>当前遗漏 Top10</b>　' + Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([k, v]) => esc(k) + '(' + v + '期·均值' + esc(om.avg[k] != null ? om.avg[k] : '-') + ')').join(' ');
+}
+function analyzeDigitText(an){
+  const ps = an.perPos || [];
+  return ps.map(p => {
+      const f = p.freq || {}, top = Object.entries(f).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + '(' + x[1] + ')').join(' ');
+      const om = p.omission || {};
+      const cur = Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1])[0];
+      return '<b>第 ' + p.pos + ' 位</b>　热 ' + esc((p.hot || []).join(',')) + '　冷 ' + esc((p.cold || []).join(',')) +
+        '　奇偶比 ' + esc(p.oddRatio) + '<br><span class="muted">高频 ' + esc(top) +
+        (cur ? '　当前最深遗漏 ' + esc(cur[0]) + '(' + cur[1] + '期·均值' + esc(om.avg ? om.avg[cur[0]] : '-') + ')' : '') +
+        '　历史最大遗漏 ' + esc(om.max ? Math.max.apply(null, Object.values(om.max)) : '-') + ' 期</span>';
+    }).join('<br>') +
+    '<br><b>整体</b>　平均和值 ' + esc(an.avgSum) + '　平均大数个数 ' + esc(an.avgBigSmall) +
+    (an.form ? '<br>近 ' + esc(an.count) + ' 期形态：组三 ' + esc(an.form.group3) +
+      ' / 组六 ' + esc(an.form.group6) + ' / 豹子 ' + esc(an.form.bail) : '');
+}
+
 // 统一分析：号码池型看频次/遗漏/形态，数字型按位看冷热
 async function loadAnalyze(id){
   try {
@@ -540,18 +600,7 @@ async function loadAnalyze(id){
     if (isDigit) return await analyzeDigit(an, id);
     const ks = Object.keys(an.freq || {}).sort();
     drawChart(LOT[id].name + ' 号码频次（近 ' + an.count + ' 期）', ks, ks.map(k => an.freq[k]));
-    const om = an.omission || {};
-    const maxOm = om.max ? Math.max.apply(null, Object.values(om.max)) : '-';
-    const auxTop = an.auxFreq && Object.keys(an.auxFreq).length
-      ? Object.entries(an.auxFreq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => x[0]).join(',') : '';
-    $('#stats').insertAdjacentHTML('beforeend',
-      '热号 ' + esc((an.hot || []).join(',')) + '　冷号 ' + esc((an.cold || []).join(',')) + '<br>' +
-      '奇偶比 ' + esc(an.oddRatio) + '　大小比 ' + esc(an.bigRatio) + '　质合比 ' + esc(an.primeRatio) + '<br>' +
-      '均和 ' + esc(an.avgSum) + '　平均AC ' + esc(an.avgAC) + '　平均连号 ' + esc(an.avgConsec) + '　平均重号 ' + esc(an.avgRepeat) + '<br>' +
-      '012路 ' + esc((an.road012 || []).join('/')) + '　区间分布 ' + esc((an.zoneDist || []).join('/')) + '<br>' +
-      '历史最大遗漏 ' + esc(maxOm) + ' 期' + (auxTop ? '<br>副区高频 ' + esc(auxTop) : '') +
-      '<br><b>当前遗漏 Top10</b>　' + Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
-        .map(([k, v]) => esc(k) + '(' + v + '期·均值' + esc(om.avg[k] != null ? om.avg[k] : '-') + ')').join(' '));
+    $('#stats').insertAdjacentHTML('beforeend', analyzePoolText(an));
     await loadBacktest(id);
     // 形态转移卡片（号码池型）：上一期形态 → 下期最可能形态
     if (an.shape && an.shape.sum) {
@@ -589,19 +638,7 @@ async function analyzeDigit(an, id){
   const cats = [...new Set(ps.flatMap(p => Object.keys(p.freq || {})))].sort();
   drawGroupedChart(LOT[id].name + ' 各位置数字频次（近 ' + an.count + ' 期）', cats,
     ps.map(p => ({ name: '第' + p.pos + '位', vals: cats.map(c => Number(p.freq[c]) || 0) })), 'chart');
-  $('#stats').insertAdjacentHTML('beforeend',
-    ps.map(p => {
-      const f = p.freq || {}, top = Object.entries(f).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + '(' + x[1] + ')').join(' ');
-      const om = p.omission || {};
-      const cur = Object.entries(om.cur || {}).sort((a, b) => b[1] - a[1])[0];
-      return '<b>第 ' + p.pos + ' 位</b>　热 ' + esc(p.hot.join(',')) + '　冷 ' + esc(p.cold.join(',')) +
-        '　奇偶比 ' + esc(p.oddRatio) + '<br><span class="muted">高频 ' + esc(top) +
-        (cur ? '　当前最深遗漏 ' + esc(cur[0]) + '(' + cur[1] + '期·均值' + esc(om.avg ? om.avg[cur[0]] : '-') + ')' : '') +
-        '　历史最大遗漏 ' + esc(om.max ? Math.max.apply(null, Object.values(om.max)) : '-') + ' 期</span>';
-    }).join('<br>') +
-    '<br><b>整体</b>　平均和值 ' + esc(an.avgSum) + '　平均大数个数 ' + esc(an.avgBigSmall) +
-    (an.form ? '<br>近 ' + esc(an.count) + ' 期形态：组三 ' + esc(an.form.group3) +
-      ' / 组六 ' + esc(an.form.group6) + ' / 豹子 ' + esc(an.form.bail) : ''));
+  $('#stats').insertAdjacentHTML('beforeend', analyzeDigitText(an));
   await loadBacktest(id);
   // 形态转移只对号码池型有意义（shapeTrans 对数字型返回 note），把 note 显示出来而不是静默跳过
   if (an.shape && an.shape.note) {
@@ -635,8 +672,7 @@ async function drawTrend(id){
     }
     nums = [...new Set(nums)].slice(0, 8);
     if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），可在上方输入框指定号码。</div>'; return; }
-    if (!window.__chart2) window.__chart2 = echarts.init(el);
-    window.__chart2.setOption({
+    regChart('chart2', el).setOption({
       title: { text: LOT[id].name + ' 遗漏走势（近 ' + rows.length + ' 期）', textStyle: { fontSize: 14 } },
       tooltip: { trigger: 'axis' },
       legend: { data: nums, textStyle: { fontSize: 10 }, top: 24 },
@@ -674,8 +710,7 @@ function drawNoiseChart(id, an){
     '——' + pool + ' 个号码纯随机本来就该有约 1-2 个越界，越界≠冷热有信息。</div></div>');
   const el = document.getElementById('chart3');
   if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），上方带外计数仍可读。</div>'; return; }
-  if (!window.__chart3) window.__chart3 = echarts.init(el);
-  window.__chart3.setOption({
+regChart('chart3', el).setOption({
     grid: { left: 40, right: 12, top: 14, bottom: 30 },
     xAxis: { type: 'category', data: ks, axisLabel: { fontSize: 10 } },
     yAxis: { type: 'value' },
@@ -754,9 +789,7 @@ async function loadBacktest(id, periods){
     if (bt.eras && bt.eras.length > 1 && typeof echarts !== 'undefined') {
       const bcel = document.getElementById('btchart');
       if (bcel) {
-        if (!window.__btchart) window.__btchart = echarts.init(bcel);
-        window.__btchart.clear();
-        window.__btchart.setOption({
+regChart('btchart', bcel).clear(), regChart('btchart', bcel).setOption({
           grid: { left: 44, right: 12, top: 30, bottom: 24 },
           legend: { top: 0, textStyle: { fontSize: 11 } },
           tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
@@ -981,9 +1014,7 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
       if (s && typeof echarts !== 'undefined') {
         const rc = document.getElementById('revchart');
         if (rc) {
-          if (!window.__revchart) window.__revchart = echarts.init(rc);
-          window.__revchart.clear();
-          window.__revchart.setOption({
+regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
             grid: { left: 44, right: 12, top: 30, bottom: 24 },
             legend: { top: 0, textStyle: { fontSize: 11 } },
             tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
@@ -1011,9 +1042,8 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
       if (typeof echarts !== 'undefined') {
         const el = document.getElementById('cbtchart');
         if (el) {
-          if (window.__cbtchart) window.__cbtchart.dispose();
-          window.__cbtchart = echarts.init(el);
-          window.__cbtchart.setOption({
+          disposeChart('cbtchart');
+regChart('cbtchart', el).setOption({
             grid: { left: 50, right: 50, top: 34, bottom: 28 },
             legend: { top: 0, textStyle: { fontSize: 11 } },
             tooltip: { trigger: 'axis' },
@@ -1059,9 +1089,8 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
       if (typeof echarts !== 'undefined') {
         const el = document.getElementById('syncchart');
         if (el) {
-          if (window.__syncchart) window.__syncchart.dispose();
-          window.__syncchart = echarts.init(el);
-          window.__syncchart.setOption({
+          disposeChart('syncchart');
+regChart('syncchart', el).setOption({
             grid: { left: 44, right: 12, top: 34, bottom: 40 },
             legend: { top: 0, textStyle: { fontSize: 11 } },
             tooltip: { trigger: 'axis' },
