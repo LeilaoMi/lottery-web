@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { pad2 } from "../src/small.js";
-import { SPECS, specOf, mainOf, auxOf, analyzeAll, killList, danList, recommendAll, structScore, acValue, binomP, backtest, calibrate, shapeTrans } from "../src/predict.js";
+import { SPECS, specOf, mainOf, auxOf, analyzeAll, killList, danList, recommendAll, structScore, acValue, binomP, backtest, calibrate, shapeTrans, posPool, posBaseline, digitBaseline } from "../src/predict.js";
 
 // 构造合成历史：不依赖网络，保证测试可重复
 function synth(kind, n = 60) {
@@ -11,7 +11,8 @@ function synth(kind, n = 60) {
   for (let i = 0; i < n; i++) {
     const code = String(2026000 + i);
     if (s.type === "digit") {
-      const digits = Array.from({ length: s.digits }, () => Math.floor(rnd() * 10));
+      // 逐位按真实号池抽样：七星彩第 7 位是 0-14，统一按 10 格抽会让测试永远覆盖不到 10-14
+      const digits = Array.from({ length: s.digits }, (_, p) => posPool(kind, p)[Math.floor(rnd() * posPool(kind, p).length)]);
       out.push({ code, digits: digits.map(String), date: "", src: "synth" });
     } else {
       const pool = [];
@@ -125,8 +126,12 @@ test("recommendAll：8 彩种均为 6 套策略，号码合法不重复", () => 
         assert.ok(typeof p.score === "number", k + " 缺结构分");
       } else {
         assert.equal(p.digits.length, specOf(k).digits, k + " 位数不对");
-        assert.equal(p.number.length, specOf(k).digits, k + " 号码长度不对");
-        for (const dg of p.digits) assert.ok(/^[0-9]$/.test(dg), k + " 非数字位");
+        // number 只是各位拼接的展示串：七星彩第 7 位可为 10-14（两位），故不再断言定长
+        assert.equal(p.number, p.digits.join(""), k + " 号码串与各位不一致");
+        p.digits.forEach((dg, i) => {
+          const pool = posPool(k, i);
+          assert.ok(pool.includes(dg), k + " 第" + (i + 1) + "位越界 " + dg + "（号池 " + pool[0] + "-" + pool[pool.length - 1] + "）");
+        });
       }
     }
   }

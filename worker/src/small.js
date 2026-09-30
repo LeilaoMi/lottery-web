@@ -60,7 +60,11 @@ export async function fetchSmall(kind, limit = 100) {
       }
     } else if (kind === "qxc") {
       const a = ints(2, 9);
-      if (a.length === 7 && a.every(x => x >= 0 && x <= 9)) out.push({ code, date, digits: a.map(String), src: "17500" });
+      // 七星彩第 1-6 位 0-9，第 7 位是独立号池 0-14（10-14 各约 1.8%，合计约 9% 的期号）。
+      // 原实现统一按 0-9 卡，第 7 位 ≥10 的行被整行丢弃 → /api/qxc/history 缺期、验奖报「期号不存在」、
+      // adminSync 落 D1 同样缺。verify-batch.js 与 scripts/randomness/fetch-multi.mjs 早已按 0-14 处理，此处漏改。
+      const ok6 = a.slice(0, 6).every(x => x >= 0 && x <= 9);
+      if (a.length === 7 && ok6 && a[6] >= 0 && a[6] <= 14) out.push({ code, date, digits: a.map(String), src: "17500" });
     } else if (kind === "kl8") {
       const a = ints(2, 22);
       if (a.length === 20 && a.every(x => x >= 1 && x <= 80) && new Set(a).size === 20) {

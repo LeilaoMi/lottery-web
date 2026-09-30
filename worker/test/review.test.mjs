@@ -38,8 +38,13 @@ const run1 = async db => {
 };
 const SEED = {
   // 真实开奖 1 2 3；快照推荐 3 2 1（逆序）与 1 2 3（正序）
+  // ≥5 期：recommendAll 有「样本不足不给推荐」门槛（predict.js MIN_DRAWS），
+  // 只 seed 2 期会让下方两个快照结构用例拿到 picks:[] 而非结构问题
   small: [{ code: "2026243", draw_date: "2026-09-09", src: "d1", payload: JSON.stringify({ digits: ["1", "2", "3"] }) },
-          { code: "2026242", draw_date: "2026-09-08", src: "d1", payload: JSON.stringify({ digits: ["4", "5", "6"] }) }],
+          { code: "2026242", draw_date: "2026-09-08", src: "d1", payload: JSON.stringify({ digits: ["4", "5", "6"] }) },
+          { code: "2026241", draw_date: "2026-09-06", src: "d1", payload: JSON.stringify({ digits: ["7", "8", "9"] }) },
+          { code: "2026240", draw_date: "2026-09-05", src: "d1", payload: JSON.stringify({ digits: ["0", "1", "2"] }) },
+          { code: "2026239", draw_date: "2026-09-03", src: "d1", payload: JSON.stringify({ digits: ["6", "4", "8"] }) }],
   predlog: [{ kind: "fc3d", code: "2026243", payload: JSON.stringify({ picks: [{ name: "稳健·热号", digits: ["3", "2", "1"], number: "321" }, { name: "均衡", digits: ["1", "2", "3"], number: "123" }], dan: [["3"], ["2"], ["9"]], kill: [["1"], ["2"], ["3"]], basedOn: "2026242" }) }]
 };
 test("数字型对账：逐位比对，逆序推荐只算 1 中", async () => {
@@ -222,7 +227,10 @@ test("audit：数据陈旧 ≥4 天 → data_freshness=fail，并指出最陈旧
   const j = await r.json();
   const by = Object.fromEntries(j.checks.map(c => [c.id, c]));
   assert.equal(by.data_freshness.status, "fail");
-  assert.match(by.data_freshness.detail, /双色球 6 天/);
+  // 断言阈值意图而不是具体天数：审计的天数锚点是「开奖日中午 +08:00」，
+  // 而 day(n) 按 UTC now 造数据，所以在 UTC 凌晨跑会少 1 天（原本这条就是跨时刻 flaky 的）
+  const dm = /双色球 (\d+) 天/.exec(by.data_freshness.detail);
+  assert.ok(dm && Number(dm[1]) >= 5, "双色球应报 5~6 天（day(6) 落在阈值另一侧也算过）：" + by.data_freshness.detail);
   assert.equal(by.review_loop.status, "fail", "predlog 空 = 从未写入，必须 fail");
   assert.equal(by.sync_health.status, "warn", "表在但无记录 = warn，不是 pass");
   assert.equal(j.overall, "fail");
@@ -254,6 +262,36 @@ test("audit：交叉校验不一致的同步批次 → sync_health=fail", async 
   const j = await r.json();
   const by = Object.fromEntries(j.checks.map(c => [c.id, c]));
   assert.equal(by.sync_health.status, "fail");
-  assert.match(by.sync_health.detail, /不一致/);
+  assert.match(by.sync_health.detail, /号码冲突/);
   assert.ok(Array.isArray(by.sync_health.items) && by.sync_health.items[0].ranAt);
+});
+test("audit：两源期号不同步（没比成，但不是号码冲突）→ sync_health=warn 而非 fail", async () => {
+  // 每期新开奖后 cwl 必然比 500 慢一拍 → 期号不同是常态。若把它算 fail，红点天天出现等于没有红点
+  const db = auditDB({
+    staleByKind: { ssq: { code: "2026103", date: day(0) } },
+    predlog: [{ kind: "ssq", latestSnapshot: "2026104", latestChecked: "2026103", unreconciled: 0, lastCreated: new Date().toISOString().replace("T", " ").slice(0, 19) }],
+    syncLog: [
+      { ran_at: "2026-09-11 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_latest_issue_mismatch" },
+      { ran_at: "2026-09-10 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 1, note: "" }
+    ]
+  });
+  const r = await worker.fetch(new Request("http://x/api/audit"), { DB: db }, {});
+  const j = await r.json();
+  const by = Object.fromEntries(j.checks.map(c => [c.id, c]));
+  assert.equal(by.sync_health.status, "warn", "源没同步只是没校验成，不该判 fail");
+  assert.match(by.sync_health.detail, /未完成交叉校验/);
+  assert.equal(j.overall, "warn", "warn 不得把整体拉到 fail");
+  assert.equal(by.data_freshness.status, "pass");
+  assert.equal(by.review_loop.status, "pass");
+});
+test("audit：consistent=0 但 note 缺失（历史遗留/未知原因）→ 一律 fail，不许降级", async () => {
+  // 降级只对「明确知道是没校验成」的两种 note 生效；原因不明的 0 必须按最坏情况处理
+  const db = auditDB({
+    staleByKind: { ssq: { code: "2026103", date: day(0) } },
+    predlog: [{ kind: "ssq", latestSnapshot: "2026104", latestChecked: "2026103", unreconciled: 0, lastCreated: new Date().toISOString().replace("T", " ").slice(0, 19) }],
+    syncLog: [{ ran_at: "2026-09-11 03:00:00", sources: "500", fetched: 10, inserted: 1, consistent: 0, note: "" }]
+  });
+  const r = await worker.fetch(new Request("http://x/api/audit"), { DB: db }, {});
+  const by = Object.fromEntries((await r.json()).checks.map(c => [c.id, c]));
+  assert.equal(by.sync_health.status, "fail");
 });

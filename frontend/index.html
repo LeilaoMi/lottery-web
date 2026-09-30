@@ -275,7 +275,12 @@ async function loadPredict(id){
   const isDigit = Array.isArray(latest.digits);
   let html = '<h3 style="margin:0 0 8px">' + esc(latest.code || '') + ' 期</h3>' + renderNums(latest);
   html += '<div class="muted">' + esc(latest.date || '') + ' · 源 ' + esc(((latest.sources || [latest.src]).join(',') || '-')) + '</div>';
-  html += '<h4 style="margin:14px 0 6px">6 组参考（含结构分）</h4>';
+  // 样本不足时后端返回 picks:[] + insufficient:true；直接渲染空的「6 组参考」会让人以为页面坏了
+  if (rec.insufficient || !(rec.picks || []).length) {
+    html += '<div class="warn">' + esc(rec.note || '样本不足，暂无参考号码') + '</div>';
+  } else {
+    html += '<h4 style="margin:14px 0 6px">6 组参考（含结构分）</h4>';
+  }
   (rec.picks || []).forEach((p, i) => {
     html += '<div class="kv"><span>' + esc(p.name) + ' <span class="muted">分 ' + esc(p.score) + '</span></span><span>' +
       (isDigit ? balls(p.digits) : balls(p.main) + balls(p.aux, 'b')) + '</span></div>';
@@ -621,7 +626,7 @@ function verdictTag(verdict, n, p){
   return ' <b>' + esc(verdict) + '</b>' + pTag(p);
 }
 // 回测摘要：策略/杀号历史表现 vs 随机基线（失败不影响主统计展示）
-// periods 可传 ≤600：跨度 >60 期时后端自动抽样（免费版 CPU 限制），返回 tested/stride 供展示
+  // periods 可传 ≤600：跨度 >40 期时后端自动抽样（免费版 CPU 限制，点数封顶 40），返回 tested/stride 供展示
 async function loadBacktest(id, periods){
   try {
     const bt = await api('/api/backtest?kind=' + id + (periods ? '&periods=' + encodeURIComponent(periods) : ''));
@@ -650,13 +655,21 @@ async function loadBacktest(id, periods){
     } else if (bt.perPos) {
       const avgOf = key => bt.perPos.reduce((a, r) => a + (r[key] || 0), 0) / bt.perPos.length;
       const kr = bt.perPos.filter(r => r.killRate != null);
-      extra = '<b>回测</b>（' + spanTxt + ' · 单位基线 10%）：各位热号均中率 ' + (avgOf('hotRate') * 100).toFixed(1) +
+      // 单号基线不能写死 10%：七星彩第 7 位号池是 0-14（15 格），逐位基线 6.7%，写死会把随机期望抬高
+      const bls = (bt.perPos || []).map(r => r.baseline).filter(v => typeof v === 'number');
+      const blTxt = !bls.length
+        ? (typeof bt.baseline === 'number' ? (bt.baseline * 100).toFixed(1) + '%' : '—')
+        : (Math.min.apply(null, bls) === Math.max.apply(null, bls)
+            ? (bls[0] * 100).toFixed(1) + '%'
+            : (bt.baseline * 100).toFixed(1) + '%（逐位 ' + (Math.min.apply(null, bls) * 100).toFixed(1) +
+              '%~' + (Math.max.apply(null, bls) * 100).toFixed(1) + '%）');
+      extra = '<b>回测</b>（' + spanTxt + ' · 单号基线 ' + blTxt + '）：各位热号均中率 ' + (avgOf('hotRate') * 100).toFixed(1) +
         '% / 冷号均中率 ' + (avgOf('coldRate') * 100).toFixed(1) + '%' +
         (kr.length ? ' / 首位杀号命中率 ' + ((kr.reduce((a, r) => a + r.killRate, 0) / kr.length) * 100).toFixed(1) + '%' : '');
     }
     if (bt.note) extra += '<br><span>' + esc(bt.note) + '</span>';
     if (bt.eras && bt.eras.length > 1) extra += '<div id="btchart" style="height:220px;margin-top:8px"></div>';
-    extra += '<div class="row" style="margin-top:6px"><input id="btp" placeholder="回测期数（≤600，>60 自动抽样）" style="width:200px"><button id="btgo">按期数重算</button>' +
+    extra += '<div class="row" style="margin-top:6px"><input id="btp" placeholder="回测期数（≤600，>40 自动抽样）" style="width:200px"><button id="btgo">按期数重算</button>' +
       '<button id="btho">校准外推检验</button><button id="btkt">杀号阈值寻优</button><span id="hoout" class="muted"></span><span id="ktout" class="muted"></span></div>';
     // insertAdjacentHTML + 先移除旧块：重算时不会丢失走势图的按钮事件
     const old = document.getElementById('btout');
@@ -811,7 +824,9 @@ const PRIZE_FIELDS = {
   qlc: [['hitMain', '命中基本号', 90], ['hitAux', '中特别号(1/0)', 100]]
 };
 function buildTools(id){
-  const cf = CALC_FIELDS[id] || [['pos', '各位可选个数(逗号)', 200], ['group', '组选 3/6', 80]];
+  // 数字型的 pos 有两种口径，placeholder 必须写清：直选=各位可选个数（长度=位数，只填一个=每位相同），
+// 组选=选号个数。位数对不上时后端会返回 400 并在结果区说明，不再静默按「全 1」算
+const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / 组选:选号个数', 200], ['group', '组选 3/6', 80]];
   const pf = PRIZE_FIELDS[id] || [['exact', '是否全中(1/0)', 120]];
   const inputs = (arr) => arr.map(f => '<input data-f="' + f[0] + '" placeholder="' + f[1] + '" style="width:' + f[2] + 'px">').join('');
   $('#t').innerHTML =
@@ -950,12 +965,16 @@ function buildTools(id){
       if (!r.rows.length) { $('#syncout').innerHTML = '<div class="muted">尚无同步记录：定时任务跑过后逐条累积。</div>'; return; }
       const rows = r.rows.slice().reverse(); // API 是倒序，图表按时间正序
       const labels = rows.map(x => (x.ranAt || '').slice(5, 16)); // MM-DD HH:MM
-      const bad = rows.map(x => x.consistent ? null : x.fetched);
+      // 两类红点必须分开：号码冲突（✗ fail）与「没能完成校验」（! warn）不是一回事。
+      // 旧实现把所有 consistent=0 都标红，而每期新开奖后 cwl 必然比 500 慢一拍 → 红点天天出现，等于没有红点。
+      const bad = rows.map(x => x.grade === 'fail' ? x.fetched : null);
+      const warn = rows.map(x => x.grade === 'warn' ? x.fetched : null);
       const s = r.summary || {};
       $('#syncout').innerHTML =
         '<div class="card"><b>近 ' + rows.length + ' 次同步</b>' +
         '<div class="muted">交叉校验一致 ' + (s.consistent || 0) + '/' + (s.total || rows.length) +
-        (s.bad && s.bad.length ? '，不一致批次：' + esc(s.bad.join('、')) : '') +
+        (s.warn && s.warn.length ? '，未完成校验 ' + s.warn.length + ' 次' : '') +
+        (s.bad && s.bad.length ? '，号码冲突：' + esc(s.bad.join('、')) : '') +
         (s.lastRanAt ? '，最近一次 ' + esc(s.lastRanAt) : '') + '</div>' +
         '<div id="syncchart" style="height:220px;margin-top:8px"></div></div>';
       if (typeof echarts !== 'undefined') {
@@ -973,7 +992,8 @@ function buildTools(id){
             series: [
               { name: '拉取', type: 'line', step: 'end', data: rows.map(x => x.fetched), itemStyle: { color: '#06c' }, lineStyle: { width: 2 } },
               { name: '落库', type: 'line', step: 'end', data: rows.map(x => x.inserted), itemStyle: { color: '#2e7d32' }, lineStyle: { width: 2 } },
-              { name: '校验不一致', type: 'scatter', data: bad, itemStyle: { color: '#c0392b' }, symbolSize: 9, label: { show: true, position: 'top', fontSize: 9, formatter: '✗' } }
+              { name: '号码冲突', type: 'scatter', data: bad, itemStyle: { color: '#c0392b' }, symbolSize: 9, label: { show: true, position: 'top', fontSize: 9, formatter: '✗' } },
+              { name: '未完成校验', type: 'scatter', data: warn, itemStyle: { color: '#e08e0b' }, symbolSize: 8, label: { show: true, position: 'bottom', fontSize: 9, formatter: '!' } }
             ]
           });
         }

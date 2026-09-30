@@ -16,13 +16,57 @@ export const SPECS = {
 
 const PRIMES = new Set([2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79]);
 const DISCLAIMER = "随机游戏，统计仅供娱乐，不保证中奖";
+export { DISCLAIMER };
+
+// 推荐的最小样本：少于这个期数时，"高频号 / 最冷号 / 均值回归 / 胆码" 全是并列后按号池顺序取第一个，
+// 实际等价于"取号池里最小的几个号"，却被标成"近 30 期高频号"——比不给更糟。
+// 与 backtest(569)/calibrate(622)/thresholdTune(763) 的"样本不足"门槛同风格，宁缺毋假。
+const MIN_DRAWS = 5;
+const insufficientNote = n =>
+  `样本不足（近 ${n} 期，最少 ${MIN_DRAWS} 期）：数据太少时高频/最冷/胆码会退化成"并列取最小号"，故不给参考号码`;
+// 给「会产出号」的端点用：样本不足时返回 null，调用方据此短路。
+// 门槛只覆盖会凭空造号的能力（推荐/杀号/胆码/胆拖单）；analyze/trend 是纯描述统计，
+// 标着「近 N 期」给 3 期的统计不构成造假，所以不设门槛。
+export function sampleGate(draws) {
+  const n = Array.isArray(draws) ? draws.length : 0; // 库里实际有几期（门槛只看「够不够」，不截断）
+  return n < MIN_DRAWS ? { insufficient: true, count: n, note: insufficientNote(n) } : null;
+}
 
 export function specOf(kind) {
   const s = SPECS[kind];
   if (!s) throw new Error("unknown kind " + kind);
   return s;
 }
-export function poolOf(zone) { const o = []; for (let i = zone.min; i <= zone.max; i++) o.push(pad2(i)); return o; }
+// 号码池 / 三区划分都是 SPEC 的纯函数，却被 killList 等每次调用都重算一遍
+// （periods=60 的回测里 killList 被调 60 次，zonesOf 一项就占 0.3~0.9ms）。按 min-max 记忆化。
+// 缓存返回的是共享数组：调用方只读不改，SPEC 也不可变，因此安全。
+const _poolMemo = new Map(), _zoneMemo = new Map();
+export function poolOf(zone) {
+  const k = zone.min + ":" + zone.max;
+  let o = _poolMemo.get(k);
+  if (!o) { o = []; for (let i = zone.min; i <= zone.max; i++) o.push(pad2(i)); _poolMemo.set(k, o); }
+  return o;
+}
+
+// 数字型逐位号池：3D/排列3/排列5 每位 0-9；七星彩第 1-6 位 0-9，第 7 位是独立号池 0-14
+// （10-14 各约 1.8%，合计约 9% 的实际开奖）。原先各处硬编码 10 格的后果：七星彩第 7 位的
+// 频次/遗漏少算那 9%、杀号永远杀不到 10-14（错杀率被系统性抬高）、胆码与「最热/最冷」永远取不到
+// 10-14（命中率被压低）、随机基准也只在 0-9 里抽——复盘与回测的基线跟着一起错。
+// scripts/randomness/lib-kinds.mjs 早已按 R:15 + nonuniform 建模，这里补齐 Worker 侧口径。
+export function posPool(kind, p) {
+  const last = kind === "qxc" && p === 6 ? 14 : 9;
+  return Array.from({ length: last + 1 }, (_, i) => String(i));
+}
+// 该位的随机单号基线 = 1/号池大小。均匀抽样时该值与实际分布是否均匀无关
+// （Σ P(抽中 d)·P(开 d) = (1/|pool|)·Σ P(开 d) = 1/|pool|），故七星彩第 7 位取 1/15。
+export function posBaseline(kind, p) { return 1 / posPool(kind, p).length; }
+// 数字型整注基线 = 各位基线等权平均（复盘/回测把所有位的命中与分母各自求和，等价于按位平均）。
+export function digitBaseline(kind) {
+  const n = specOf(kind).digits;
+  let sum = 0;
+  for (let p = 0; p < n; p++) sum += posBaseline(kind, p);
+  return sum / n;
+}
 
 // 取一期的号码：统一成「字符串数组」，屏蔽各彩种字段差异
 export function mainOf(d, kind) {
@@ -106,7 +150,7 @@ function eraOf(d) {
 // 频率 + 遗漏（遗漏：当前未出现期数 / 历史平均间隔 / 历史最大间隔）
 // 性能关键：cur 由 lastSeen O(1) 推导，不再逐期重扫（原实现 O(pool×draws) 次 getNums，
 // 是 600 期回测的 CPU 大头；等价性：cur = 最新索引 - 最后出现索引，从未出现则为总期数）
-function freqStats(draws, pool, getNums) {
+export function freqStats(draws, pool, getNums) {
   const freq = {}, lastSeen = {}, gaps = {};
   for (const k of pool) { freq[k] = 0; lastSeen[k] = null; gaps[k] = []; }
   const asc = draws.slice().reverse(); // 由旧到新
@@ -130,8 +174,13 @@ function freqStats(draws, pool, getNums) {
 }
 
 function zonesOf(zone) {
+  const k = zone.min + ":" + zone.max;
+  let memo = _zoneMemo.get(k);
+  if (memo) return memo;
   const { min, max } = zone, span = max - min + 1, w = Math.ceil(span / 3);
-  return [0, 1, 2].map(i => ({ i, from: min + i * w, to: Math.min(max, min + (i + 1) * w - 1) }));
+  memo = [0, 1, 2].map(i => ({ i, from: min + i * w, to: Math.min(max, min + (i + 1) * w - 1) }));
+  _zoneMemo.set(k, memo);
+  return memo;
 }
 function zoneIdx(zones, v) { for (const z of zones) if (v >= z.from && v <= z.to) return z.i; return zones.length - 1; }
 
@@ -145,15 +194,26 @@ export const FORMULAS = {
 export function killList(kind, draws, opts = {}) {
   const s = specOf(kind);
   if (s.type === "digit") return killDigits(kind, draws);
+  // 按需分配：raw 只被 byFormula（仅回测要）消费，why/reasons 只被线上杀号页展示消费。
+  // 原实现无条件建 raw[k]={} 与 why[k]=[] 并对每个号 push，回测每点调 60 次、每次白付这份钱
+  // （实测 reasons 一项在 periods=60 时占 kl8 2.5ms / ssq 1.2ms）。输出按开关裁剪，逐字段等价。
+  const wantRaw = !!opts.perFormula, wantReasons = opts.reasons !== false;
   const pool = poolOf(s.main), votes = {}, raw = {}, why = {};
-  for (const k of pool) { votes[k] = 0; raw[k] = {}; why[k] = []; }
+  // 分公式名单在 add() 里顺手记（第一次给「某号×某公式」投票时入列），
+  // 省掉事后 for(10 个公式) × pool.filter 的全池扫描：快乐8 号池 80，periods=60 时这一项最贵
+  const fLists = {};
+  for (const k of pool) { votes[k] = 0; if (wantRaw) raw[k] = {}; if (wantReasons) why[k] = []; }
   const w = opts.weights || {};
   const add = (k, v, key, label) => {
     if (votes[k] === undefined) return;
-    raw[k][key] = (raw[k][key] || 0) + v;          // 原始票：分公式统计用，不受权重影响
+    if (wantRaw) {
+      const r = raw[k];
+      if (r[key] === undefined) (fLists[key] || (fLists[key] = [])).push(k);
+      r[key] = (r[key] || 0) + v;          // 原始票：分公式统计用，不受权重影响
+    }
     const wv = w[key] !== undefined ? w[key] : 1;
     votes[k] += v * wv;
-    if (v * wv > 0) why[k].push(label);            // 权重为 0 的公式不算实际贡献，不进 reasons
+    if (wantReasons && v * wv > 0) why[k].push(label);  // 权重为 0 的公式不算实际贡献，不进 reasons
   };
   const last = draws[0], prev = draws[1];
   if (!last) return { main: [], aux: [] };
@@ -185,16 +245,18 @@ export function killList(kind, draws, opts = {}) {
   for (const k of pool) if (zoneIdx(zones, Number(k)) === hotZone) add(k, 0.5, "hotzone", "热区" + (hotZone + 1)); // 9 热区
   if (prev) for (const x of mainOf(prev, kind)) add(pad2(Number(x)), 0.3, "prev2", "上上期号");   // 10 上上期
 
-  const main = pool.map(k => ({ n: k, votes: +votes[k].toFixed(2), reasons: [...new Set(why[k])] }))
+  const main = pool.map(k => wantReasons
+    ? { n: k, votes: +votes[k].toFixed(2), reasons: [...new Set(why[k])] }
+    : { n: k, votes: +votes[k].toFixed(2) })
     .filter(x => x.votes > 0).sort((a, b) => b.votes - a.votes || Number(a.n) - Number(b.n));
   const aux = s.aux ? killAux(kind, draws) : [];
   const out = { main, aux, threshold: killThreshold(main, opts.thFrac) };
-  if (opts.perFormula) {
+  if (wantRaw) {
+    // byFormula 的唯一消费方是 backtest，而它只取 arr.length 与 arr.filter(…)——纯集合语义。
+    // 原来的「按票数排序」没有任何消费方（predict.test.mjs 也只查名单不重复），纯属白付。
+    // 故只保证「集合正确、无重复」，顺序不作保证。
     out.byFormula = {};
-    for (const key of Object.keys(FORMULAS)) {
-      out.byFormula[key] = pool.filter(k => raw[k][key] > 0)
-        .sort((a, b) => raw[b][key] - raw[a][key] || Number(a) - Number(b));
-    }
+    for (const key of Object.keys(FORMULAS)) out.byFormula[key] = fLists[key] || [];
   }
   return out;
 }
@@ -218,7 +280,7 @@ function killAux(kind, draws) {
 function killDigits(kind, draws) {
   const s = specOf(kind), perPos = [];
   for (let p = 0; p < s.digits; p++) {
-    const digits = Array.from({ length: 10 }, (_, i) => String(i));
+    const digits = posPool(kind, p);
     const votes = {}; for (const d of digits) votes[d] = 0;
     const last = draws[0];
     if (last) {
@@ -238,6 +300,50 @@ function killDigits(kind, draws) {
 
 // ---------- 定胆：频率 + 遗漏回归 + 邻号 + 重号 ----------
 // 胆码打分（danList 与回测共用，保证口径一致）
+// ---------- 回测专用的滚动统计 ----------
+// 为什么需要它：回测每个测试点 i 都要「当期之前」的历史统计。旧实现对每个点重算
+// freqStats(hist, …)，代价 O(点 × 历史长度 × 池)。一旦把口径统一成【全量历史】（与线上 analyzeAll 一致），
+// 单是 ssq + 650 期就实测 11ms，越过免费版 Workers 单请求 10ms CPU 额度。
+// 这里改成预扫一次：把每个号的出现位置记成偏移表，之后每个点只做一次二分 + 指针推进。
+// 代价降到 O(历史 × 每期号码数 + 点数 × 池)，比旧实现还快，于是全量口径装得进预算。
+// 等价性：freq/cur 的定义与 freqStats 完全一致（cur = 从窗口最新端数到该号出现为止的期数，
+// 全窗口都没出现则取窗口长度 L），regress.test.mjs 用随机数据逐点比对锁死这一点。
+export function rollingOffsets(draws, pool, getNums) {
+  const at = {};
+  for (const k of pool) at[k] = [];
+  for (let j = 0; j < draws.length; j++) {
+    for (const k of getNums(draws[j])) if (at[k] !== undefined) at[k].push(j);
+  }
+  for (const k of pool) at[k].reverse(); // 转成「从最新到最旧」
+  return at;
+}
+// 窗口 = draws[start..end)（start 越靠后＝历史越短），返回该窗口下的 freq / cur / avg / max。
+// at[k] 是【降序】（reverse 过，末元素最新）。于是「≥边界的元素」都排在数组前段，二分得到的下标
+// 正是这类元素的个数：
+//   loS = #{a >= start}   loE = #{a >= end}（loE <= loS）
+//   窗口内出现 = 索引区间 [loE, loS)，次数 = loS - loE；其中最靠新的一次是 a[loS-1]
+// avg/max 由「窗口内相邻两次出现之间的间隔」推出，与 freqStats 的 gaps 定义一致。
+export function rollingAt(at, pool, start, N) { return rollingRange(at, pool, start, N); }
+export function rollingRange(at, pool, start, end) {
+  const freq = {}, cur = {}, avg = {}, max = {}, L = end - start;
+  for (const k of pool) {
+    const a = at[k];
+    let loS = 0, hiS = a.length;
+    while (loS < hiS) { const m = (loS + hiS) >> 1; if (a[m] >= start) loS = m + 1; else hiS = m; }
+    let loE = 0, hiE = a.length;
+    while (loE < hiE) { const m = (loE + hiE) >> 1; if (a[m] >= end) loE = m + 1; else hiE = m; }
+    const cnt = loS - loE;
+    freq[k] = cnt;
+    cur[k] = cnt > 0 ? a[loS - 1] - start : L;
+    if (cnt < 2) { avg[k] = L; max[k] = L; continue; }   // freqStats：无 gaps 时 avg = max = L
+    let sum = 0, mx = 0;
+    for (let j = loE + 1; j < loS; j++) { const g = a[j - 1] - a[j] - 1; sum += g; if (g > mx) mx = g; }
+    const n = cnt - 1;
+    avg[k] = +(sum / n).toFixed(2);
+    max[k] = mx;
+  }
+  return { freq, cur, avg, max };
+}
 function scorePool(st, pool, lastN) {
   const near = new Set();
   for (const x of lastN) { near.add(pad2(Number(x) + 1)); near.add(pad2(Number(x) - 1)); }
@@ -280,7 +386,7 @@ function danAux(kind, draws, win) {
 function danDigits(kind, draws, win) {
   const s = specOf(kind), w = draws.slice(0, win), perPos = [];
   for (let p = 0; p < s.digits; p++) {
-    const digits = Array.from({ length: 10 }, (_, i) => String(i));
+    const digits = posPool(kind, p);
     const st = freqStats(w, digits, d => { const a = mainOf(d, kind); return a[p] !== undefined ? [String(a[p])] : []; });
     const maxF = Math.max(1, ...Object.values(st.freq));
     const lastD = mainOf(draws[0] || {}, kind)[p];
@@ -359,7 +465,7 @@ function analyzeDigits(kind, draws, win) {
   const s = specOf(kind), w = draws.slice(0, win), perPos = [];
   let sum = 0;
   for (let p = 0; p < s.digits; p++) {
-    const digits = Array.from({ length: 10 }, (_, i) => String(i));
+    const digits = posPool(kind, p);
     const st = freqStats(draws, digits, d => { const a = mainOf(d, kind); return a[p] !== undefined ? [String(a[p])] : []; });
     const byF = digits.slice().sort((a, b) => st.freq[b] - st.freq[a] || Number(a) - Number(b));
     const odd = w.reduce((acc, d) => { const a = mainOf(d, kind); return acc + (a[p] !== undefined && Number(a[p]) % 2 ? 1 : 0); }, 0);
@@ -423,6 +529,13 @@ export function recommendAll(kind, draws, opts = {}) {
   const filter = !!opts.filter;
   const n = Math.min(s.main.max - s.main.min + 1, Math.max(1, opts.n || s.suggest));
   const an = analyzeAll(kind, draws, win);
+  // 门槛必须在 killList/danList 之前：样本极小时 tailCnt 可能为空，那里会直接抛
+  if (an.count < MIN_DRAWS) return {
+    kind, name: s.name, type: s.type, window: win, count: an.count,
+    analysis: an, kill: null, dan: null, picks: [], insufficient: true,
+    last: draws[0] ? { code: draws[0].code, main: mainOf(draws[0], kind), aux: auxOf(draws[0], kind) } : null,
+    note: insufficientNote(an.count), disclaimer: DISCLAIMER
+  };
   const kl = killList(kind, draws), dl = danList(kind, draws, win);
   const pool = poolOf(s.main);
   const killed = new Set((kl.main || []).filter(x => x.votes >= (kl.threshold ?? 99)).map(x => x.n));
@@ -462,7 +575,9 @@ export function recommendAll(kind, draws, opts = {}) {
     };
   };
   const picks = [
-    mk("稳健·热号", byFreqDesc.slice(0, Math.max(n + 4, 10)), "近" + win + "期高频号为主", 0),
+    // 注意：an.freq 来自 freqStats(draws, …)——按全部期数统计，win 只截断 road/odd/tail 那部分，
+    // 所以这里不能写死"近 30 期"，否则 draws 多于 win 时标签就是假的
+    mk("稳健·热号", byFreqDesc.slice(0, Math.max(n + 4, 10)), "全部 " + draws.length + " 期高频号为主", 0),
     mk("进取·遗漏", byColdDesc.slice(0, Math.max(n + 4, 10)), "优先回补长遗漏号", 0, auxCold.length ? auxCold : null),
     mk("均衡", [...byFreqDesc.slice(0, 8), ...byColdDesc.slice(0, 6), ...(dl.main || []).slice(0, 3).map(x => x.n)], "冷热混合 + 胆码", 1),
     mk("区间覆盖", zoneCover(kind, pool, byFreqDesc, n, s), "三区均匀覆盖", 1),
@@ -491,6 +606,13 @@ function zoneCover(kind, pool, byFreqDesc, n, s) {
 function recommendDigits(kind, draws, win) {
   const s = specOf(kind);
   const an = analyzeAll(kind, draws, win);
+  if (an.count < MIN_DRAWS) return {
+    kind, name: s.name, type: s.type, window: win, count: an.count,
+    analysis: an, kill: null, dan: null, picks: [], insufficient: true,
+    last: draws[0] ? { code: draws[0].code, digits: mainOf(draws[0], kind) } : null,
+    formHint: s.digits === 3 ? { 组三: an.form.group3, 组六: an.form.group6, 豹子: an.form.bail } : null,
+    note: insufficientNote(an.count), disclaimer: DISCLAIMER
+  };
   const kl = killList(kind, draws), dl = danList(kind, draws, win);
   const mk = (name, fn, note) => {
     const digits = [];
@@ -507,10 +629,11 @@ function recommendDigits(kind, draws, win) {
       return cand !== undefined ? cand : an.perPos[p].hot[0];
     }, "剔除各位杀号后取最热"),
     mk("均值回归", p => {
-      const om = an.perPos[p].omission, digits = Array.from({ length: 10 }, (_, i) => String(i));
+      const om = an.perPos[p].omission, digits = posPool(kind, p);
       return digits.slice().sort((a, b) => Math.abs(om.cur[a] - om.avg[a]) - Math.abs(om.cur[b] - om.avg[b]))[0];
     }, "遗漏最接近历史均值"),
-    mk("随机基准", () => String(Math.floor(Math.random() * 10)), "纯随机对照")
+    // 对照组必须从该位真实号池均匀抽样：七星彩第 7 位抽 0-9 会让随机基线整体偏高（见 posPool 注释）
+    mk("随机基准", p => { const pool = posPool(kind, p); return pool[Math.floor(Math.random() * pool.length)]; }, "纯随机对照")
   ];
   return {
     kind, name: s.name, type: s.type, window: win, count: an.count,
@@ -533,7 +656,10 @@ function digitScore(digits, an) {
 // ---------- 回测：把「经验权重」变成有数据背书的指标 ----------
 // 设计要点（与线上引擎同一口径）：
 //  - 每个测试点 i 只用 draws[i+1..]（即当期之前）的历史统计做预测，与真实开奖比对，杜绝未来函数
-//  - 热号/冷号/胆码复用 scorePool 的同一打分；杀号直接复用 killList，保证「线上给什么、回测验什么」
+//  - 口径与线上逐项对齐：热号/冷号吃【全量历史】（= analyzeAll 的 freqStats(draws, …)），
+//    胆码吃【win 窗口】（= danList(kind, draws, win)）。旧注释写「复用同一打分，保证线上给什么、回测验什么」
+//    当时是假的：freq 实际吃全量而回测只喂 hist.slice(0, win)，两边根本不是同一个口径。
+//  - 唯一仍不对齐的是杀号：线上 killList 用全部历史，回测为 CPU 封顶 100 期（见下方 note，别当它已对齐）
 //  - 输出均带随机基线：单号命中率 = pick/poolSize；命中低于基线才有信息量（尤其杀号）
 export function backtest(kind, draws, opts = {}) {
   const s = specOf(kind);
@@ -542,9 +668,15 @@ export function backtest(kind, draws, opts = {}) {
   const win = Math.max(10, Math.min(opts.win || 30, 60));
   const maxP = Math.max(0, Math.min(600, N - warmup));
   const periods = Math.max(0, Math.min(opts.periods || 15, maxP));
-  // 免费版 Workers 单请求 CPU 限 10ms：跨度 > 60 期时按步长抽样，实测点数封顶 ≈ 60
-  const stride = periods > 60 ? Math.ceil(periods / 60) : 1;
-  const note = "纯统计对照，不构成任何预测保证；某项长期优于基线也不代表未来有效";
+  // 免费版 Workers 单请求 CPU 限 10ms：按步长抽样把测试点数封顶。
+  // 上限从 60 收到 40：每点成本随彩种差很多（快乐8 号池 80 且每期 20 个号，10 个杀号公式要扫全池），
+  // 实测 650 期深历史下 60 点时快乐8 约 12.7ms、七星彩约 11.2ms，会顶穿额度；40 点时最差约 8.5ms。
+  // 默认 periods=15~20 不受影响，只有显式传大 periods 时抽样更粗——而 stride/tested 本来就回报给前端。
+  const MAX_POINTS = 40;
+  const stride = periods > MAX_POINTS ? Math.ceil(periods / MAX_POINTS) : 1;
+  const note = "纯统计对照，不构成任何预测保证；某项长期优于基线也不代表未来有效。"
+    + "热号/冷号按全量历史统计（与线上一致）；胆码按 win=" + win + " 窗口（与 danList 一致）；"
+    + "杀号统计窗口封顶 100 期（CPU 上限），与线上 killList 的全量历史不完全对齐";
   if (N < warmup + 1 || periods <= 0) return { kind, name: s.name, type: s.type, periods: 0, note: "样本不足，无法回测", disclaimer: DISCLAIMER };
   if (s.type === "digit") return backtestDigit(kind, draws, { warmup, win, periods, stride, note });
 
@@ -556,21 +688,37 @@ export function backtest(kind, draws, opts = {}) {
   const aux = s.aux ? { pick: s.aux.pick, size: s.aux.max - s.aux.min + 1, hot: { hit: 0 }, kill: { killed: 0, hit: 0 } } : null;
   let tested = 0;
   const eras = {}; // 分年代桶：策略稳定性观察（era → {tested, hot, cold, dan, kk, kh}）
+  // 全量口径的滚动统计只预扫一次（O(历史×每期号码数)），循环内每点只查表
+  const offMain = rollingOffsets(draws, pool, d => mainOf(d, kind));
+  const offAux = aux ? rollingOffsets(draws, poolOf(s.aux), d => auxOf(d, kind)) : null;
   // draws 由新到旧：测试最近 periods 期（步长抽样），历史为 draws[i+1..]
   for (let i = periods - 1; i >= 0; i -= stride) {
     const hist = draws.slice(i + 1);
     if (hist.length < warmup) continue;
     const actual = new Set(mainOf(draws[i], kind));
-    const st = freqStats(hist.slice(0, win), pool, d => mainOf(d, kind));
+    // 口径纪律（与线上引擎逐项对齐，改一处就要同步另一处）：
+    //   热号/冷号 → 对应 recommendAll 的 byFreqDesc，源自 analyzeAll 的 freqStats(draws, …)，即【全量历史】
+    //   胆码     → 对应 danList(kind, draws, win)，那个函数是【显式 win 窗口】的，不能跟着改成全量
+    //   副区热号 → 对应 analyzeAll 的 auxSt，同样是全量
+    // 旧实现三处共用一个 hist.slice(0, win) 的 st：热/冷口径与线上不符（win 只截断 road/odd/tail，
+    // freq 实际吃全部期数），而 dan 恰好因为共用才碰巧对上了线上。改成全量后必须给 dan 单独一份。
+    // 全量部分走滚动统计（见 rollingOffsets），不在每个点重扫整段历史——否则免费版 10ms CPU 不够用。
+    const stFull = rollingAt(offMain, pool, i + 1, N);
+    // 胆码口径 = danList 的 hist.slice(0, win)，即全局下标区间 [i+1, i+1+min(win, hist.length))。
+    // 与 stFull 同一张预扫表，只是窗口换成 win：口径不变，但省掉每点重扫 30 期（scorePool 只要
+    // freq/cur/avg/max，rollingRange 全都给，且与 freqStats 逐值等价——已用 39.9 万个值对拍锁死）。
+    const stDan = rollingRange(offMain, pool, i + 1, i + 1 + Math.min(win, hist.length));
     const lastN = mainOf(hist[0] || {}, kind);
-    const hotTop = pool.slice().sort((a, b) => st.freq[b] - st.freq[a] || Number(a) - Number(b)).slice(0, guessN);
-    const coldTop = pool.slice().sort((a, b) => st.cur[b] - st.cur[a] || Number(a) - Number(b)).slice(0, guessN);
-    const danTop = scorePool(st, pool, lastN).slice(0, danK).map(x => x.n);
+    const hotTop = pool.slice().sort((a, b) => stFull.freq[b] - stFull.freq[a] || Number(a) - Number(b)).slice(0, guessN);
+    const coldTop = pool.slice().sort((a, b) => stFull.cur[b] - stFull.cur[a] || Number(a) - Number(b)).slice(0, guessN);
+    const danTop = scorePool(stDan, pool, lastN).slice(0, danK).map(x => x.n);
     const hHit = hotTop.filter(k => actual.has(k)).length, cHit = coldTop.filter(k => actual.has(k)).length, dHit = danTop.filter(k => actual.has(k)).length;
     hot.hit += hHit; cold.hit += cHit; dan.hit += dHit;
     // killAux 的遗漏统计窗口封顶 100 期：600 期跨度时历史数组很长，不封顶 CPU 会失控
     // opts.weights：校准权重（来自 calibrate）——传入后回测的就是「加权杀号」的真实命中率
-    const kl = killList(kind, hist.slice(0, 100), { perFormula: true, weights: opts.weights, thFrac: opts.thFrac }), th = kl.threshold ?? 99;
+    // 统计窗口封顶 100 期保证 CPU 有界；数字型 killDigits 忽略 weights。
+    // reasons 只在「按号展示为什么被杀」时需要，回测只算票数 → 关掉省掉每号一个 Set 分配
+    const kl = killList(kind, hist.slice(0, 100), { perFormula: true, reasons: false, weights: opts.weights, thFrac: opts.thFrac }), th = kl.threshold ?? 99;
     const killed = (kl.main || []).filter(x => x.votes >= th).map(x => x.n);
     const kHit = killed.filter(k => actual.has(k)).length;
     kill.killed += killed.length;
@@ -588,7 +736,7 @@ export function backtest(kind, draws, opts = {}) {
     }
     if (aux) {
       const aPool = poolOf(s.aux);
-      const aSt = freqStats(hist.slice(0, win), aPool, d => auxOf(d, kind));
+      const aSt = rollingAt(offAux, aPool, i + 1, N); // 全量历史，与 analyzeAll 的 auxSt 同口径
       const aAct = new Set(auxOf(draws[i], kind));
       const aHot = aPool.slice().sort((x, y) => aSt.freq[y] - aSt.freq[x] || Number(x) - Number(y)).slice(0, aux.pick);
       aux.hot.hit += aHot.filter(k => aAct.has(k)).length;
@@ -642,36 +790,48 @@ export function backtest(kind, draws, opts = {}) {
 }
 
 function backtestDigit(kind, draws, cfg) {
-  const s = specOf(kind), N = draws.length, DIG = Array.from({ length: 10 }, (_, i) => String(i));
+  const s = specOf(kind), N = draws.length;
   const perPos = Array.from({ length: s.digits }, (_, p) => ({ pos: p + 1, hotHits: 0, coldHits: 0, killTotal: 0, killHit: 0, tested: 0 }));
+  // 逐位预扫：七星彩第 7 位是 15 格，与前 6 位不同，号池必须按位取（见 posPool）
+  const off = Array.from({ length: s.digits }, (_, p) => {
+    const pool = posPool(kind, p);
+    return { pool, at: rollingOffsets(draws, pool, d => { const a = mainOf(d, kind); return a[p] !== undefined ? [String(a[p])] : []; }) };
+  });
   for (let i = cfg.periods - 1; i >= 0; i -= cfg.stride) {
     const hist = draws.slice(i + 1);
     if (hist.length < cfg.warmup) continue;
     const actual = mainOf(draws[i], kind);
+    // killList 与「位」无关，却原来被写在逐位循环里 → 七星彩每个测试点白算 7 遍、排列5 白算 5 遍。
+    // 提到循环外是严格等价（只用到 kl.perPos[p]），也是数字型回测能不能进 10ms CPU 额度的关键。
+    // 统计窗口封顶 100 期保证 CPU 有界；数字型 killDigits 忽略 weights。
+    const kl = killList(kind, hist.slice(0, 100), { weights: cfg.weights });
     for (let p = 0; p < s.digits; p++) {
-      const st = freqStats(hist.slice(0, cfg.win), DIG, d => { const a = mainOf(d, kind); return a[p] !== undefined ? [String(a[p])] : []; });
+      const { pool: DIG, at } = off[p];
+      const st = rollingAt(at, DIG, i + 1, N); // 全量历史，与 analyzeDigits 的 freqStats(draws, …) 同口径
       const row = perPos[p];
       const hot1 = DIG.slice().sort((a, b) => st.freq[b] - st.freq[a] || Number(a) - Number(b))[0];
       const cold1 = DIG.slice().sort((a, b) => st.cur[b] - st.cur[a] || Number(a) - Number(b))[0];
       row.hotHits += hot1 === String(actual[p]) ? 1 : 0;
       row.coldHits += cold1 === String(actual[p]) ? 1 : 0;
-      const kl = killList(kind, hist.slice(0, 100), { weights: cfg.weights }); // 统计窗口封顶 100 期，保证 CPU 有界；数字型 killDigits 忽略 weights
       const k1 = (kl.perPos[p].kill || [])[0];
       if (k1 && k1.votes > 0) { row.killTotal++; row.killHit += k1.n === String(actual[p]) ? 1 : 0; }
       row.tested++;
     }
   }
+  const bl = +digitBaseline(kind).toFixed(4);
   return {
     kind, name: s.name, type: s.type, periods: cfg.periods, tested: perPos[0].tested, stride: cfg.stride, warmup: cfg.warmup, win: cfg.win,
-    baseline: 0.1,
+    baseline: bl,
     perPos: perPos.map(r => ({
       pos: r.pos,
+      baseline: +posBaseline(kind, r.pos - 1).toFixed(4),
       hotRate: +(r.hotHits / Math.max(1, r.tested)).toFixed(3),
       coldRate: +(r.coldHits / Math.max(1, r.tested)).toFixed(3),
       killRate: r.killTotal ? +(r.killHit / r.killTotal).toFixed(3) : null,
       tested: r.tested
     })),
-    note: "各位独立 0-9，单位随机基线 10%；killRate 为首位杀号命中开奖的比例，越低越好", disclaimer: DISCLAIMER
+    note: "各位独立同分布，单位随机基线 = 1 / 该位号池大小（逐位基线见 perPos[].baseline；七星彩第 7 位号池 15 格，基线 6.7%，其余位 10%）；killRate 为首位杀号命中开奖的比例，越低越好。"
+      + "热号/冷号按全量历史统计（与线上一致）；杀号统计窗口封顶 100 期（CPU 上限），与线上 killList 的全量历史不完全对齐", disclaimer: DISCLAIMER
   };
 }
 

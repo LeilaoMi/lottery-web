@@ -6,6 +6,10 @@ export async function saveSSQ(db, draws) {
   if (!db || !draws?.length) return 0;
   let n = 0;
   for (const d of draws.slice(0, 120)) {
+    // src=mock 是 getDraws 三源全挂时的读路径占位（index.js），不是真实开奖。
+    // 落库会让 D1 多出一条假期号（2025091），/api/ssq/history、复盘对账、验奖都会命中它——
+    // 宁可这次 0 落库（D1 旧值仍是好的），也不能让假数据进事实源。
+    if (!d || d.src === "mock") continue;
     try { await db.prepare("INSERT OR REPLACE INTO draws(code,red,blue,draw_date,src) VALUES(?,?,?,?,?)").bind(d.code, d.red.join(","), d.blue, d.date || "", d.src || "").run(); n++; } catch {}
   }
   return n;

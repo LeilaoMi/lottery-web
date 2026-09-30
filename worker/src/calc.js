@@ -54,7 +54,9 @@ export function chaseDrawDates(kind, periods, fromDate) {
  *   dlt 复式 front/back；胆拖 fdan/ftuo/bdan/btuo
  *   qlc 复式 main；胆拖 dan/tuo
  *   kl8 复式 pick(选几)/nums(选号个数)
- *   数字型 pos=a,b,c...(各位可选个数)，group=3|6 走组选
+ *   数字型 直选 pos=a,b,c…（各位可选个数，长度=位数；只填一个数表示每位相同）
+ *          组选 group=3|6 且 pos=选号个数（仅 3D/排列3 有组选）
+ *   参数不合法时返回 { error }（由 /api/calc 转 400），不再静默返回 0 注或全 1 的错结果
  * 追号：chase=期数，mults=1,2,4... 倍数序列
  */
 export function calcBet(kind, p = {}) {
@@ -100,14 +102,29 @@ export function calcBet(kind, p = {}) {
     bets = C(nums, pick);
     formula = `C(${nums},${pick})`;
   } else {
-    // 数字型：各位可选个数相乘
-    const pos = String(p.pos || "").split(",").filter(Boolean).map(x => clamp(int(x, 1), 1, 10));
+    // 数字型。两种口径，绝不静默回退成「全 1」：
+    //   直选  pos = 各位可选个数（逗号分隔，长度必须等于位数；只给一个数 = 展开到每位）
+    //   组选  group=3|6，pos = 选号个数（只在 3D/排列3 有此玩法）
+    // 旧实现把 `pos.length !== need` 一律替换成全 1：`pos=2` 算成 1 注（应 8 注）、
+    // `pos=5&group=6` 因 Math.max(全1)=1 算成 C(1,3)=0 注，且 formula 仍写「1×1×1（组六）」自相矛盾。
     const need = kind === "pl5" ? 5 : (kind === "qxc" ? 7 : 3);
-    const arr = pos.length === need ? pos : Array.from({ length: need }, () => 1);
-    bets = arr.reduce((a, b) => a * b, 1);
-    formula = arr.join(" × ") + (int(p.group) === 3 ? "（组三）" : int(p.group) === 6 ? "（组六）" : "");
-    if (int(p.group) === 3) bets = C(pos.length ? Math.max(...arr) : 0, 2);
-    if (int(p.group) === 6) bets = C(pos.length ? Math.max(...arr) : 0, 3);
+    const pos = String(p.pos || "").split(",").filter(Boolean).map(x => clamp(int(x, 1), 1, 10));
+    const group = int(p.group);
+    const fail = msg => ({ kind, mode, error: msg, formula: "", bets: 0, amount: 0, note: msg });
+    if (group === 3 || group === 6) {
+      if (kind === "pl5" || kind === "qxc") return fail(`${kind === "pl5" ? "排列5" : "七星彩"}没有组选玩法，去掉 group 参数`);
+      if (!pos.length) return fail("组选需要在「各位可选个数」里填选号个数（组三至少 2 个，组六至少 3 个）");
+      const n = Math.max(...pos), k = group === 3 ? 2 : 3;
+      // C(n,k) 为 0 才算非法：C(3,3)=1（组六全排一注）、C(2,2)=1（组三）都是合法下注
+      if (n < k) return fail(`组${group === 3 ? "三" : "六"}至少要选 ${k} 个号，当前 ${n} 个不够`);
+      bets = C(n, k);
+      formula = `C(选${n},${k})（组${group === 3 ? "三" : "六"}）`;
+    } else {
+      const arr = pos.length === need ? pos : pos.length === 1 ? Array.from({ length: need }, () => pos[0]) : pos.length ? null : Array.from({ length: need }, () => 1);
+      if (!arr) return fail(`直选需要 ${need} 个数（各位一个，逗号分隔）；各位相同时只填一个即可，当前填了 ${pos.length} 个`);
+      bets = arr.reduce((a, b) => a * b, 1);
+      formula = arr.join(" × ");
+    }
   }
 
   let totalBets = 0;

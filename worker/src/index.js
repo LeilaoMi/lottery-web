@@ -2,14 +2,14 @@ import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
 import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
 import { fetchSmall, prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC, rotation } from "./small.js";
 import { verifyBatch } from "./verify-batch.js";
-import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf } from "./predict.js";
-import { calcBet, kl8Prize, digit3Prize } from "./calc.js";
+import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf, posPool, digitBaseline, sampleGate, DISCLAIMER } from "./predict.js";
+import { calcBet, kl8Prize, digit3Prize, chaseDrawDates } from "./calc.js";
 import { coldness, COLD_KINDS } from "./coldness.js";
 import { COLDBT } from "./coldness-backtest.js";
 import { fetchT } from "./net.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall, loadSyncLog } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
-const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "7位0-9", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
+const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "前6位0-9+第7位0-14", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
 // kill-calibrated 的 isolate 级内存缓存：caches.default 在 workers.dev 域名上是 no-op，
 // 内存缓存保证同一 isolate 内的后续请求不重复算校准；自定义域上另由 caches.default 兜底
 const CAL_MEM = new Map();
@@ -29,7 +29,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.14.0", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.0", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -84,24 +84,34 @@ export default {
 };
 async function ssqRoute(request, env, url) {
   try {
+    const cache = caches.default, ck = new Request(url.toString(), { method: "GET" });
+    // 只缓存确定性端点：predict/recommend 每次出号不同（缓存会把同一窗口内的所有人锁死在同一组号），
+    // verify 由 query 决定且输入每次不同，缓存无收益
+    const cacheable = /\/(latest|history|trend|analyze|kill|dan)$/.test(url.pathname);
+    if (cacheable) { const hit = await cache.match(ck); if (hit) return hit; }
     const draws = await getDraws(env, 100);
-    if (url.pathname.endsWith("/latest")) return json({ ...draws[0], sources: draws._sources, consistent: draws._consistent }, 200, 300);
-    if (url.pathname.endsWith("/history")) return json(withMeta(draws.slice(0, num(url, "limit", 30, 1, 200)), draws), 200, 600);
-    if (url.pathname.endsWith("/trend")) return json(withMeta(trend(draws, num(url, "win", 30, 5, 100)), draws), 200, 600);
+    let res;
+    if (url.pathname.endsWith("/latest")) res = json({ ...draws[0], sources: draws._sources, consistent: draws._consistent }, 200, 300);
+    else if (url.pathname.endsWith("/history")) res = json(withMeta(draws.slice(0, num(url, "limit", 30, 1, 200)), draws), 200, 600);
+    else if (url.pathname.endsWith("/trend")) res = json(withMeta(trend(draws, num(url, "win", 30, 5, 100)), draws), 200, 600);
     // 预测相关一律走统一引擎，保证 8 个彩种口径一致
-    if (url.pathname.endsWith("/analyze")) return json({ kind: "ssq", ...analyzeAll("ssq", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("ssq", draws, { window: 400 }), sources: draws._sources }, 200, 300);
-    if (url.pathname.endsWith("/kill")) return json({ kind: "ssq", ...killList("ssq", draws), sources: draws._sources }, 200, 300);
-    if (url.pathname.endsWith("/dan")) return json({ kind: "ssq", ...danList("ssq", draws, num(url, "win", 30, 5, 100)), sources: draws._sources }, 200, 300);
-    if (url.pathname.endsWith("/recommend")) return json({ ...withLegacy(recommendAll("ssq", draws, { win: num(url, "win", 30, 5, 100) })), sources: draws._sources }, 200, 0);
-    if (url.pathname.endsWith("/predict")) return json({ ...withLegacy(recommendAll("ssq", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) })), sources: draws._sources }, 200, 0);
-    if (url.pathname.endsWith("/verify")) {
+    else if (url.pathname.endsWith("/analyze")) res = json({ kind: "ssq", ...analyzeAll("ssq", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("ssq", draws, { window: 400 }), sources: draws._sources }, 200, 300);
+    else if (url.pathname.endsWith("/kill")) res = json({ kind: "ssq", ...killList("ssq", draws), sources: draws._sources }, 200, 300);
+    else if (url.pathname.endsWith("/dan")) res = json({ kind: "ssq", ...danList("ssq", draws, num(url, "win", 30, 5, 100)), sources: draws._sources }, 200, 300);
+    else if (url.pathname.endsWith("/recommend")) res = json({ ...withLegacy(recommendAll("ssq", draws, { win: num(url, "win", 30, 5, 100) })), sources: draws._sources }, 200, 0);
+    else if (url.pathname.endsWith("/predict")) res = json({ ...withLegacy(recommendAll("ssq", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) })), sources: draws._sources }, 200, 0);
+    else if (url.pathname.endsWith("/verify")) {
       const code = url.searchParams.get("code") || "", red = (url.searchParams.get("red") || "").split(/[ ,]+/).filter(Boolean), blue = url.searchParams.get("blue") || "";
       const r = verify(draws, code, red, blue);
       if (r.hit) r.prize = prizeSSQ(r.hitRed, r.hitBlue);
-      return json({ ...r, sources: draws._sources });
+      res = json({ ...r, sources: draws._sources });
     }
+    else return json({ error: "not_found" }, 404);
+    // 降级/占位数据绝不进边缘缓存：mock（三源全挂的假单条）与 17500 兜底（500/cwl 双双失败、
+    // 无第二源可校验）写进去后，上游恢复还要继续吐整段 TTL 的旧数据——一次故障被放大成 TTL 级故障
+    if (cacheable && !draws._mock && !draws._degraded) { try { await cache.put(ck, res.clone()); } catch {} }
+    return res;
   } catch (e) { return json({ error: String(e.message || e) }, 502); }
-  return json({ error: "not_found" }, 404);
 }
 async function dltRoute(request, env, url) {
   try {
@@ -111,9 +121,12 @@ async function dltRoute(request, env, url) {
       const hit = await cache.match(ck);
       if (hit) return hit;
     }
-    let draws = []; try { draws = await fetchDLT(60); } catch {} if (!draws.length) draws = await fetch17500DLT();
+    let draws = [], degraded = false;
+    try { draws = await fetchDLT(60); } catch {}
+    if (!draws.length) { draws = await fetch17500DLT(); degraded = true; } // 主源（500）拿不到才退回 17500 静态文件
     let res;
-    if (url.pathname.endsWith("/latest")) res = json(draws[0], 200, 300);
+    if (url.pathname.endsWith("/latest")) res = json({ ...draws[0], ...(degraded ? { degraded } : {}) }, 200, 300);
+    // history 是数组，JSON 序列化会丢掉自定义属性，degraded 标记进不了响应体——只在不写缓存这一步体现
     else if (url.pathname.endsWith("/history")) res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
     else if (url.pathname.endsWith("/analyze")) res = json({ kind: "dlt", ...analyzeAll("dlt", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("dlt", draws, { window: 400 }) }, 200, 300);
     else if (url.pathname.endsWith("/kill")) res = json({ kind: "dlt", ...killList("dlt", draws) }, 200, 300);
@@ -128,7 +141,8 @@ async function dltRoute(request, env, url) {
       }
       res = json(r);
     } else return json({ error: "not_found" }, 404);
-    if (url.pathname.endsWith("/history") || url.pathname.endsWith("/latest")) { const c = res.clone(); c.headers.set("Cache-Control", "public, max-age=600"); try { await cache.put(ck, c); } catch {} }
+    // 降级（主源挂、读 17500 静态文件）不写缓存，否则上游恢复后还要继续吐 600s 旧数据
+    if (!degraded && (url.pathname.endsWith("/history") || url.pathname.endsWith("/latest"))) { const c = res.clone(); c.headers.set("Cache-Control", "public, max-age=600"); try { await cache.put(ck, c); } catch {} }
     return res;
   } catch (e) { return json({ error: String(e.message || e) }, 502); }
   return json({ error: "not_found" }, 404);
@@ -151,9 +165,16 @@ async function smallRoute(request, env, url) {
     let res;
     if (act === "latest") res = json(draws[0], 200, 600);
     else if (act === "history") res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
+    // 样本不足门槛：/kill /dan 与 recommendAll 同口径，避免同一页面一半说「样本不足」
+    // 一半给出 0~4 期算出的杀号/胆码。analyze/trend 是纯描述统计，不设门槛。
+    if (act === "kill" || act === "dan") {
+      const gate = sampleGate(draws);
+      if (gate) res = json({ kind, ...gate, main: [], perPos: [], aux: [], degraded }, 200, 60);
+      else res = act === "kill"
+        ? json({ kind, ...killList(kind, draws), degraded }, 200, 300)
+        : json({ kind, ...danList(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
+    }
     else if (act === "analyze") res = json({ kind, ...analyzeAll(kind, draws, num(url, "win", 30, 5, 100)), ...(SPECS[kind].type === "pool" ? { shape: shapeTrans(kind, draws, { window: 400 }) } : {}), degraded }, 200, 300);
-    else if (act === "kill") res = json({ kind, ...killList(kind, draws), degraded }, 200, 300);
-    else if (act === "dan") res = json({ kind, ...danList(kind, draws, num(url, "win", 30, 5, 100)), degraded }, 200, 300);
     else if (act === "predict") res = json({ ...recommendAll(kind, draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), degraded }, 200, 0);
     else if (act === "trend") res = json({ kind, rows: trendPool(kind, draws, num(url, "limit", 30, 5, 60)), degraded }, 200, 600);
     else {
@@ -164,7 +185,9 @@ async function smallRoute(request, env, url) {
     }
     if (act === "predict") return res; // 带随机性，不缓存、不重写
     if (degraded) res = json({ ...(await res.json()), degraded: true }, 200, 600);
-    try { await cache.put(ck, res.clone()); } catch {}
+    // 降级响应（上游挂了改读 D1）不写边缘缓存：写进去后上游恢复也要继续吐整段 TTL 的旧数据，
+    // 等于把一次故障放大成 TTL 级故障
+    if (!degraded) { try { await cache.put(ck, res.clone()); } catch {} }
     return res;
   } catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
@@ -202,8 +225,28 @@ function dedupeByCode(arr) {
   for (const k of Object.keys(arr || {})) if (k.startsWith("_")) out[k] = arr[k];
   return out;
 }
-// 下一期期号：纯数字 +1（跨年边界会失真，但对账只按「该期是否已开奖」兜底，不影响正确性）
-function nextIssue(code) { return /^\d+$/.test(String(code || "")) ? String(Number(code) + 1) : String(code || "") + "+1"; }
+// 下一期期号。跨年必须回 001：按纯 +1，12 月底会算出 2026366 这种「当年根本没开过」的期号，
+// 快照入库后 reviewJob 的 byCode 查不到（下文 `if (!d) continue`），checked 永远停在 0，
+// 该期永远不会被复盘——跨年那组推荐等于从来没被记过账。
+// 年份用开奖日历定（下一次开奖落在哪一年），年内序号照旧 +1：休市只会推迟新年首期的日期，
+// 不改变「新年第一期 = 001」，所以无需知道当年总共开多少期。
+export function nextIssue(code, kind, fromDate) {
+  const s = String(code || "");
+  const m = /^(\d{4})(\d+)$/.exec(s);
+  if (!m) return /^\d+$/.test(s) ? String(Number(s) + 1) : s + "+1";
+  const y = m[1], n = m[2];
+  // 从最近一期的次日往后找下一次开奖日；只用来判断有没有跨年。
+  // 拿不到日期就明确退回纯 +1 并说明原因——静默退回等于把跨年 bug 原样留下，
+  // 而 draw_date 为空的老行会让「跨年已修好」这句话只在一半数据上成立。
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(fromDate || "")) ? String(fromDate) : "";
+  let nx = "";
+  if (kind && day) {
+    const after = new Date(day + "T00:00:00Z").getTime() + 86400000;
+    nx = (chaseDrawDates(kind, 1, new Date(after).toISOString().slice(0, 10)) || [])[0] || "";
+  }
+  if (nx && Number(nx.slice(0, 4)) > Number(y)) return nx.slice(0, 4) + String(1).padStart(n.length, "0");
+  return y + String(Number(n) + 1).padStart(n.length, "0");
+}
 // 兼容旧字段：同一份推荐结果同时给出 main/aux 与 red/blue 等别名
 function withLegacy(r) {
   const alias = { ssq: ["red", "blue"], dlt: ["front", "back"], qlc: ["nums", "special"], kl8: ["nums", null] };
@@ -283,6 +326,13 @@ async function predictRoute(request, env, url) {
     const heavy = cacheable || url.pathname.endsWith("/backtest") || url.pathname.endsWith("/ticket");
     const draws = heavy ? await drawsDeep(env, kind) : await drawsOf(env, kind, Math.max(60, win));
     const act = url.pathname.split("/").pop();
+    // 样本不足门槛覆盖「会凭空造号」的端点。旧实现只在 recommendAll 里有，
+    // 于是同一页面上「不给参考号码」与「一串 0~4 期算出的杀号/胆码」会并排出现，自相矛盾。
+    // analyze/trend 是纯描述统计（标着「近 N 期」），backtest/kill-tune 自带各自的门槛，不在此列。
+    if (["kill", "dan", "ticket", "kill-calibrated", "kill-tune"].includes(act)) {
+      const gate = sampleGate(draws);
+      if (gate) return json({ kind, ...gate, main: [], perPos: [], aux: [], weights: null, formulas: [], periods: 0, degraded: !!draws._degraded, disclaimer: DISCLAIMER }, 200, 60);
+    }
     if (act === "analyze") {
       const an = { kind, ...analyzeAll(kind, draws, win) };
       if (SPECS[kind].type === "pool") an.shape = shapeTrans(kind, draws, { window: 400 }); // 形态转移，CPU O(400) 可忽略
@@ -298,14 +348,15 @@ async function predictRoute(request, env, url) {
       const cal = calibrate(kind, draws, { periods: num(url, "periods", 12, 1, 60), win, holdout: optF(url, "holdout", 0, 0, 0.5) });
       const kl = killList(kind, draws, { weights: cal.weights });
       const res = json({ kind, ...kl, weights: cal.weights, formulas: cal.formulas, periods: cal.periods, ...(cal.holdout ? { holdout: cal.holdout } : {}), degraded: !!draws._degraded }, 200, 21600);
-      await stashCache(url.toString(), res, 21600);
+      // 降级数据不进三级缓存：TTL 6h，一旦写入等于把一次故障冻结 6 小时（isolate 内存也一样不写）
+      if (!draws._degraded) await stashCache(url.toString(), res, 21600);
       return res;
     }
     if (act === "kill-tune") {
       // 杀号阈值寻优：10 次 backtest（5 分位 × 旧/新段），是全站最重端点 → 默认 periods 20 抽样、结果缓存 6h
       const r = thresholdTune(kind, draws, { periods: num(url, "periods", 20, 10, 60) });
       const res = json({ ...r, degraded: !!draws._degraded }, 200, 21600);
-      await stashCache(url.toString(), res, 21600);
+      if (!draws._degraded) await stashCache(url.toString(), res, 21600); // 同上：降级不写缓存
       return res;
     }
     if (act === "ticket") {
@@ -333,7 +384,10 @@ function calcRoute(url) {
   if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
   const p = {};
   for (const [k, v] of url.searchParams) p[k] = v;
-  return json(calcBet(kind, p), 200, 0);
+  const r = calcBet(kind, p);
+  // 参数不合法（数字型位数对不上 / 没有组选玩法的彩种传了 group 等）→ 400，
+  // 前端 api() 会把 r.error 抛进 errBox；给 200 会让页面渲染成「undefined 注」
+  return json(r, r.error ? 400 : 200, 0);
 }
 // 中奖计算器：快乐8 查表、3D/排3 判直选组选、其余按命中个数判奖级
 function prizeRoute(url) {
@@ -385,9 +439,26 @@ async function getDraws(env, limit) {
   if (env.DATA_SOURCE_OFFICIAL || env.DATA_SOURCE_PUBLIC) return getCustom(env);
   const rs = await Promise.all([fetch500(limit).then(d => ({ k: "500", d })).catch(e => ({ k: "500", e })), fetchCWL().then(d => ({ k: "cwl", d })).catch(e => ({ k: "cwl", e }))]);
   const ok = rs.filter(x => x.d && x.d.length);
-  if (!ok.length) { try { const t = await fetch17500(); if (t.length) { t._sources = ["17500"]; t._consistent = true; return t; } } catch {} const m = [{ code: "2025091", red: ["01", "08", "12", "19", "26", "33"], blue: "09", date: "", src: "mock" }]; m._sources = []; m._consistent = true; m._mock = true; return m; }
+  if (!ok.length) {
+    // 500/cwl 双双失败 → 只剩 17500 静态文件：没做过任何交叉校验，不能记成一致；
+    // 标 _degraded 让所有下游（ssq 缓存守卫、同步健康分级）与降级路径同口径
+    try {
+      const t = await fetch17500();
+      if (t.length) { t._sources = ["17500"]; t._consistent = false; t._degraded = true; t._crossSkipped = "all_primary_failed"; return t; }
+    } catch {}
+    const m = [{ code: "2025091", red: ["01", "08", "12", "19", "26", "33"], blue: "09", date: "", src: "mock" }];
+    m._sources = []; m._consistent = true; m._mock = true; return m;
+  }
   const base = ok.find(x => x.k === "500")?.d || ok[0].d;
-  base._sources = ok.map(x => x.k); base._consistent = ok.length > 1 && ok[0].d[0].code === ok[1].d[0].code ? JSON.stringify([ok[0].d[0].red, ok[0].d[0].blue]) === JSON.stringify([ok[1].d[0].red, ok[1].d[0].blue]) : true;
+  base._sources = ok.map(x => x.k);
+  // 两源「最新一期期号都对不上」= 至少有一源是陈的，绝不能记成一致：
+  // 旧写法把它并进 `: true` 分支，于是两源明明不同步时 sync_health 和前端同步图照样全绿。
+  // 只剩一个源时无从比较，保持 true（没发现矛盾 ≠ 校验通过，但也不凭空判红）。
+  base._consistent = ok.length > 1
+    ? (ok[0].d[0].code === ok[1].d[0].code
+        ? JSON.stringify([ok[0].d[0].red, ok[0].d[0].blue]) === JSON.stringify([ok[1].d[0].red, ok[1].d[0].blue])
+        : false)
+    : true;
   // 多源交叉校验（最近 30 期逐期比对）：单源数据错误 = 全部预测报废，落库前必须拦住
   if (ok.length > 1) {
     const [a, b] = ok.map(x => x.d);
@@ -415,7 +486,10 @@ async function getCustom(env) {
     if (!u) continue;
     try { const r = await fetchT(u); const j = await r.json(); const arr = Array.isArray(j) ? j : j.result || j.data || [j]; for (const it of arr.slice(0, 100)) { const code = String(it.code || ""); const red = String(it.red || "").split(/[ ,]+/).filter(Boolean).map(x => x.padStart(2, "0")); const blue = String(it.blue || "").padStart(2, "0"); if (/^\d{5,7}$/.test(code) && red.length === 6) out.push({ code, red, blue, date: it.date || "", src: k }); } } catch {}
   }
-  out._sources = [env.DATA_SOURCE_OFFICIAL ? "official" : null, env.DATA_SOURCE_PUBLIC ? "public" : null].filter(Boolean); out._consistent = true; return out;
+  out._sources = [env.DATA_SOURCE_OFFICIAL ? "official" : null, env.DATA_SOURCE_PUBLIC ? "public" : null].filter(Boolean);
+  // 自定义源同样没做交叉校验，不能记成一致（否则 sync_health 会把「配了源」当成「校验通过」）
+  out._consistent = false; out._crossSkipped = "custom_sources_unverified";
+  return out;
 }
 function json(o, s = 200, cache = 0) { const h = { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }; h["Cache-Control"] = cache ? `public, max-age=${cache}` : "no-store"; return new Response(JSON.stringify(o), { status: s, headers: h }); }
 // 预检：没有它，跨域调用 POST/DELETE /api/favs 会直接失败
@@ -431,9 +505,17 @@ async function adminSync(request, env, ctx) {
     const bad = new Set((live._cross && live._cross.mismatch) || []);
     const toSave = bad.size ? live.filter(d => !bad.has(String(d.code))) : live;
     const ins = await saveSSQ(env.DB, toSave);
-    await logSync(env.DB, (live._sources || []).join(","), live.length, ins, live._consistent ? 1 : 0, live._mock ? "mock" : (bad.size ? "crosscheck_dropped_" + bad.size : ""));
+    // mock 批次按「不一致」记账：三源全挂时根本没有交叉校验可言，
+    // 记成 consistent=1 会让 sync_health（auditRoute ③）与前端同步图把「一直跑假数据」显示成全绿。
+    // 同理，两源期号对不上 / 只剩 17500 静态文件，都属于「没校验成」，note 写清原因以便在审计里分辨。
+    const syncNote = live._mock ? "mock"
+      : bad.size ? "crosscheck_dropped_" + bad.size
+      : live._crossSkipped === "all_primary_failed" ? "crosscheck_skipped_all_primary_failed"
+      : !live._consistent ? "crosscheck_latest_issue_mismatch"
+      : "";
+    await logSync(env.DB, (live._sources || []).join(","), live.length, ins, live._mock ? 0 : (live._consistent ? 1 : 0), syncNote);
     const cached = await loadSSQ(env.DB, 5);
-    out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code, ...(live._cross ? { crosscheck: { checked: live._cross.checked, mismatch: live._cross.mismatch, dropped: bad.size } } : {}) };
+    out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code, ...(live._mock ? { skipped: "mock（三源全挂，读路径占位；不落库）" } : {}), ...(live._cross ? { crosscheck: { checked: live._cross.checked, mismatch: live._cross.mismatch, dropped: bad.size } } : {}) };
   } catch (e) { out.results.ssq = { error: String(e.message || e) }; }
   try {
     let d = [], alt = [];
@@ -480,8 +562,11 @@ async function adminSync(request, env, ctx) {
 }
 async function favsRoute(request, env, url) {
   if (!env.DB) return json({ error: "no db" }, 501);
-  // 收藏是个人数据：只要配了 API_TOKEN，读操作也必须鉴权
-  if (env.API_TOKEN && (request.headers.get("Authorization") || "") !== `Bearer ${env.API_TOKEN}`) return json({ error: "unauthorized" }, 401);
+  // 收藏是个人数据，GET/POST/DELETE 一律走 fail-closed 的 requireAuth（与 README「未设置 API_TOKEN 时
+  // 写接口一律拒绝」、docs/why.md「收藏必须 API_TOKEN」一致）。原实现写成 `env.API_TOKEN && ...`，
+  // 条件反了：未配 token 时三个方法全部放行，配合 json() 的 Access-Control-Allow-Origin: * 与 cors()
+  // 放行的 Authorization 头，等于把收藏表对任意站点开放（读/写/删）。
+  if (!requireAuth(request, env)) return json({ error: "unauthorized" }, 401);
   if (request.method === "GET") {
     try { const r = await env.DB.prepare("SELECT id,kind,numbers,note,created_at FROM favs ORDER BY id DESC LIMIT 100").all(); return json(r.results || []); } catch (e) { return json({ error: String(e) }, 500); }
   }
@@ -552,6 +637,10 @@ async function reviewJob(request, env) {
       //    v0.10~v0.11.0 误用 analyzeAll 导致快照 picks/dan 恒空（封版审计发现，字段来源修复）；
       //    v0.12.0 再修：v0.11 只修好号码池型，数字型 picks 仍取 .main 而实际字段是 digits，照旧丢号。
       const rec = recommendAll(k, draws, { win: 30 });
+      // 样本不足时【不写快照】：写了也是 picks/dan/kill 全空的壳，等这期开奖后对账会把它标成
+      // checked=1，而 reviewRoute 的 a.checked++ 是无条件计数的——于是「对账期数」+1，
+      // picksTotal/danTotal/killTotal 却一个都不加，页面上的期数直接虚增。宁缺毋假：不记比记假强。
+      if (rec.insufficient) { out[k] = { snapshot: null, reconciled: checkedN, skipped: rec.note }; continue; }
       const kl = rec.kill || {};
       const th = kl.threshold ?? 99;
       // 快照 = 前 3 套策略 + 随机基准（第 6 套对照组）。只存前 3 套就永远没有对照，
@@ -570,8 +659,18 @@ async function reviewJob(request, env) {
         kill: (kl.main || []).filter(x => x.votes >= th).map(x => x.n),
         basedOn: draws[0].code
       };
-      await env.DB.prepare("INSERT INTO predlog(kind,code,payload) VALUES(?,?,?) ON CONFLICT(kind,code) DO NOTHING").bind(k, nextIssue(draws[0].code), JSON.stringify(payload)).run();
-      out[k] = { snapshot: nextIssue(draws[0].code), reconciled: checkedN };
+      const snapCode = nextIssue(draws[0].code, k, draws[0].date);
+      // 跨年靠开奖日历判定，而日历不含休市（元旦/春节都可能推迟首期）；另外 draw_date 为空的行
+      // 会退回纯 +1。两种情况下 snapCode 可能指向当年不存在的期号 → 这条快照永远不会被对账。
+      // 不静默：把可疑条件标出来，至少能在 review-job 的返回里看到，而不是变成一条沉默的孤儿行。
+      const y = String(draws[0].code).slice(0, 4), snapY = snapCode.slice(0, 4);
+      const dateKnown = /^\d{4}-\d{2}-\d{2}$/.test(String(draws[0].date || ""));
+      out[k] = {
+        snapshot: snapCode, reconciled: checkedN,
+        ...(!dateKnown ? { snapshotNote: "最新一期无开奖日期，期号按纯 +1 推算（跨年可能算错）" }
+          : y === snapY ? {} : { snapshotNote: "跨年回 001；日历不含休市，若官方推迟首期则该期号仍可能不匹配" })
+      };
+      await env.DB.prepare("INSERT INTO predlog(kind,code,payload) VALUES(?,?,?) ON CONFLICT(kind,code) DO NOTHING").bind(k, snapCode, JSON.stringify(payload)).run();
     } catch (e) { out[k] = { error: String(e) }; }
   }
   return json({ ok: true, results: out });
@@ -605,8 +704,10 @@ async function reviewRoute(request, env, url) {
     const summary = {};
     for (const [k, a] of Object.entries(agg)) {
       const s = SPECS[k] || {};
-      // 基线口径：号码池型 = 单号被开概率 pick/poolSize；数字型每位置 0-9 等概 = 0.1
-      const base = s.type === "digit" ? 0.1 : (s.main ? s.main.pick / (s.main.max - s.main.min + 1) : null);
+      // 基线口径：号码池型 = 单号被开概率 pick/poolSize；数字型 = 各位 1/号池大小的等权平均
+      //（七星彩第 7 位号池 15 格，单位基线 1/15≈0.067，硬算 0.1 会把复盘 p 值整体算偏；
+      //  均匀抽样下该值与开奖是否非均匀无关，故按号池大小取即可，见 predict.js posBaseline）
+      const base = s.type === "digit" ? digitBaseline(k) : (s.main ? s.main.pick / (s.main.max - s.main.min + 1) : null);
       // 复盘显著性：命中/杀错都对照「随机单号基线」做二项检验。p<0.05 = 显著偏离随机（杀号看方向：错杀率低于基线才有价值）
       // reliable：样本不够时明确标 false——「没检出信号」和「没能力检出信号」是两件事，不能都渲染成绿的
       const reliable = a.checked >= 30 && a.picksTotal >= 200;
@@ -631,6 +732,28 @@ async function reviewRoute(request, env, url) {
     return json({ summary, rows: list.slice(0, 50), meta: { total: list.length, unreconciled, hint: Object.keys(summary).length ? null : "复盘尚未产生任何已对账样本：summary 为空表示「没能力判断」，不表示「已验证无效果」" } });
   } catch (e) { return json({ error: String(e) }, 500); }
 }
+// 同步健康三态分级。consistent 只表示「两源对同一期号的号码真的比过并且一致」，
+// 于是 0 有两种含义，必须靠 note 区分：
+//   fail —— 号码本身冲突（crosscheck_dropped_N）或整批跑的是占位假数据（mock）
+//   warn —— 没能完成有意义的比对：两源最新期号不同（新源还没跟上，属常态）、
+//           或 500/cwl 全挂只剩 17500 静态文件（拿不到可交叉校验的第二源）
+// 这两类混成一个 fail 会让「上游同步健康」常态变红：每期新开奖后 cwl 必然比 500 慢一拍，
+// 红点天天出现等于没有红点。note 存在就是为了留这种原因，加列反而破坏 db/schema.sql ≡ migrations 的纪律。
+// 降级只对「明确知道是没校验成」的 note 生效；consistent=0 但原因不明（含历史遗留的空 note）一律 fail——
+// 不知道为什么不一致时，不能往好的方向猜。
+const GRADE_RANK = { pass: 0, warn: 1, fail: 2 };
+function syncGrade(consistent, note) {
+  if (consistent) return "pass";
+  const n = String(note || "");
+  if (n.startsWith("crosscheck_latest_issue_mismatch") || n.startsWith("crosscheck_skipped")) return "warn";
+  return "fail";
+}
+// 一批同步里最严重的档位就是整批的档位
+function syncGradeOf(rows) {
+  let g = "pass";
+  for (const r of rows || []) if (GRADE_RANK[syncGrade(r.consistent, r.note)] > GRADE_RANK[g]) g = syncGrade(r.consistent, r.note);
+  return g;
+}
 // sync_log 时序：公开只读（同步健康不是个人数据，与 /api/meta 同级）；
 // 表缺失时 rows=null 而非 []，前端据此显示「尚未部署」而不是画一张空图
 async function syncLogRoute(env, url) {
@@ -638,11 +761,18 @@ async function syncLogRoute(env, url) {
   const rows = await loadSyncLog(env.DB, num(url, "limit", 50, 1, 200));
   const summary = rows && rows.length ? {
     total: rows.length,
+    // consistent 只数「两源真比过且一致」；warn 批（源未同步/只 surviving 单一源）单列，
+    // 不混进 bad——「没能力校验」和「校验出冲突」是两件事
     consistent: rows.filter(r => r.consistent).length,
-    bad: rows.filter(r => !r.consistent).map(r => r.ranAt),
+    bad: rows.filter(r => syncGrade(r.consistent, r.note) === "fail").map(r => r.ranAt),
+    warn: rows.filter(r => syncGrade(r.consistent, r.note) === "warn").map(r => r.ranAt),
+    grade: syncGradeOf(rows),
     lastRanAt: rows[0].ranAt
   } : null;
-  return json({ rows, summary, note: rows === null ? "sync_log 表不存在（schema 未部署）" : null }, 200, rows ? 60 : 0);
+  return json({
+    rows: rows ? rows.map(r => ({ ...r, grade: syncGrade(r.consistent, r.note) })) : null,
+    summary, note: rows === null ? "sync_log 表不存在（schema 未部署）" : null
+  }, 200, rows ? 60 : 0);
 }
 // ---------- audit：站内健康审计（公开只读，一次性聚合各保险丝） ----------
 // 纪律：表缺失/无 DB → status=skip（「没跑」不能伪装成「没问题」也不该直接红）；
@@ -715,14 +845,17 @@ async function auditRoute(env) {
   } else if (!syncRows.length) {
     push({ id: "sync_health", label: "上游同步健康", status: "warn", detail: "尚无同步记录：定时任务未跑过或日志被清空" });
   } else {
-    const bad = syncRows.filter(r => !r.consistent);
+    // 三态：号码冲突 = fail；源未同步/无第二源可校验 = warn（常态，不该染红审计页）
+    const fail = syncRows.filter(r => syncGrade(r.consistent, r.note) === "fail");
+    const warn = syncRows.filter(r => syncGrade(r.consistent, r.note) === "warn");
     push({
       id: "sync_health", label: "上游同步健康",
-      status: bad.length ? "fail" : "pass",
-      detail: `近 ${syncRows.length} 次：一致 ${syncRows.length - bad.length}/${syncRows.length}` +
-        (bad.length ? `，不一致批次 ${bad.length} 次（最近 ${bad[0].ranAt}）` : "") +
+      status: fail.length ? "fail" : warn.length ? "warn" : "pass",
+      detail: `近 ${syncRows.length} 次：一致 ${syncRows.length - fail.length - warn.length}/${syncRows.length}` +
+        (fail.length ? `，号码冲突 ${fail.length} 次（最近 ${fail[0].ranAt}）` : "") +
+        (warn.length ? `，未完成交叉校验 ${warn.length} 次（两源未同步或只剩单一源，最近 ${warn[0].ranAt}）` : "") +
         `，最近一次 ${syncRows[0].ranAt}`,
-      items: bad.slice(0, 5).map(r => ({ ranAt: r.ranAt, note: r.note }))
+      items: fail.slice(0, 5).map(r => ({ ranAt: r.ranAt, note: r.note }))
     });
   }
 
@@ -821,18 +954,21 @@ async function recordsRoute(env) {
         items = pool.map(n => ({ label: n, cur: last[n] >= 0 ? last[n] : N, best: best[n] }));
       } else {
         const D = s.digits || 3;
-        const last = Array.from({ length: D }, () => Array(10).fill(-1));
-        const best = Array.from({ length: D }, () => Array(10).fill(0));
+        // 逐位号池：七星彩第 7 位 0-14，其余位 0-9。原先一律 10 格 + `v <= 9` 会把 10-14 整个跳过，
+        // 那 9% 的实际开奖既不进「当前遗漏」也不进「历史最大遗漏」，破纪录预警对这一位是瞎的。
+        const size = p => posPool(kind, p).length;
+        const last = Array.from({ length: D }, (_, p) => Array(size(p)).fill(-1));
+        const best = Array.from({ length: D }, (_, p) => Array(size(p)).fill(0));
         for (let i = N - 1; i >= 0; i--) {
           const dg = (draws[i].digits || []).map(x => Number(x));
           for (let p = 0; p < D && p < dg.length; p++) {
-            const v = dg[p]; if (!(v >= 0 && v <= 9)) continue;
+            const v = dg[p]; if (!Number.isInteger(v) || v < 0 || v >= size(p)) continue;
             const gap = last[p][v] >= 0 ? last[p][v] - i : i + 1;
             if (gap > best[p][v]) best[p][v] = gap;
             last[p][v] = i;
           }
         }
-        for (let p = 0; p < D; p++) for (let k = 0; k < 10; k++) items.push({ label: "第" + (p + 1) + "位=" + k, cur: last[p][k] >= 0 ? last[p][k] : N, best: best[p][k] });
+        for (let p = 0; p < D; p++) for (let k = 0; k < size(p); k++) items.push({ label: "第" + (p + 1) + "位=" + k, cur: last[p][k] >= 0 ? last[p][k] : N, best: best[p][k] });
       }
       const breaking = items.filter(x => x.best > 0 && x.cur >= x.best);
       const bset = new Set(breaking.map(x => x.label));
