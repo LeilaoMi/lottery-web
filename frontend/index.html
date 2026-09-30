@@ -979,7 +979,7 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
         (s.singleSource ? '，其中 ' + s.singleSource + ' 批只有单一源应答（未做校验）' : '') +
         (s.sourceMix && s.sourceMix.length ? '；实际应答源：' + esc(s.sourceMix.join('、')) : '') +
         '</div>' +
-        '<div class="muted">逐批「一致」= 两源最新一期号码相同（非 30 期逐期比对）' +
+        '<div class="muted">「一致」= 对等源 17500 与快源最近 30 期逐期比对全同' +
         (s.warn && s.warn.length ? '；未完成校验 ' + s.warn.length + ' 次' : '') +
         (s.bad && s.bad.length ? '；号码冲突：' + esc(s.bad.join('、')) : '') +
         (s.lastRanAt ? '；最近一次 ' + esc(s.lastRanAt) : '') + '</div>' +

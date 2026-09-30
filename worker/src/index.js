@@ -29,7 +29,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.2", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.3", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -483,7 +483,8 @@ async function getDraws(env, limit) {
 // 号码对归一化：ssq{red,blue} / dlt{front,back} / 小彩种{main,special|nums|digits}，两源同字段类型才可比
 function drawPair(d) { return JSON.stringify([d.red || d.front || d.main || d.digits, d.blue || d.back || d.special || d.nums]); }
 // 两路数据源最近 n 期逐期比对（按期号对齐，号型字段自动归一）
-function crossCheck(a, b, n = 30) {
+// 导出供回归测试直接验证：换对等源后它是落库的唯一防线，判错就是把好数据丢进 D1
+export function crossCheck(a, b, n = 30) {
   const bMap = new Map(b.slice(0, n + 10).map(d => [String(d.code), d]));
   let checked = 0; const mismatch = [];
   for (const d of a.slice(0, n)) {
@@ -518,21 +519,43 @@ async function adminSync(request, env, ctx) {
   const out = { ran: new Date().toISOString(), results: {} };
   try {
     const live = await getDraws(env, 100);
+    // ---- 交叉校验的对等源：17500 全量文件（dlt 路径早就在用它对 500 做 30 期交叉校验）----
+    // 为什么必须在这里补：getDraws 的快源层是 500 + cwl，而 cwl 是境内站、从 CF 边缘出口实测长期不通
+    // （线上近 30 次同步一次都没应答），于是快层常年只剩 1 个源 → 无从比较 → sync_health 只能判 warn，
+    // 整个"双源交叉校验"形同虚设。17500 已被 drawsDeep 定期拉取、实测与 500 最近 30 期逐期一致，
+    // 拿它当对等源，交叉校验才重新有证据。
+    // 放在写路径而不是 getDraws：交叉校验的目的是"别让坏数据进 D1"，而 adminSync 是唯一写入口；
+    // 读路径不必为此每次多拉 0.5MB。
+    // 两处守卫：live 本身就是 17500 兜底（不能自己跟自己校）、live 是 mock 占位（没有真号码可比）。
+    let peer = null, peerCross = null;
+    const liveIsPeer = (live._sources || []).includes("17500");
+    if (!live._mock && !liveIsPeer) { try { peer = await fetch17500(100); } catch {} }
+    if (peer && peer.length) peerCross = crossCheck(live, peer, 30);
     // 交叉校验不一致的期号拒绝落库：无法分辨哪个源对，宁缺毋滥——D1 旧值仍是好的
-    const bad = new Set((live._cross && live._cross.mismatch) || []);
+    const bad = new Set((peerCross ? peerCross.mismatch : (live._cross && live._cross.mismatch)) || []);
     const toSave = bad.size ? live.filter(d => !bad.has(String(d.code))) : live;
     const ins = await saveSSQ(env.DB, toSave);
-    // mock 批次按「不一致」记账：三源全挂时根本没有交叉校验可言，
-    // 记成 consistent=1 会让 sync_health（auditRoute ③）与前端同步图把「一直跑假数据」显示成全绿。
-    // 「没校验成」的三种原因（只剩一个源 / 两源期号对不上 / 只剩 17500 静态文件 / 自定义源未校验）
-    // 统一由 getDraws 打 _crossSkipped，这里拼成 crosscheck_skipped_* —— syncGrade 认这个前缀判 warn。
+    // 一致性的口径：对等源交叉校验真跑过 ⇒ 那是 30 期逐期比对，证据比快层的「看最新一期」强；
+    // 没跑成才退回快层结论，并保留 getDraws 打上的 _crossSkipped 原因。
+    // 三类「没校验成」（只剩一个源 / 两源期号对不上 / 只剩 17500 静态文件 / 自定义源未校验）
+    // 统一拼成 crosscheck_skipped_* —— syncGrade 认这个前缀判 warn。
+    const consistent = live._mock ? false : peerCross ? (bad.size ? false : true) : !!live._consistent;
     const syncNote = live._mock ? "mock"
       : bad.size ? "crosscheck_dropped_" + bad.size
+      : peerCross ? ""
       : live._crossSkipped ? "crosscheck_skipped_" + live._crossSkipped
       : "";
-    await logSync(env.DB, (live._sources || []).join(","), live.length, ins, live._mock ? 0 : (live._consistent ? 1 : 0), syncNote);
+    await logSync(env.DB, ((live._sources || []).concat(peerCross ? ["17500"] : [])).join(","), live.length, ins, consistent ? 1 : 0, syncNote);
     const cached = await loadSSQ(env.DB, 5);
-    out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code, sourceCount: (live._sources || []).length, ...(live._crossSkipped ? { crossCheckSkipped: live._crossSkipped } : {}), ...(live._mock ? { skipped: "mock（三源全挂，读路径占位；不落库）" } : {}), ...(live._cross ? { crosscheck: { checked: live._cross.checked, mismatch: live._cross.mismatch, dropped: bad.size } } : {}) };
+    out.results.ssq = {
+      fetched: live.length, inserted: ins, consistent,
+      latestLive: live[0]?.code, latestDB: cached[0]?.code,
+      sourceCount: (live._sources || []).length + (peerCross ? 1 : 0),
+      ...(peerCross ? { peer: "17500", crosscheck: { checked: peerCross.checked, mismatch: peerCross.mismatch, dropped: bad.size } }
+        : live._cross ? { crosscheck: { checked: live._cross.checked, mismatch: live._cross.mismatch, dropped: bad.size } } : {}),
+      ...(live._crossSkipped && !peerCross ? { crossCheckSkipped: live._crossSkipped } : {}),
+      ...(live._mock ? { skipped: "mock（三源全挂，读路径占位；不落库）" } : {})
+    };
   } catch (e) { out.results.ssq = { error: String(e.message || e) }; }
   try {
     let d = [], alt = [];
@@ -874,10 +897,11 @@ async function auditRoute(env) {
     // 三态：号码冲突 = fail；单源应答 / 源未同步 / 只剩 17500 = warn（不该染红，但必须明说没校验）
     const fail = syncRows.filter(r => syncGrade(r.consistent, r.note) === "fail");
     const warn = syncRows.filter(r => syncGrade(r.consistent, r.note) === "warn");
-    // 「实际比过几批」与「一致几批」必须分开报：一致只比对各源的最新一期（crossCheck 才比 30 期，
-    // 但那个结果只用于丢弃冲突期号、不进健康度），所以「一致 N/M」不等于「N×30 期交叉校验通过」。
+    // 「实际比过几批」与「一致几批」必须分开报。对等源（17500）交叉校验真跑过时，
+    // 一致 = 最近 30 期逐期比对全同（比「只看最新一期」强得多）；没跑过才退回快层口径并说明。
     const crossChecked = syncRows.filter(r => (r.sources || []).length >= 2).length;
     const single = syncRows.length - crossChecked;
+    const strong = syncRows.filter(r => r.consistent && !(String(r.note || "").startsWith("crosscheck_skipped"))).length;
     push({
       id: "sync_health", label: "上游同步健康",
       status: fail.length ? "fail" : warn.length ? "warn" : "pass",
@@ -885,7 +909,7 @@ async function auditRoute(env) {
         (single ? `，其中 ${single} 批只有单一源应答（未做交叉校验）` : "") +
         (fail.length ? `；号码冲突 ${fail.length} 次（最近 ${fail[0].ranAt}）` : "") +
         (warn.length ? `；未完成交叉校验 ${warn.length} 次（最近 ${warn[0].ranAt}）` : "") +
-        `；各批「一致」= 两源最新一期号码相同（逐批口径，非 30 期逐期比对），最近一次 ${syncRows[0].ranAt}`,
+        `；口径：对等源 17500 与快源最近 30 期逐期比对，共 ${strong} 批全同（未跑过比对的批次只计 warn，不计入）；最近一次 ${syncRows[0].ranAt}`,
       items: fail.slice(0, 5).map(r => ({ ranAt: r.ranAt, note: r.note }))
     });
   }
