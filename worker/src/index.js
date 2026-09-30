@@ -29,7 +29,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.3", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.4", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -898,10 +898,14 @@ async function auditRoute(env) {
     const fail = syncRows.filter(r => syncGrade(r.consistent, r.note) === "fail");
     const warn = syncRows.filter(r => syncGrade(r.consistent, r.note) === "warn");
     // 「实际比过几批」与「一致几批」必须分开报。对等源（17500）交叉校验真跑过时，
-    // 一致 = 最近 30 期逐期比对全同（比「只看最新一期」强得多）；没跑过才退回快层口径并说明。
+    // 一致 = 最近 30 期逐期比对全同（比「只看最新一期」强得多）；没跑过只算 warn，不计入「全同」。
+    //
+    // 「真跑过」的判据是 sources ≥2（新代码在对等源参与时会把 17500 并进 sources），
+    // 不能只看 consistent：v0.15.2 之前的行在「只有单一源」时也记 consistent=true，
+    // 拿它当「全同」就是在给没比对过的批次补一句假话。
     const crossChecked = syncRows.filter(r => (r.sources || []).length >= 2).length;
     const single = syncRows.length - crossChecked;
-    const strong = syncRows.filter(r => r.consistent && !(String(r.note || "").startsWith("crosscheck_skipped"))).length;
+    const strong = syncRows.filter(r => (r.sources || []).length >= 2 && r.consistent).length;
     push({
       id: "sync_health", label: "上游同步健康",
       status: fail.length ? "fail" : warn.length ? "warn" : "pass",
@@ -909,7 +913,7 @@ async function auditRoute(env) {
         (single ? `，其中 ${single} 批只有单一源应答（未做交叉校验）` : "") +
         (fail.length ? `；号码冲突 ${fail.length} 次（最近 ${fail[0].ranAt}）` : "") +
         (warn.length ? `；未完成交叉校验 ${warn.length} 次（最近 ${warn[0].ranAt}）` : "") +
-        `；口径：对等源 17500 与快源最近 30 期逐期比对，共 ${strong} 批全同（未跑过比对的批次只计 warn，不计入）；最近一次 ${syncRows[0].ranAt}`,
+        `；口径：对等源 17500 与快源最近 30 期逐期比对，其中 ${strong} 批全同（只有单一源的批次不计入）；最近一次 ${syncRows[0].ranAt}`,
       items: fail.slice(0, 5).map(r => ({ ranAt: r.ranAt, note: r.note }))
     });
   }

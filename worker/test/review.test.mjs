@@ -284,6 +284,26 @@ test("audit：两源期号不同步（没比成，但不是号码冲突）→ sy
   assert.equal(by.data_freshness.status, "pass");
   assert.equal(by.review_loop.status, "pass");
 });
+test("audit：旧语义下「单源却记 consistent=true」的历史行不得被算成「全同」", async () => {
+  // v0.15.2 之前，只有单一源时也记 consistent=true（那正是被判定为假绿的那版）。
+  // 若审计只按 consistent 数「全同」，就会给从未比对过的批次补一句假话 —— 换了位置的同一个 bug。
+  const db = auditDB({
+    staleByKind: { ssq: { code: "2026103", date: day(0) } },
+    predlog: [{ kind: "ssq", latestSnapshot: "2026104", latestChecked: "2026103", unreconciled: 0, lastCreated: new Date().toISOString().replace("T", " ").slice(0, 19) }],
+    syncLog: [
+      // 真正的交叉校验：新代码在对等源参与时会把 17500 并进 sources
+      { ran_at: "2026-09-11 03:00:00", sources: "500,17500", fetched: 100, inserted: 1, consistent: 1, note: "" },
+      // 历史遗留：单源却记 consistent=true，从未比对过
+      { ran_at: "2026-09-10 03:00:00", sources: "500", fetched: 100, inserted: 1, consistent: 1, note: "" }
+    ]
+  });
+  const r = await worker.fetch(new Request("http://x/api/audit"), { DB: db }, {});
+  const by = Object.fromEntries((await r.json()).checks.map(c => [c.id, c]));
+  assert.match(by.sync_health.detail, /双源比对覆盖 1\/2 批/, "只有 1 批真比对过");
+  assert.match(by.sync_health.detail, /其中 1 批全同/, "「全同」只能数真比对过且一致的那批");
+  assert.doesNotMatch(by.sync_health.detail, /其中 2 批全同/, "单源 consistent=true 的历史行不得被算成全同");
+});
+
 test("audit：consistent=0 但 note 缺失（历史遗留/未知原因）→ 一律 fail，不许降级", async () => {
   // 降级只对「明确知道是没校验成」的两种 note 生效；原因不明的 0 必须按最坏情况处理
   const db = auditDB({
