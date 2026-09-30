@@ -50,6 +50,13 @@ jobs:
         # unit.test 只比字符串；这里用 SQLite 真跑一遍，抓「测试漏掉的语法错误」。
         # CI 固定 node 20（与 README ≥20 一致）—— 无 node:sqlite 时如实 skip，不伪装成已验证。
         run: node scripts/db/schema-smoke.mjs
+      - name: README 数字核对（用例数/版本号必须与仓库一致）
+        # README 是唯一对外的门面，数字一旦落后读者就按错预期用站点。
+        # 这里需要 Node ≥22（脚本靠 node --test 自带 glob 取权威件数）；本 job 的 node 是 20，
+        # 所以显式拉一个 22 来跑，不假装用 node 20 能跑。
+        run: |
+          set -euo pipefail
+          npx --yes -p node@22 node scripts/check-readme.mjs
 
   deploy:
     name: 部署 Worker

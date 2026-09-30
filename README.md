@@ -9,7 +9,7 @@
 ![version](https://img.shields.io/badge/version-0.15.6-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
-![unit%20tests](https://img.shields.io/badge/unit%20tests-203-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-209-brightgreen)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
 Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
@@ -46,7 +46,11 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 
 ### 🎯 统一预测引擎
 
-- **8 个彩种共用同一套引擎**（`worker/src/predict.js`），接口返回结构完全一致——不存在「双色球有推荐、其他彩种只有统计」的割裂
+- **8 个彩种共用同一套引擎**（`worker/src/predict.js`），6 套策略对每个彩种都出号——不存在「双色球有推荐、其他彩种只有统计」的割裂。
+  推荐接口（`/api/predict`）的返回结构完全一致；**但「数据结构不同导致的字段差异」是诚实的而不是抹平的**：
+  号码池型给 `main[]`、数字型给 `perPos[]`，`analyze` 的字段集合也按类型各自完整
+  （`worker/test/analyze-contract.test.mjs` + `page-render.test.mjs` 逐彩种断言字段齐全且真的渲染得出来）。
+  v0.15.5 就是在这个承诺上翻的车：接口按类型给了不同字段，前端却按号码池一套渲染，4 个数字型彩种整页空白
 - **6 套策略推荐**：稳健·热号 / 进取·遗漏 / 均衡 / 区间覆盖 / 杀号缩水 / 随机基准，均带结构分（和值 / 奇偶 / 大小 / 区间 / 跨度 / AC）。
   ⚠️ 这 6 套都是**娱乐向**的：冷热与遗漏类策略在开奖侧没有统计依据（见[统计诚实性](#-统计诚实性本项目的灵魂)），站上不做「这套更有效」的承诺
 - **杀号**：10 类公式加权投票（票数 + 命中原因）；`/api/kill-calibrated` 给出按分公式回测得到的权重与 `/api/kill-tune` 的阈值寻优。
@@ -80,11 +84,19 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 
 ### 🛡️ 数据可靠性
 
-- **多源交叉校验**：双色球（500 + cwl）、大乐透（500 + 17500）最近 30 期逐期比对，不一致的期号**拒绝落库**
+- **多源交叉校验**：双色球（快源 500 + cwl，对等源 17500）、大乐透（500 + 17500）最近 30 期**逐期比对**，不一致的期号**拒绝落库**
+  （校验放在 `adminSync` 唯一的写路径上，不放读路径——目的是"别让坏数据进 D1"，不是给每次页面加载加 0.5MB 延迟）
+- **单源应答不许显示成绿灯**：只有单一源应答时 `/api/audit` 的 `sync_health` 判 **warn** 而非 pass，
+  `/api/sync-log` 的 `summary.crossChecked` 如实报「实际比对过几批 / 一致几批」；
+  只算「有 consistent 就算全同」会把从未比对过的批次算成"全同"——那正是 v0.15.2 之前的假绿，已被回归测试锁住
 - **数据新鲜度保险丝**：D1 最新期距今天数暴露在 `/api/meta`，前端任一彩种 ≥4 天自动亮黄条
-- **上游故障降级**：小彩种上游不可用时自动读 D1 缓存，响应标记 `degraded`；所有上游 fetch 带硬超时
-  （普通 8s / 全量档 20s），境内站点不回包时宁可降级，也不把请求拖到 20–30s
-- **CI 部署冒烟**：push / 定时同步后自动对线上 5 端点断言，线上异常 CI 直接红
+- **上游故障降级**：小彩种上游不可用时自动读 D1 缓存，响应标记 `degraded` 与真实来源（`500` / `d1` / `17500`）；
+  所有上游 fetch 带硬超时（普通 8s / 全量档 20s），境内站点不回包时宁可降级，也不把请求拖到 20–30s
+- **假数据必须自己开口**：上游全挂时双色球会返回一条编造的占位期次，此时分析页顶部红框标明
+  「当前不是真实开奖数据」，单一源时标注「未经第二源交叉校验」——不让占位数据画成一张看起来正常的频次图
+- **分析页与审计页的图不会空白**：所有 ECharts 实例登记在 `__charts` 表里，切页统一 `resize()`
+  （`display:none` 下 init 出来是 0 宽，不 resize 就永远是白板）
+- **CI 部署冒烟**：push / 定时同步后自动对线上 5 端点断言 + 校验 `/health` 版本号收敛，线上异常 CI 直接红
 
 ### 📦 可选运维能力（默认全关）
 
@@ -182,7 +194,7 @@ flowchart LR
 | 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
 | 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
 | 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 203 项离线单元测试（188 worker + 13 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约、SW 离线队列、D1 迁移版本化、小彩种路由分派、交叉校验对拍、分析页数据契约（8 个彩种字段齐全，防止数字型彩种渲染成空白）、页面渲染契约（8 个彩种的号码/统计文字真的渲染得出来）、前端页面 JS 语法门禁与图表实例登记表、本轮缺陷回归锁）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
+| 测试 | `node --test` | 209 项离线单元测试（191 worker + 13 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约、SW 离线队列、D1 迁移版本化、小彩种路由分派、交叉校验对拍、分析页数据契约（8 个彩种字段齐全，防止数字型彩种渲染成空白）、页面渲染契约（8 个彩种的号码/统计文字真的渲染得出来）、前端页面 JS 语法门禁与图表实例登记表、本轮缺陷回归锁）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
 
 ---
 
@@ -273,10 +285,20 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（203 项，零依赖，离线可跑）
+npm test             # 单元测试（209 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
+
+排查「页面上什么都没有」用这两个脚本（都不依赖浏览器，仓库根目录跑）：
+
+```bash
+node scripts/page-audit.mjs       # 逐个标签页 × 8 彩种查接口：空响应、空字段、类型形状是否完整
+                                   # BASE=https://你的站点 node scripts/page-audit.mjs  # 换站点
+node scripts/verify-live-ui.mjs   # 部署后核对线上页面脚本的关键渲染事实（图表登记表 / 分流路径 / 警示文案）
+```
+
+这两类问题（200 OK 但页面空白）在单测里看不见，只能对着真实响应查——2026-09-30 那轮「只有双色球有图表数据」就是这么定位的。
 
 统计与冷门度脚本（同样零依赖，可在离线数据上复现文档里的全部结论）：
 
@@ -312,7 +334,8 @@ node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与
 | 路径 | 参数 | 说明 |
 |---|---|---|
 | `/api/predict` | `kind=`, `win=5..100`, `n=` | 6 套策略推荐 + 杀号 + 定胆 + 分析，一次返回 |
-| `/api/analyze` | `kind=`, `win=` | 频次/冷热/遗漏/奇偶/大小/质合/AC/012路/区间/连号/重号；号码池型附 `shape` 形态转移矩阵 |
+| `/api/analyze` | `kind=`, `win=` | 号码池型：频次/冷热/遗漏/奇偶/大小/质合/AC/012路/区间/连号/重号 + `shape` 形态转移矩阵；数字型：`perPos[]` 逐位给 `freq`/`omission`/`oddRatio` + `form`（组三/组六/豹子）+ `shape.note`（说明形态转移不适用）。附带 `sources[]` 声明本次数据来源，`sources:["mock"]` 表示上游全挂、页面显示占位数据 |
+| `/api/trend` | `kind=`, `limit=5..60` | 逐期遗漏走势 |
 | `/api/kill` | `kind=` | 杀号投票（10 类公式加权 + threshold） |
 | `/api/dan` | `kind=`, `win=` | 定胆 |
 | `/api/backtest` | `kind=`, `periods=1..600` | 历史回测：真实命中率 vs 随机基线 + p 值 + 分年稳定性；>60 期自动抽样（返回 `tested/stride`） |
@@ -322,6 +345,10 @@ node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与
 | `/api/trend` | `kind=`, `limit=5..60` | 逐期遗漏走势 |
 | `/api/ticket` | `kind=`, `dan=`, `tuo=` | 胆拖投注单（ssq/dlt/qlc） |
 | `/api/coldness` | `kind=ssq`, `nums=01,05,...`, `blue=09` | 冷门度：估计中奖后**与多少人分奖**（`ratio`<1 有利）。只影响分奖人数，**不改变中奖概率**；仅双色球有拟合系数 |
+
+> **数字型彩种（fc3d / pl3 / pl5 / qxc）没有号码池**，因此：`/api/trend` 的逐期遗漏走势不适用（改看「各位置当前遗漏」）、
+> 形态转移矩阵不适用、`/api/analyze` 改按位给 `perPos[]`。这是数据结构决定的，不是功能缺失——
+> 站上会直说「不适用」并给出能画的那张图，不会留一张空白图让人以为坏了。
 
 ### 查询与工具
 
@@ -389,6 +416,7 @@ lottery-web/
 │   │   ├── index.js        # 路由 / 三级缓存 / CORS / 鉴权 / 落库调度 / 复盘 job
 │   │   ├── predict.js      # 统一预测引擎（8 彩种共用）
 │   │   ├── coldness.js     # 冷门度（分奖人数）评分，系数由 scripts/coldness 拟合
+│   │   ├── coldness-backtest.js # 冷门度回看：观测分档 vs 预测是否同向
 │   │   ├── verify-batch.js # 批量验奖：解析贴进来的票 → 复用上面的奖级函数逐注判
 │   │   ├── ssq.js          # 双色球取数（500 + cwl + 17500）与验奖
 │   │   ├── dlt.js          # 大乐透取数与验奖
@@ -397,14 +425,22 @@ lottery-web/
 │   │   ├── db.js           # D1 读写
 │   │   ├── net.js          # 带超时的上游 fetch（宁可降级，也不把请求拖死）
 │   │   └── ui.js           # ⚠️ 构建产物（不进仓库，先 build:ui）
-│   ├── test/
+│   ├── test/               # 离线套件：npm test 走 test/*.test.mjs（glob，新增文件不会被漏掉）
 │   │   ├── unit.test.mjs   # 基础单元测试
 │   │   ├── predict.test.mjs # 预测引擎测试（含 8 彩种一致性）
 │   │   ├── coldness.test.mjs # 冷门度：方向 / 单调 / 输入校验 / 免责声明
 │   │   ├── review.test.mjs # 复盘 job 端到端（假 D1 按 WHERE 过滤）
 │   │   ├── verify-batch.test.mjs # 批量验奖：解析 / 奖级金额 / 位置敏感 / 汇总 + 路由 HTTP 契约
 │   │   ├── ui-render.test.mjs # 前后端契约：真跑后端再让前端渲染函数画一遍（字段改名会被抓住）
+│   │   ├── page-render.test.mjs # 页面渲染契约：8 彩种 × 历史/分析页真的渲染出内容（防空白页）
+│   │   ├── analyze-contract.test.mjs # 分析页数据契约：8 彩种 analyze 字段齐全（防数字型渲染成空白）
+│   │   ├── frontend.test.mjs # 前端 script 块语法门禁 + 图表实例登记表（防 0 宽空白图）
+│   │   ├── crosscheck.test.mjs # 双源交叉校验：与暴力逐期比对对拍（缺期≠冲突）
+│   │   ├── regress.test.mjs # 历史缺陷回归锁（40 项，含本轮修过的每个坑）
+│   │   ├── small-route.test.mjs # 小彩种路由分派 / 降级数组 / 样本门槛 / 口径
 │   │   ├── net.test.mjs    # 上游超时：用不回包的本地 server 验超时真的生效
+│   │   ├── sw-queue.test.mjs # Service Worker 离线队列
+│   │   ├── readme.test.mjs  # README 事实核对：测试数/版本/目录结构必须与仓库一致（防文档悄悄腐烂）
 │   │   └── live.network.mjs # 真实数据源连通性（需联网，刻意不叫 *.test.mjs 以免混入离线套件）
 │   ├── wrangler.toml       # 部署模板（database_id 脱敏为 REPLACE_ME，routes 默认注释）
 │   └── wrangler.local.toml # 你自己的配置（.gitignore，不提交）
@@ -412,6 +448,8 @@ lottery-web/
 │   ├── build-ui.mjs        # frontend/ → worker/src/ui.js 打包脚本
 │   ├── notify.mjs          # 开奖推送：读公共接口 → 按各家格式 POST webhook（默认不发）
 │   ├── notify.test.mjs     # 推送测试：payload 形状 + 本地 http server 真发一次
+│   ├── page-audit.mjs      # 线上巡检：7 个标签页 × 8 彩种逐接口查空响应/空字段（BASE 环境变量可覆盖站点）
+│   ├── verify-live-ui.mjs  # 部署后核对线上页面脚本的关键渲染事实（不依赖浏览器）
 │   ├── randomness/         # 随机性审计：8 彩种取数 + A/B/C/D/E 检验（零依赖，见其 README）
 │   └── coldness/           # 冷门度系数拟合 + 样本外验证 + 与线上常量对账
 ├── db/
