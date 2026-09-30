@@ -6,7 +6,7 @@
 
 **统计诚实性优先：每个「有效」结论都要有可复现的检验背书**
 
-![version](https://img.shields.io/badge/version-0.15.0-blue)
+![version](https://img.shields.io/badge/version-0.15.1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
 ![unit%20tests](https://img.shields.io/badge/unit%20tests-173-brightgreen)
