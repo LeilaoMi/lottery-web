@@ -16,6 +16,9 @@
 - **推荐结果带口径说明 `caliber`** — 6 套策略并非同一窗口的统计：热号/冷号/副区走 `analyzeAll` 的全量历史，胆码走 `danList` 的 `win` 窗口（`/api/dan?win=` 可调），杀号走全部可用历史。所以「均衡」本身就是"全量热号 + 全量冷号 + win 窗口胆码"的混合，note 已写实；前端在预测页显式展示这段口径
 - **note 改名保持后向兼容** — `crosscheck_latest_issue_mismatch` 并入 `crosscheck_skipped_*`。分级器**同时认新旧两个名**：D1 里 v0.15.0/0.15.1 写下的历史行还带旧名，只认新前缀会把它们从 warn 误判成 fail（等于用一次改名制造假红）
 - **测试 173 → 178 项全过**；新增用例锁住：交叉校验覆盖度暴露、单源判 warn、旧 note 名仍判 warn、数组端点的头元数据、推荐 `caliber` 与降级不摊数组
+- **CI：落库前先确认线上版本**（由本次改动本身暴露出来的时序缺陷）— `sync` 排在 `deploy` 之后仅十几秒，而 Worker 是**边缘多 PoP**，`deploy` 的健康检查只证明了"某一个 PoP"已收敛，`sync` 的请求完全可能落到仍在跑旧代码的 PoP。实测 v0.15.2 那次：deploy 门禁已见 `0.15.2`，`sync` 却在 08:56:02 写下一行 `consistent=true` / `note` 为空（旧语义：单源也算"一致"，比真值宽松），静默把 `sync_health` 染绿且无任何迹象表明它来自旧代码。现 `sync` job 前置版本门禁，不收敛就退避重试、仍不收敛则**中止而不是用旧代码写 sync_log**（`review` 是 `needs: sync`，被连带覆盖）
+  - 线上验证：修好后同一接口立即从 `grade=pass / crossChecked=0` 变成 `grade=warn / singleSource`，`/api/audit` 的 `overall` 也从 `pass` 变成 `warn` —— 绿灯消失，但那是它本来的样子
+  - 改版本号时**六处**要一起改：README 徽章、`worker/package.json`、`/health` 兜底常量、`wrangler.toml`、`sync.yml` 的 deploy 门禁、`sync.yml` 的落库前门禁
 
 ## v0.15.0 · 缺陷排查与修复两轮（2026-09-30）
 

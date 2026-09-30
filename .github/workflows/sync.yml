@@ -254,6 +254,32 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      - name: 确认线上已是本次部署的版本再落库
+        # 必须先确认版本：sync 排在 deploy 之后仅十几秒，而 Worker 是边缘多 PoP，
+        # deploy 的健康检查只证明了「某一个 PoP」已收敛——sync 的请求完全可能落到仍在跑旧代码的 PoP。
+        # 实测 v0.15.2 那次：deploy 门禁已见 0.15.2，sync 却在 08:56:02 写下一行
+        # consistent=true / note 为空（旧语义：单源也算「一致」），比真值宽松。
+        # 这类行会静默把 sync_health 染绿，且没有任何迹象表明它来自旧代码。
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          EXPECT_VERSION: 0.15.2
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKER_URL:-}" ]; then
+            echo "::warning::未配置 secrets.WORKER_URL，跳过版本确认"
+            exit 0
+          fi
+          for i in 1 2 3 4 5 6 7 8; do
+            got=$(curl -sS -m 20 "$WORKER_URL/health" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).version||""))}catch{}})' || true)
+            if [ "$got" = "$EXPECT_VERSION" ]; then
+              echo "线上已收敛到 $EXPECT_VERSION，落库前确认通过（attempt $i）"
+              exit 0
+            fi
+            echo "attempt $i：线上 version=$got（期望 $EXPECT_VERSION），边缘尚未收敛，退避重试"
+            sleep 10
+          done
+          echo "::error::落库前线上版本仍是 $got，不是 $EXPECT_VERSION —— 用旧代码写 sync_log 会让健康度说谎，中止"
+          exit 1
       - name: 触发 Worker 落库并校验
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
