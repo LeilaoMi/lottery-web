@@ -29,7 +29,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.1", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.2", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -91,9 +91,14 @@ async function ssqRoute(request, env, url) {
     if (cacheable) { const hit = await cache.match(ck); if (hit) return hit; }
     const draws = await getDraws(env, 100);
     let res;
+    // /history 与 /trend 的来源元数据走响应头而不是 body：JSON.stringify 只序列化数组的索引，
+    // 挂在数组上的自定义属性会被整条丢掉。旧实现 withMeta() 就是这么写的，于是
+    // /api/ssq/latest（对象）有 sources/consistent、/api/ssq/history 与 /trend 却没有——
+    // 看起来在暴露数据来源，实际从未暴露过。数组改包成对象又会破坏前端（它要的就是数组）。
+    const metaH = () => ({ "X-Sources": (draws._sources || []).join(","), "X-Consistent": draws._consistent ? "1" : "0" });
     if (url.pathname.endsWith("/latest")) res = json({ ...draws[0], sources: draws._sources, consistent: draws._consistent }, 200, 300);
-    else if (url.pathname.endsWith("/history")) res = json(withMeta(draws.slice(0, num(url, "limit", 30, 1, 200)), draws), 200, 600);
-    else if (url.pathname.endsWith("/trend")) res = json(withMeta(trend(draws, num(url, "win", 30, 5, 100)), draws), 200, 600);
+    else if (url.pathname.endsWith("/history")) res = jsonH(draws.slice(0, num(url, "limit", 30, 1, 200)), 200, 600, metaH());
+    else if (url.pathname.endsWith("/trend")) res = jsonH(trend(draws, num(url, "win", 30, 5, 100)), 200, 600, metaH());
     // 预测相关一律走统一引擎，保证 8 个彩种口径一致
     else if (url.pathname.endsWith("/analyze")) res = json({ kind: "ssq", ...analyzeAll("ssq", draws, num(url, "win", 30, 5, 100)), shape: shapeTrans("ssq", draws, { window: 400 }), sources: draws._sources }, 200, 300);
     else if (url.pathname.endsWith("/kill")) res = json({ kind: "ssq", ...killList("ssq", draws), sources: draws._sources }, 200, 300);
@@ -436,7 +441,6 @@ async function verifyBatchRoute(request, env, url) {
   const r = verifyBatch(kind, draws, tickets, codes, (body && body.mult) || 1);
   return json(r, r.error ? 400 : 200, 0);
 }
-function withMeta(list, draws) { list._sources = draws._sources; list._consistent = draws._consistent; return list; }
 // 鉴权模型：开奖数据是公开信息，读接口（latest/history/analyze/recommend/rotation/trend）无需鉴权；
 // 只有写操作与个人数据（/api/favs 的所有方法、/api/admin/sync）要求 API_TOKEN。
 // 未设置 API_TOKEN 时写接口一律拒绝（fail-closed）。
@@ -460,14 +464,15 @@ async function getDraws(env, limit) {
   }
   const base = ok.find(x => x.k === "500")?.d || ok[0].d;
   base._sources = ok.map(x => x.k);
-  // 两源「最新一期期号都对不上」= 至少有一源是陈的，绝不能记成一致：
-  // 旧写法把它并进 `: true` 分支，于是两源明明不同步时 sync_health 和前端同步图照样全绿。
-  // 只剩一个源时无从比较，保持 true（没发现矛盾 ≠ 校验通过，但也不凭空判红）。
+  // 一致性只表示「≥2 个源对同一期号真的比过并且一致」。只有一个源时无从比较，记成一致就是
+  // 把「没校验」说成「校验通过」——线上实测过：近 30 次同步 cwl 一次都没应答（境内站从 CF 出口
+  // 大概率不通），若单源仍记 true，审计会一路显示「一致 50/50」，而真实比对次数是 0。
+  // 降级成 warn 而不是 fail：源挂掉是环境事实，不该把整页染红，但必须明说「没校验」。
   base._consistent = ok.length > 1
     ? (ok[0].d[0].code === ok[1].d[0].code
         ? JSON.stringify([ok[0].d[0].red, ok[0].d[0].blue]) === JSON.stringify([ok[1].d[0].red, ok[1].d[0].blue])
-        : false)
-    : true;
+        : (base._crossSkipped = "latest_issue_mismatch", false))
+    : (base._crossSkipped = "single_source", false);
   // 多源交叉校验（最近 30 期逐期比对）：单源数据错误 = 全部预测报废，落库前必须拦住
   if (ok.length > 1) {
     const [a, b] = ok.map(x => x.d);
@@ -519,15 +524,15 @@ async function adminSync(request, env, ctx) {
     const ins = await saveSSQ(env.DB, toSave);
     // mock 批次按「不一致」记账：三源全挂时根本没有交叉校验可言，
     // 记成 consistent=1 会让 sync_health（auditRoute ③）与前端同步图把「一直跑假数据」显示成全绿。
-    // 同理，两源期号对不上 / 只剩 17500 静态文件，都属于「没校验成」，note 写清原因以便在审计里分辨。
+    // 「没校验成」的三种原因（只剩一个源 / 两源期号对不上 / 只剩 17500 静态文件 / 自定义源未校验）
+    // 统一由 getDraws 打 _crossSkipped，这里拼成 crosscheck_skipped_* —— syncGrade 认这个前缀判 warn。
     const syncNote = live._mock ? "mock"
       : bad.size ? "crosscheck_dropped_" + bad.size
-      : live._crossSkipped === "all_primary_failed" ? "crosscheck_skipped_all_primary_failed"
-      : !live._consistent ? "crosscheck_latest_issue_mismatch"
+      : live._crossSkipped ? "crosscheck_skipped_" + live._crossSkipped
       : "";
     await logSync(env.DB, (live._sources || []).join(","), live.length, ins, live._mock ? 0 : (live._consistent ? 1 : 0), syncNote);
     const cached = await loadSSQ(env.DB, 5);
-    out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code, ...(live._mock ? { skipped: "mock（三源全挂，读路径占位；不落库）" } : {}), ...(live._cross ? { crosscheck: { checked: live._cross.checked, mismatch: live._cross.mismatch, dropped: bad.size } } : {}) };
+    out.results.ssq = { fetched: live.length, inserted: ins, consistent: live._consistent, latestLive: live[0]?.code, latestDB: cached[0]?.code, sourceCount: (live._sources || []).length, ...(live._crossSkipped ? { crossCheckSkipped: live._crossSkipped } : {}), ...(live._mock ? { skipped: "mock（三源全挂，读路径占位；不落库）" } : {}), ...(live._cross ? { crosscheck: { checked: live._cross.checked, mismatch: live._cross.mismatch, dropped: bad.size } } : {}) };
   } catch (e) { out.results.ssq = { error: String(e.message || e) }; }
   try {
     let d = [], alt = [];
@@ -744,20 +749,24 @@ async function reviewRoute(request, env, url) {
     return json({ summary, rows: list.slice(0, 50), meta: { total: list.length, unreconciled, hint: Object.keys(summary).length ? null : "复盘尚未产生任何已对账样本：summary 为空表示「没能力判断」，不表示「已验证无效果」" } });
   } catch (e) { return json({ error: String(e) }, 500); }
 }
-// 同步健康三态分级。consistent 只表示「两源对同一期号的号码真的比过并且一致」，
+// 同步健康三态分级。consistent 只表示「≥2 个源对同一期号的号码真的比过并且一致」，
 // 于是 0 有两种含义，必须靠 note 区分：
 //   fail —— 号码本身冲突（crosscheck_dropped_N）或整批跑的是占位假数据（mock）
-//   warn —— 没能完成有意义的比对：两源最新期号不同（新源还没跟上，属常态）、
-//           或 500/cwl 全挂只剩 17500 静态文件（拿不到可交叉校验的第二源）
-// 这两类混成一个 fail 会让「上游同步健康」常态变红：每期新开奖后 cwl 必然比 500 慢一拍，
-// 红点天天出现等于没有红点。note 存在就是为了留这种原因，加列反而破坏 db/schema.sql ≡ migrations 的纪律。
+//   warn —— 没能完成有意义的比对：只有一个源应答（crosscheck_skipped_single_source，线上常态，
+//           cwl 是境内站，从 CF 出口大概率不通）、两源最新期号不同（crosscheck_skipped_latest_issue_mismatch，
+//           新源还没跟上）、500/cwl 全挂只剩 17500 静态文件、自定义源未校验
+// 这两类混成一个 fail 会让「上游同步健康」常年变红；反过来把 warn 当 pass，则等于把「没校验」
+// 说成「校验通过」——线上已经因为这个绿过 30 次。note 存在就是为了留这种原因，
+// 加列反而破坏 db/schema.sql ≡ migrations 的纪律。
 // 降级只对「明确知道是没校验成」的 note 生效；consistent=0 但原因不明（含历史遗留的空 note）一律 fail——
 // 不知道为什么不一致时，不能往好的方向猜。
 const GRADE_RANK = { pass: 0, warn: 1, fail: 2 };
 function syncGrade(consistent, note) {
   if (consistent) return "pass";
   const n = String(note || "");
-  if (n.startsWith("crosscheck_latest_issue_mismatch") || n.startsWith("crosscheck_skipped")) return "warn";
+  // crosscheck_latest_issue_mismatch 是 v0.15.0/0.15.1 时期的旧名，已并入 crosscheck_skipped_*；
+  // D1 里那批历史行还带着旧名，不认它会把它们从 warn 误判成 fail（等于用一次改名制造假红）
+  if (n.startsWith("crosscheck_skipped") || n === "crosscheck_latest_issue_mismatch") return "warn";
   return "fail";
 }
 // 一批同步里最严重的档位就是整批的档位
@@ -770,21 +779,26 @@ function syncGradeOf(rows) {
 // 表缺失时 rows=null 而非 []，前端据此显示「尚未部署」而不是画一张空图
 async function syncLogRoute(env, url) {
   if (!env.DB) return json({ rows: null, note: "no db" }, 200, 60);
-  const rows = await loadSyncLog(env.DB, num(url, "limit", 50, 1, 200));
+  const raw = await loadSyncLog(env.DB, num(url, "limit", 50, 1, 200));
+  // sourceCount = 该批实际应答了几个源。crosscheck 要求 ≥2 才算数，所以这个数字直接决定
+  // 「一致」是真比对过还是无从比较——不暴露出来，sync_log 里 sources 为 ["500"] 的行
+  // 与 ["500","cwl"] 的行看起来一样是绿的。
+  const rows = raw && raw.map(r => ({ ...r, sourceCount: (r.sources || []).length, grade: syncGrade(r.consistent, r.note) }));
   const summary = rows && rows.length ? {
     total: rows.length,
-    // consistent 只数「两源真比过且一致」；warn 批（源未同步/只 surviving 单一源）单列，
+    // consistent 只数「≥2 源真比过且一致」；warn 批（单源 / 源未同步 / 只剩 17500）单列，
     // 不混进 bad——「没能力校验」和「校验出冲突」是两件事
     consistent: rows.filter(r => r.consistent).length,
-    bad: rows.filter(r => syncGrade(r.consistent, r.note) === "fail").map(r => r.ranAt),
-    warn: rows.filter(r => syncGrade(r.consistent, r.note) === "warn").map(r => r.ranAt),
+    bad: rows.filter(r => r.grade === "fail").map(r => r.ranAt),
+    warn: rows.filter(r => r.grade === "warn").map(r => r.ranAt),
     grade: syncGradeOf(rows),
+    // 交叉校验实际覆盖：几批真的比过（≥2 源）、几批只有单一源
+    crossChecked: rows.filter(r => r.sourceCount >= 2).length,
+    singleSource: rows.filter(r => r.sourceCount < 2).length,
+    sourceMix: [...new Set(rows.map(r => (r.sources || []).join("+") || "无"))].sort(),
     lastRanAt: rows[0].ranAt
   } : null;
-  return json({
-    rows: rows ? rows.map(r => ({ ...r, grade: syncGrade(r.consistent, r.note) })) : null,
-    summary, note: rows === null ? "sync_log 表不存在（schema 未部署）" : null
-  }, 200, rows ? 60 : 0);
+  return json({ rows, summary, note: raw === null ? "sync_log 表不存在（schema 未部署）" : null }, 200, raw ? 60 : 0);
 }
 // ---------- audit：站内健康审计（公开只读，一次性聚合各保险丝） ----------
 // 纪律：表缺失/无 DB → status=skip（「没跑」不能伪装成「没问题」也不该直接红）；
@@ -857,16 +871,21 @@ async function auditRoute(env) {
   } else if (!syncRows.length) {
     push({ id: "sync_health", label: "上游同步健康", status: "warn", detail: "尚无同步记录：定时任务未跑过或日志被清空" });
   } else {
-    // 三态：号码冲突 = fail；源未同步/无第二源可校验 = warn（常态，不该染红审计页）
+    // 三态：号码冲突 = fail；单源应答 / 源未同步 / 只剩 17500 = warn（不该染红，但必须明说没校验）
     const fail = syncRows.filter(r => syncGrade(r.consistent, r.note) === "fail");
     const warn = syncRows.filter(r => syncGrade(r.consistent, r.note) === "warn");
+    // 「实际比过几批」与「一致几批」必须分开报：一致只比对各源的最新一期（crossCheck 才比 30 期，
+    // 但那个结果只用于丢弃冲突期号、不进健康度），所以「一致 N/M」不等于「N×30 期交叉校验通过」。
+    const crossChecked = syncRows.filter(r => (r.sources || []).length >= 2).length;
+    const single = syncRows.length - crossChecked;
     push({
       id: "sync_health", label: "上游同步健康",
       status: fail.length ? "fail" : warn.length ? "warn" : "pass",
-      detail: `近 ${syncRows.length} 次：一致 ${syncRows.length - fail.length - warn.length}/${syncRows.length}` +
-        (fail.length ? `，号码冲突 ${fail.length} 次（最近 ${fail[0].ranAt}）` : "") +
-        (warn.length ? `，未完成交叉校验 ${warn.length} 次（两源未同步或只剩单一源，最近 ${warn[0].ranAt}）` : "") +
-        `，最近一次 ${syncRows[0].ranAt}`,
+      detail: `近 ${syncRows.length} 次同步：双源比对覆盖 ${crossChecked}/${syncRows.length} 批` +
+        (single ? `，其中 ${single} 批只有单一源应答（未做交叉校验）` : "") +
+        (fail.length ? `；号码冲突 ${fail.length} 次（最近 ${fail[0].ranAt}）` : "") +
+        (warn.length ? `；未完成交叉校验 ${warn.length} 次（最近 ${warn[0].ranAt}）` : "") +
+        `；各批「一致」= 两源最新一期号码相同（逐批口径，非 30 期逐期比对），最近一次 ${syncRows[0].ranAt}`,
       items: fail.slice(0, 5).map(r => ({ ranAt: r.ranAt, note: r.note }))
     });
   }

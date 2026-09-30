@@ -111,7 +111,7 @@ jobs:
         if: env.DEPLOY_ENABLED == '1'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          EXPECT_VERSION: 0.15.1
+          EXPECT_VERSION: 0.15.2
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then

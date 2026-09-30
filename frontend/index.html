@@ -287,6 +287,9 @@ async function loadPredict(id){
     if (!isDigit && asArr(p.main).length) html += '<div id="cold-p' + i + '" class="muted">冷门度加载中…</div>';
   });
   if (!isDigit) html += '<div class="muted">冷门度衡量的是"万一中了能独享多少"（选号撞车度），<b>不改变中奖概率</b>，期望回报仍为负。</div>';
+  // 口径说明：6 套策略不是同一窗口的统计拼出来的（热/冷=全量历史，胆码=win 窗口），
+  // 不写明的话「6 组参考」看起来像同一口径下的 6 个方案
+  if (rec.caliber) html += '<div class="muted">口径：' + esc(rec.caliber) + '</div>';
   html += '<p class="muted">' + esc(rec.disclaimer || '') + '</p>';
   const dl = rec.dan || {};
   let kl = rec.kill || {}, killTag = '', killCalNote = '';
@@ -972,10 +975,14 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
       const s = r.summary || {};
       $('#syncout').innerHTML =
         '<div class="card"><b>近 ' + rows.length + ' 次同步</b>' +
-        '<div class="muted">交叉校验一致 ' + (s.consistent || 0) + '/' + (s.total || rows.length) +
-        (s.warn && s.warn.length ? '，未完成校验 ' + s.warn.length + ' 次' : '') +
-        (s.bad && s.bad.length ? '，号码冲突：' + esc(s.bad.join('、')) : '') +
-        (s.lastRanAt ? '，最近一次 ' + esc(s.lastRanAt) : '') + '</div>' +
+        '<div class="muted">双源交叉校验覆盖 ' + (s.crossChecked || 0) + '/' + (s.total || rows.length) + ' 批' +
+        (s.singleSource ? '，其中 ' + s.singleSource + ' 批只有单一源应答（未做校验）' : '') +
+        (s.sourceMix && s.sourceMix.length ? '；实际应答源：' + esc(s.sourceMix.join('、')) : '') +
+        '</div>' +
+        '<div class="muted">逐批「一致」= 两源最新一期号码相同（非 30 期逐期比对）' +
+        (s.warn && s.warn.length ? '；未完成校验 ' + s.warn.length + ' 次' : '') +
+        (s.bad && s.bad.length ? '；号码冲突：' + esc(s.bad.join('、')) : '') +
+        (s.lastRanAt ? '；最近一次 ' + esc(s.lastRanAt) : '') + '</div>' +
         '<div id="syncchart" style="height:220px;margin-top:8px"></div></div>';
       if (typeof echarts !== 'undefined') {
         const el = document.getElementById('syncchart');

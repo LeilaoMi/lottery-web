@@ -521,6 +521,12 @@ export function structScore(nums, zone) {
 }
 
 // ---------- 统一推荐：6 套策略，与双色球原有 6 套一一对应 ----------
+// 口径说明：这几套策略**不是同一个窗口**的统计拼出来的，必须写明，否则「6 组参考」看起来
+// 像同一口径下的 6 个方案。热号/冷号/副区走 analyzeAll 的 freqStats(draws, …)＝全量历史；
+// 胆码走 danList(kind, draws, win)＝显式 win 窗口（/api/dan?win= 可调）；杀号走 killList(kind, draws)
+// ＝全部可用历史。所以「均衡」这一套号本身就是「全量热号 + 全量冷号 + win 窗口胆码」的混合。
+const CALIBER = win =>
+  `热号/冷号/副区按全量历史统计（与 /api/analyze 同口径）；胆码按 win=${win} 窗口（与 /api/dan 同口径，该窗口是显式可调的）；杀号按全部可用历史。同一组里的几套策略并非同一窗口`;
 export function recommendAll(kind, draws, opts = {}) {
   const s = specOf(kind);
   const win = Math.min(100, Math.max(5, opts.win || 30));
@@ -579,14 +585,14 @@ export function recommendAll(kind, draws, opts = {}) {
     // 所以这里不能写死"近 30 期"，否则 draws 多于 win 时标签就是假的
     mk("稳健·热号", byFreqDesc.slice(0, Math.max(n + 4, 10)), "全部 " + draws.length + " 期高频号为主", 0),
     mk("进取·遗漏", byColdDesc.slice(0, Math.max(n + 4, 10)), "优先回补长遗漏号", 0, auxCold.length ? auxCold : null),
-    mk("均衡", [...byFreqDesc.slice(0, 8), ...byColdDesc.slice(0, 6), ...(dl.main || []).slice(0, 3).map(x => x.n)], "冷热混合 + 胆码", 1),
+    mk("均衡", [...byFreqDesc.slice(0, 8), ...byColdDesc.slice(0, 6), ...(dl.main || []).slice(0, 3).map(x => x.n)], "冷热混合（全量）+ 胆码（win 窗口）", 1),
     mk("区间覆盖", zoneCover(kind, pool, byFreqDesc, n, s), "三区均匀覆盖", 1),
     mk("杀号缩水", pool.filter(x => !killed.has(x)).sort((a, b) => (dl.main || []).findIndex(y => y.n === b) - (dl.main || []).findIndex(y => y.n === a)), "剔除 " + killed.size + " 个杀号后按胆码排序", 2),
     mk("随机基准", pool, "纯随机对照", 2)
   ];
   return {
     kind, name: s.name, type: s.type, window: win, count: an.count,
-    analysis: an, kill: kl, dan: dl, picks,
+    analysis: an, kill: kl, dan: dl, picks, caliber: CALIBER(win),
     last: draws[0] ? { code: draws[0].code, main: mainOf(draws[0], kind), aux: auxOf(draws[0], kind) } : null,
     disclaimer: DISCLAIMER
   };
@@ -622,7 +628,7 @@ function recommendDigits(kind, draws, win) {
   const picks = [
     mk("稳健·热号", p => (an.perPos[p].hot[0]), "各位取最热号"),
     mk("进取·遗漏", p => (an.perPos[p].cold[0]), "各位取最冷号"),
-    mk("胆码优先", p => (dl.perPos[p].dan[0].n), "各位取胆码第一名"),
+    mk("胆码优先", p => (dl.perPos[p].dan[0].n), "各位取胆码第一名（win 窗口）"),
     mk("杀号规避", p => {
       const killed = new Set((kl.perPos[p].kill || []).filter(x => x.votes >= 1).map(x => x.n));
       const cand = an.perPos[p].hot.find(x => !killed.has(x));
@@ -637,7 +643,7 @@ function recommendDigits(kind, draws, win) {
   ];
   return {
     kind, name: s.name, type: s.type, window: win, count: an.count,
-    analysis: an, kill: kl, dan: dl, picks,
+    analysis: an, kill: kl, dan: dl, picks, caliber: CALIBER(win),
     last: draws[0] ? { code: draws[0].code, digits: mainOf(draws[0], kind) } : null,
     formHint: s.digits === 3 ? { 组三: an.form.group3, 组六: an.form.group6, 豹子: an.form.bail } : null,
     disclaimer: DISCLAIMER

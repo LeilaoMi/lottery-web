@@ -104,3 +104,62 @@ test("smallRoute：样本不足门槛只作用于 /kill /dan，latest /history �
     }
   });
 });
+
+test("降级时数组仍是数组：元数据走 X-Degraded 头，不摊成对象", async () => {
+  await withOfflineNetwork(async () => {
+    const env = { DB: makeDB() };
+    // 上面 withOfflineNetwork 让 fetch 必抛 ⇒ 必然走降级分支，正是这条要验的路径
+    const h = await call(env, "/api/fc3d/history?limit=5");
+    const body = await h.json();
+    assert.ok(Array.isArray(body), "降级路径也不能把数组摊成 {" + '"0":…}');
+    assert.equal(body[0].code, "2026243");
+    assert.equal(h.headers.get("X-Degraded"), "1", "降级痕迹走响应头（JSON 数组带不了同级字段）");
+    // 同一个降级批次里，对象型响应仍然用 body 字段标降级
+    const a = await (await call(env, "/api/fc3d/analyze")).json();
+    assert.equal(a.degraded, true, "对象型响应的 degraded 仍在 body 里");
+  });
+});
+
+test("ssqRoute：history /trend 的来源元数据走响应头，且 body 仍是数组", async () => {
+  // 旧实现 withMeta() 把 _sources 挂在数组上，而 JSON.stringify 只序列化索引 ⇒ 元数据从未进过响应体。
+  // 线上实测：/api/ssq/latest（对象）有 sources/consistent，/api/ssq/history 与 /trend 却没有。
+  // 现在元数据走 X-Sources / X-Consistent 头，body 保持数组（前端要的就是数组）。
+  await withOfflineNetwork(async () => {
+    const env = { DB: makeDB() };
+    // getDraws 走 fetch（此处必抛）→ 回落 17500 也会抛 → 最后落 mock 单条；无论哪条都带 _sources
+    for (const [p, isArr] of [["/api/ssq/history?limit=2", true], ["/api/ssq/trend?limit=5", true]]) {
+      const r = await call(env, p);
+      const body = await r.json();
+      assert.equal(Array.isArray(body), isArr, p + " body 应是数组");
+      // Headers 的键在内部映射里，必须用 has()/get()，`in` 查的是实例自有属性（永远 false）
+      assert.ok(r.headers.has("x-sources"), p + " 应带 X-Sources 响应头");
+      assert.ok(r.headers.has("x-consistent"), p + " 应带 X-Consistent 响应头");
+      assert.match(r.headers.get("x-consistent"), /^[01]$/, "X-Consistent 只能是 0/1");
+      assert.ok(!JSON.stringify(body).includes("_sources"), p + " body 里不该再有被 JSON 丢掉的 _sources");
+    }
+    // latest 是对象，元数据仍在 body（既有契约不变）
+    const l = await (await call(env, "/api/ssq/latest")).json();
+    assert.ok("sources" in l && "consistent" in l, "/api/ssq/latest 的 sources/consistent 应留在 body");
+  });
+});
+
+test("推荐结果带口径说明：几套策略不是同一窗口的统计", async () => {
+  const { recommendAll } = await import("../src/predict.js");
+  const pad2 = v => String(v).padStart(2, "0");
+  let seed = 24680; const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const distinct = (hi, k) => { const s = new Set(); let g = 0; while (s.size < k && g++ < 500) s.add(pad2(1 + Math.floor(rnd() * hi))); return [...s]; };
+  const draws = Array.from({ length: 60 }, (_, i) => ({ code: "2026" + (1000 + i), red: distinct(33, 6).sort(), blue: pad2(1 + Math.floor(rnd() * 16)) }));
+  const rec = recommendAll("ssq", draws, { win: 30 });
+  assert.ok(rec.caliber, "推荐结果必须带 caliber 说明");
+  assert.match(rec.caliber, /全量历史/, "须写明热/冷是全量口径");
+  assert.match(rec.caliber, /win=30/, "须写明胆码是 win 窗口");
+  assert.match(rec.caliber, /并非同一窗口/, "须点明同一组内几套策略口径不同");
+  // 混用了两种窗口的策略，note 本身也要说清
+  const mix = rec.picks.find(x => x.name === "均衡");
+  assert.ok(mix, "应有「均衡」策略");
+  assert.match(mix.note, /全量/, "「均衡」note 须点出它混了全量与 win 窗口");
+  // 数字型同样带 caliber，且「胆码优先」注明窗口
+  const dg = recommendAll("qxc", draws.map((d, i) => ({ code: d.code, digits: Array.from({ length: 7 }, () => String(Math.floor(rnd() * 10))) })), { win: 30 });
+  assert.ok(dg.caliber, "数字型推荐也要带 caliber");
+  assert.match(dg.picks.find(x => x.name === "胆码优先").note, /win 窗口/);
+});

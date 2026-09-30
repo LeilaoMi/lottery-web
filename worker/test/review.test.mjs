@@ -271,7 +271,7 @@ test("audit：两源期号不同步（没比成，但不是号码冲突）→ sy
     staleByKind: { ssq: { code: "2026103", date: day(0) } },
     predlog: [{ kind: "ssq", latestSnapshot: "2026104", latestChecked: "2026103", unreconciled: 0, lastCreated: new Date().toISOString().replace("T", " ").slice(0, 19) }],
     syncLog: [
-      { ran_at: "2026-09-11 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_latest_issue_mismatch" },
+      { ran_at: "2026-09-11 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_skipped_latest_issue_mismatch" },
       { ran_at: "2026-09-10 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 1, note: "" }
     ]
   });

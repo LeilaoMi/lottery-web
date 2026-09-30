@@ -61,8 +61,7 @@ const runReviewJob = async db => {
   return { status: r.status, body: await r.json() };
 }
 // sync_log 查询桩（/api/sync-log 与 /api/audit 都走它）
-function syncLogDB(rows) {
-  const exec = (sql, args) => {
+function syncLogDB(rows) {  const exec = (sql, args) => {
     if (/FROM sync_log/.test(sql)) return rows;
     if (/small_draws|dlt_draws|FROM draws/.test(sql)) return [];
     if (/predlog/.test(sql)) return [];
@@ -290,7 +289,7 @@ test("#12 样本足够时快照照常写入，且带 snapshotNote 标注口径�
 
 // ---------- #13 同步健康三态 ----------
 const SYNC_LOG_ROWS = [
-  { ran_at: "2026-09-11 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_latest_issue_mismatch" },
+  { ran_at: "2026-09-11 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_skipped_latest_issue_mismatch" },
   { ran_at: "2026-09-10 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_dropped_2" },
   { ran_at: "2026-09-09 03:00:00", sources: "500", fetched: 10, inserted: 1, consistent: 1, note: "" }
 ];
@@ -305,6 +304,29 @@ test("#13 /api/sync-log 按 pass/warn/fail 三态分级", async () => {
   assert.equal(j.summary.grade, "fail", "整批取最严重档");
   assert.equal(j.summary.warn.length, 1);
   assert.equal(j.summary.bad.length, 1);
+});
+test("#13 交叉校验覆盖度必须暴露：单源批次不算「比对过」", async () => {
+  // 线上实测：近 30 次同步 cwl 一次都没应答，全是单一源。若 sourceCount 不暴露，
+  // 「一致」与「双源比对覆盖」看起来一样，读者会以为交叉校验一直在跑
+  const db = syncLogDB([
+    { ran_at: "2026-09-11 03:00:00", sources: "500", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_skipped_single_source" },
+    { ran_at: "2026-09-10 03:00:00", sources: "500", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_skipped_single_source" },
+    { ran_at: "2026-09-09 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 1, note: "" }
+  ]);
+  const j = await (await worker.fetch(new Request("http://x/api/sync-log?limit=50"), { DB: db }, {})).json();
+  assert.equal(j.summary.crossChecked, 1, "只有 1 批真的双源比对过");
+  assert.equal(j.summary.singleSource, 2, "2 批只有单一源");
+  assert.deepEqual(j.summary.sourceMix, ["500", "500+cwl"]);
+  assert.equal(j.rows[0].sourceCount, 1);
+  assert.equal(j.rows[2].sourceCount, 2);
+  assert.equal(j.summary.grade, "warn", "单源批次判 warn（没能力校验），不是 fail");
+});
+test("#13 旧 note 名 crosscheck_latest_issue_mismatch 仍判 warn（改名不得制造假红）", async () => {
+  // v0.15.0/0.15.1 写进 D1 的历史行带的是旧名；分级器若只认新前缀，这些行会从 warn 变 fail
+  const db = syncLogDB([{ ran_at: "2026-09-11 03:00:00", sources: "500,cwl", fetched: 10, inserted: 1, consistent: 0, note: "crosscheck_latest_issue_mismatch" }]);
+  const j = await (await worker.fetch(new Request("http://x/api/sync-log"), { DB: db }, {})).json();
+  assert.equal(j.rows[0].grade, "warn", "旧名必须与新名同级");
+  assert.equal(j.summary.grade, "warn");
 });
 test("#13 未知原因的 consistent=0 一律 fail，不许降级", async () => {
   const db = syncLogDB([{ ran_at: "2026-09-11 03:00:00", sources: "500", fetched: 10, inserted: 1, consistent: 0, note: "" }]);
