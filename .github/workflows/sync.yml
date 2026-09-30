@@ -39,9 +39,9 @@ jobs:
         # notify.test.mjs 用本地 http server 真发一次 → 「以为在推、其实从没发出去」不会漏过
         # net.test.mjs 用不回包的本地 server 验超时真的会掐断 → 上游挂死把请求拖到 30s 会有人管
         # glob 不加引号：交给 bash 展开。本 job 用 Node 20，其 node --test 尚不支持
-      # 自带 glob 模式（加引号会把 '*.test.mjs' 原样传进去 → Could not find）。
-      # 用文件清单逐个列则新测试会被静默漏掉，所以宁可让 shell 展开。
-      run: node --test worker/test/*.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
+        # 自带 glob 模式（加引号会把 '*.test.mjs' 原样传进去 → Could not find）。
+        # 用文件清单逐个列则新测试会被静默漏掉，所以宁可让 shell 展开。
+        run: node --test worker/test/*.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
       - name: 冷门度系数对账（线上常量 ↔ 拟合产物 ↔ 站内回看，离线快检）
         # 月度 ssq-fit 要联网重拟合（分钟级）；push 时只做三份已提交产物的一致性断言（毫秒级）。
         # 抓「手改 coldness.js 没重跑拟合」「回看数据被掏空」——单测不会红，但站上系数来历不明。
