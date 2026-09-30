@@ -38,7 +38,7 @@ jobs:
         # ui-render.test.mjs 读 frontend/index.html 渲染真实后端响应 → 前后端字段改名会在 push 时立刻红
         # notify.test.mjs 用本地 http server 真发一次 → 「以为在推、其实从没发出去」不会漏过
         # net.test.mjs 用不回包的本地 server 验超时真的会掐断 → 上游挂死把请求拖到 30s 会有人管
-        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs worker/test/net.test.mjs worker/test/sw-queue.test.mjs worker/test/regress.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
+        run: node --test worker/test/unit.test.mjs worker/test/predict.test.mjs worker/test/coldness.test.mjs worker/test/review.test.mjs worker/test/verify-batch.test.mjs worker/test/ui-render.test.mjs worker/test/net.test.mjs worker/test/sw-queue.test.mjs worker/test/regress.test.mjs worker/test/small-route.test.mjs scripts/randomness/stats.test.mjs scripts/notify.test.mjs
       - name: 冷门度系数对账（线上常量 ↔ 拟合产物 ↔ 站内回看，离线快检）
         # 月度 ssq-fit 要联网重拟合（分钟级）；push 时只做三份已提交产物的一致性断言（毫秒级）。
         # 抓「手改 coldness.js 没重跑拟合」「回看数据被掏空」——单测不会红，但站上系数来历不明。
@@ -111,6 +111,7 @@ jobs:
         if: env.DEPLOY_ENABLED == '1'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
+          EXPECT_VERSION: 0.15.0
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then
@@ -119,18 +120,28 @@ jobs:
           fi
           # 边缘节点收敛是异步的：实测 /health 已是新版本但 /api/audit 仍 404（另一 PoP 还在跑旧代码），
           # 所以两个端点都放进同一重试循环，任一未就绪就等下一轮，而不是 health 一绿就立刻判死。
+          #
+          # 【必须校验版本】：只断言 HTTP 200 时，旧代码也照样 200 —— v0.15.0 那次部署日志里
+          # /health 返回的就是 0.14.0（旧边缘节点），门禁却当场判过。等于「以为在推、其实没推上去」
+          # 正好是这个门禁要防的东西，却因为不比对内容而漏了。EXPECT_VERSION 与 wrangler.toml 的
+          # VERSION 同步维护；改版本号时两处一起改。
           for i in 1 2 3 4 5 6; do
             code=$(curl -sS -m 20 -o /tmp/health.json -w "%{http_code}" "$WORKER_URL/health" || true)
             acode=$(curl -sS -m 20 -o /tmp/audit.json -w "%{http_code}" "$WORKER_URL/api/audit" || true)
             if [ "$code" = "200" ] && [ "$acode" = "200" ]; then
-              cat /tmp/health.json
-              echo "部署后 /health 200 且 /api/audit 200（attempt $i）"
-              exit 0
+              got=$(node -e 'process.stdout.write(String(require("/tmp/health.json").version || ""))')
+              if [ "$got" = "$EXPECT_VERSION" ]; then
+                cat /tmp/health.json
+                echo "部署后 /health 200（version=$EXPECT_VERSION）且 /api/audit 200（attempt $i）"
+                exit 0
+              fi
+              echo "attempt $i：/health=200 但 version=$got（期望 $EXPECT_VERSION）——仍是旧代码，继续等收敛"
+            else
+              echo "attempt $i：/health=$code /api/audit=$acode，重试…"
             fi
-            echo "attempt $i：/health=$code /api/audit=$acode，重试…"
             sleep 5
           done
-          echo "::error::部署后检查未收敛：/health=$code /api/audit=$acode"
+          echo "::error::部署后检查未收敛或版本不符：期望 $EXPECT_VERSION"
           cat /tmp/health.json || true
           cat /tmp/audit.json || true
           exit 1
@@ -170,7 +181,13 @@ jobs:
           check ssq-latest    /api/ssq/latest    "j.code && (j.red || j.front || j.main)"
           check dlt-predict   /api/dlt/predict   "j.kind === 'dlt' && Array.isArray(j.picks) && j.picks.length > 0"
           check review        /api/review        "Array.isArray(j.rows) && j.meta && typeof j.meta.total === 'number'"
-          echo "线上冒烟 5 端点全部通过（复盘闭环健康门禁见 review job，此处只验响应形状）"
+          # 小彩种的 latest/history 走 smallRoute（与 ssq/dlt 不同的处理器）。v0.15.0 那次
+          # /kill /dan 加门槛时把 if 写成独立 if，latest/history 设好的 res 被末尾的 else（验奖）覆盖，
+          # 而冒烟只查 /api/ssq/latest（走 ssqRoute）所以完全没发现。
+          # 这里同时验「返回期号本身」与「history 仍是数组」——降级路径上曾把数组摊成 {"0":…} 对象。
+          check qxc-latest    /api/qxc/latest    "j.code && Array.isArray(j.digits) && j.digits.length === 7"
+          check fc3d-history  "/api/fc3d/history?limit=5" "Array.isArray(j) && j.length > 0 && j[0].code"
+          echo "线上冒烟 7 端点全部通过（复盘闭环健康门禁见 review job，此处只验响应形状）"
 
   review:
     name: 复盘闭环

@@ -40,10 +40,23 @@
 
 - 新增 `worker/test/regress.test.mjs`（40 项）：收藏鉴权 / mock 落库 / 七星彩号池 / 注数计算器 / 样本门槛 / 跨年期号 / qxc 文案 / 空快照 / 同步三态 / 滚动统计等价 / 点数封顶
 - **补上 CI 漏掉的新测试文件** — `sync.yml` 的 test 步骤是写死文件列表的，不含 `regress.test.mjs`，等于这 40 项在 CI 里从不运行；已加入
-- **171 项全过**（153 worker + 13 统计内核 + 5 推送）；README 徽章 `137 → 171`
+- **173 项全过**（155 worker + 13 统计内核 + 5 推送）；README 徽章 `137 → 173`
+
+### 修掉 v0.15.0 首次部署带出的两个线上回归
+
+首次 push 触发 CI 自动部署后，逐端点核对线上响应时才发现的（都是本轮改动引入或暴露的）：
+
+- **`/api/{fc3d,pl3,pl5,qlc,qxc,kl8}/latest` 与 `/history` 返回验奖响应** — 给 `/kill /dan` 加样本门槛时把 `if (act === "kill" || …)` 写成了独立 `if`，没接成 `else if`，于是自成一条链：`latest`/`history` 在前面设好的 `res` 被末尾的 `else`（验奖）覆盖。线上表现是 `/api/qxc/latest` 返回 `{"hit":false,"note":"期号不存在"}`，预测页头部整块空白。**能溜上线是因为当时没有任何测试碰过 `smallRoute`**，且冒烟只查 `/api/ssq/latest`（走的是 `ssqRoute`）
+- **降级路径把数组摊成对象**（既有 bug，被上面那个测试逼出来）— `smallRoute` 降级时 `json({ ...(await res.json()), degraded: true })`，对象展开把数组变成 `{"0":…}`，于是上游 17500 一挂，`/api/*/history` 与 `/api/*/trend` 的前端拿到的就不是数组（历史页与走势折线空白）。现在数组原样返回，降级痕迹改走 `X-Degraded` 响应头（JSON 数组带不了同级字段；前端实测从未读过 `degraded`）
+
+配套的门禁修复：
+
+- **部署后健康检查改为校验版本号** — 原来只断言 HTTP 200，而旧代码也照样 200：v0.15.0 那次部署日志里 `/health` 返回的就是 `0.14.0`（收敛前的旧边缘节点），门禁却当场判过。这正是该门禁要防的"以为在推、其实没推上去"。现在比对 `/health` 的 `version` 与 `EXPECT_VERSION`（与 `wrangler.toml` 同步维护）
+- **线上冒烟补 2 个端点** — `qxc-latest` / `fc3d-history`，覆盖走 `smallRoute` 的那 6 个彩种，并断言 `history` 仍是数组
+- **新增 `worker/test/small-route.test.mjs`** — 逐个 act 断言"返回的是它自己的形状"（`latest` 不能混进验奖的 `hit`/`note`，`history` 必须是数组），并覆盖降级路径与样本门槛的边界
+
 
 ### 同版本发布的「15 项改进清单」（2026-09-24 起累积，本次一并转正）
-
 按用户给出的 15 项总表顺序推进（任务 1–8 见前序会话记录；本轮完成 9–15）：
 
 - **任务 9 分享图片卡片** — `shareCardLines` / `drawShareCard` / `shareCard`：canvas 导出胆拖/纯推荐布局，免责声明强制入图；Web Share 优先回退下载 PNG

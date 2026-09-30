@@ -167,7 +167,10 @@ async function smallRoute(request, env, url) {
     else if (act === "history") res = json(draws.slice(0, num(url, "limit", 30, 1, 100)), 200, 600);
     // 样本不足门槛：/kill /dan 与 recommendAll 同口径，避免同一页面一半说「样本不足」
     // 一半给出 0~4 期算出的杀号/胆码。analyze/trend 是纯描述统计，不设门槛。
-    if (act === "kill" || act === "dan") {
+    // 必须是 else if 接在上面的 latest/history 之后：写成独立 if 会让本链失配，
+    // latest/history 设好的 res 会被末尾的 else（验奖）覆盖——线上表现为 /api/qxc/latest
+    // 返回 {"hit":false,"note":"期号不存在"}，预测页头部整块空白。
+    else if (act === "kill" || act === "dan") {
       const gate = sampleGate(draws);
       if (gate) res = json({ kind, ...gate, main: [], perPos: [], aux: [], degraded }, 200, 60);
       else res = act === "kill"
@@ -184,7 +187,13 @@ async function smallRoute(request, env, url) {
       return res;
     }
     if (act === "predict") return res; // 带随机性，不缓存、不重写
-    if (degraded) res = json({ ...(await res.json()), degraded: true }, 200, 600);
+    if (degraded) {
+      // 降级标记：对象响应照旧加字段；【数组响应绝不能用 {...body} 展开】——
+      // 那会把数组摊成 {"0":…,"1":…}，/api/*/history 与 /api/*/trend 的前端拿到的就不是数组了
+      // （历史页与走势折线直接空白）。JSON 数组带不了同级字段，改用 X-Degraded 响应头留痕。
+      const body = await res.json();
+      res = Array.isArray(body) ? jsonH(body, 200, 600, { "X-Degraded": "1" }) : json({ ...body, degraded: true }, 200, 600);
+    }
     // 降级响应（上游挂了改读 D1）不写边缘缓存：写进去后上游恢复也要继续吐整段 TTL 的旧数据，
     // 等于把一次故障放大成 TTL 级故障
     if (!degraded) { try { await cache.put(ck, res.clone()); } catch {} }
@@ -492,6 +501,9 @@ async function getCustom(env) {
   return out;
 }
 function json(o, s = 200, cache = 0) { const h = { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }; h["Cache-Control"] = cache ? `public, max-age=${cache}` : "no-store"; return new Response(JSON.stringify(o), { status: s, headers: h }); }
+// 与 json() 同形，额外挂响应头。给「数组响应需要留痕」的场合用：JSON 数组带不了同级的自定义字段
+// （JSON.stringify 只序列化数组的索引），所以降级标记只能走头，否则要么丢标记、要么把数组摊成对象。
+function jsonH(o, s, cache, extra) { const h = { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": cache ? `public, max-age=${cache}` : "no-store", ...extra }; return new Response(JSON.stringify(o), { status: s, headers: h }); }
 // 预检：没有它，跨域调用 POST/DELETE /api/favs 会直接失败
 function cors() {
   return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type,Authorization", "Access-Control-Max-Age": "86400" } });
