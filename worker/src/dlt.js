@@ -2,22 +2,37 @@ import { normNums } from "./small.js";
 import { fetchT, BULK_MS } from "./net.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
 const D500 = (n) => `https://datachart.500.com/dlt/history/newinc/history.php?limit=${n}`;
-export async function fetchDLT(limit = 100) {
-  const r = await fetchT(D500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
-  if (!r.ok) throw new Error("dlt500 http " + r.status);
-  const html = await r.text();
-  const trs = html.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+// 500 大乐透历史页列序：9=奖池、10/11=一等注数/奖金、12/13=二等注数/奖金、14=总投注额、15=日期。
+// 与 ssq.js 的 detailFrom500 同构（在 ssq.js 内定义，此处按大乐透列序直接组装，避免跨文件耦合解析细节）。
+export function parseDLT500(html) {
+  const trs = String(html || "").match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
   const out = [];
+  const num = (v) => { const n = Number(String(v || "").replace(/[,\s]/g, "")); return Number.isFinite(n) && n >= 0 ? n : null; };
   for (const tr of trs) {
     const tds = [...tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1].replace(/<[^>]+>/g, "").trim());
     if (tds.length >= 9 && /^\d{5}$/.test(tds[1] || "")) {
       const front = [2, 3, 4, 5, 6].map(i => parseInt(tds[i], 10)).sort((a, b) => a - b);
       const back = [7, 8].map(i => parseInt(tds[i], 10)).sort((a, b) => a - b);
-      const d = { code: tds[1], front, back, date: "", src: "500" };
+      const d = { code: tds[1], front, back, date: tds.length >= 16 ? (tds[15] || "") : "", src: "500" };
+      if (tds.length >= 15) {
+        const pool = num(tds[9]), sales = num(tds[14]);
+        if (pool !== null || sales !== null || num(tds[10]) !== null) {
+          d.detail = { pool, sales, prizes: [
+            { level: "一等奖", count: num(tds[10]), amount: num(tds[11]) },
+            { level: "二等奖", count: num(tds[12]), amount: num(tds[13]) }
+          ] };
+        }
+      }
       if (validDLT(d)) out.push(normDLT(d));
     }
   }
   return out;
+}
+
+export async function fetchDLT(limit = 100) {
+  const r = await fetchT(D500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
+  if (!r.ok) throw new Error("dlt500 http " + r.status);
+  return parseDLT500(await r.text());
 }
 export function validDLT(d) {
   if (!d || !/^\d{5}$/.test(String(d.code || ""))) return false;
@@ -28,7 +43,9 @@ export function validDLT(d) {
   return true;
 }
 export function normDLT(d) {
-  return { code: String(d.code), front: d.front.map(x => String(x).padStart(2, "0")), back: d.back.map(x => String(x).padStart(2, "0")), date: d.date || "", src: d.src || "" };
+  const o = { code: String(d.code), front: d.front.map(x => String(x).padStart(2, "0")), back: d.back.map(x => String(x).padStart(2, "0")), date: d.date || "", src: d.src || "" };
+  if (d.detail) o.detail = d.detail;
+  return o;
 }
 export function analyzeDLT(draws, win = 30) {
   const s = draws.slice(0, win), ff = {}, bf = {};
