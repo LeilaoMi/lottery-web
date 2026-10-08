@@ -999,6 +999,17 @@ async function buildPicker(id){
       if (id === 'kl8') h += '<div class="row"><span class="muted">玩法</span><select id="pkpickn">' + [1,2,3,4,5,6,7,8,9,10].map(n => '<option value="' + n + '"' + (st.pickN === n ? ' selected' : '') + '>选' + n + '</option>').join('') + '</select></div>';
     }
     h += '<div class="row"><button id="pkadd">加入号码篮</button></div><div id="pkout" class="muted"></div><div id="pkbasket"></div>';
+    if (spec.type === 'pool') {
+      h += '<h4 style="margin:14px 0 4px">缩水过滤</h4><div class="muted">以当前选球盘主区已选号码为候选池（没选则用全池），按形态条件筛组合。过滤只改变覆盖范围，不改变单注中奖概率。</div>' +
+        '<div class="row">' +
+        '<input id="f-summin" placeholder="和值≥" style="width:84px"><input id="f-summax" placeholder="和值≤" style="width:84px">' +
+        '<input id="f-oddmin" placeholder="奇数≥" style="width:84px"><input id="f-oddmax" placeholder="奇数≤" style="width:84px">' +
+        '<input id="f-spanmin" placeholder="跨度≥" style="width:84px"><input id="f-spanmax" placeholder="跨度≤" style="width:84px">' +
+        '<input id="f-exclude" placeholder="排除号 如 03,18" style="width:170px"></div>' +
+        '<div class="row"><button id="fgo">开始缩水</button><button id="fadd" style="display:none">结果全部加入号码篮</button></div>' +
+        '<div id="fout" class="muted"></div>' +
+        '<h4 style="margin:14px 0 4px">走势（近 30 期）</h4><div id="ptrend" class="muted">加载中…</div>';
+    }
     el.innerHTML = h;
     el.querySelectorAll('button[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; buildPicker(id); });
     el.querySelectorAll('button[data-tg]').forEach(b => b.onclick = () => { st.target = b.dataset.tg; buildPicker(id); });
@@ -1040,6 +1051,58 @@ async function buildPicker(id){
       });
     };
     renderBasket();
+    if (spec.type === 'pool') {
+      // 走势格子图：命中画红球，未命中显示当期该号遗漏；横向可滚动（快乐8 80 列）
+      api('/api/trend?kind=' + id + '&limit=30').then(tr => {
+        const tEl = $('#ptrend'); if (!tEl) return;
+        const rows = (tr.rows || []).slice().reverse(); // 最新在上
+        if (!rows.length) { tEl.textContent = '暂无走势数据'; return; }
+        const nums = Object.keys(rows[0].miss || {}).sort();
+        let th = '<div style="overflow-x:auto"><table><tr><th>期号</th>' + nums.map(n => '<th>' + n + '</th>').join('') + '</tr>';
+        for (const row of rows) {
+          const hit = new Set(row.main || []);
+          th += '<tr><td>' + esc(row.code) + '</td>' + nums.map(n => hit.has(n)
+            ? '<td><span class="ball" style="min-width:22px;height:22px;line-height:22px;font-size:11px">' + n + '</span></td>'
+            : '<td style="color:#bbb;font-size:10px">' + (row.miss ? row.miss[n] : '') + '</td>').join('') + '</tr>';
+        }
+        tEl.innerHTML = th + '</table></div>';
+      }).catch(e => { const tEl = $('#ptrend'); if (tEl) tEl.textContent = '走势加载失败：' + e.message; });
+      let lastFilter = null;
+      $('#fgo').onclick = async () => {
+        try {
+          const gv = (fid) => { const v = $(fid).value.trim(); return v === '' ? null : Number(v); };
+          const ex = $('#f-exclude').value.split(/[,\s]+/).filter(Boolean).map(x => pad2(Number(x)));
+          const body = { kind: id, pool: [...st.main], dan: [...st.dan], exclude: ex, pick: id === 'kl8' ? st.pickN : undefined, conditions: {
+            sumMin: gv('#f-summin'), sumMax: gv('#f-summax'), oddMin: gv('#f-oddmin'), oddMax: gv('#f-oddmax'),
+            spanMin: gv('#f-spanmin'), spanMax: gv('#f-spanmax') } };
+          const r = await apiPost('/api/filter', body);
+          lastFilter = r;
+          $('#fout').innerHTML = '候选池 ' + r.poolSize + ' 个号，枚举空间 ' + r.space + ' 注，符合条件 <b>' + r.total + ' 注</b>' +
+            (r.truncated ? '（仅显示前 ' + r.combos.length + ' 注）' : '') +
+            '<div style="max-height:180px;overflow:auto;margin-top:4px">' + r.combos.map(c => '<div>' + c.join(' ') + '</div>').join('') + '</div>';
+          $('#fadd').style.display = r.total > 0 && r.total <= 500 ? '' : 'none';
+        } catch (e) { errBox(e, $('#fout')); }
+      };
+      $('#fadd').onclick = async () => {
+        if (!lastFilter) return;
+        try {
+          // 入篮仍以单注主区组合计价：副区取当前已选（不足则按每注 1 个默认不生成，避免误标价）
+          const all = basketGet();
+          for (const c of lastFilter.combos) {
+            let text = c.join(' '), q = '';
+            if (id === 'ssq') { text += ' + ' + ([...st.aux].sort()[0] || '01'); q = 'red=' + c.length + '&blue=1'; }
+            else if (id === 'dlt') { const b = [...st.aux].sort().slice(0, 2); text += ' + ' + (b.join(' ') || '01 02'); q = 'front=' + c.length + '&back=2'; }
+            else if (id === 'qlc') { q = 'main=' + c.length; }
+            else if (id === 'kl8') { q = 'pick=' + Math.min(st.pickN, c.length) + '&nums=' + c.length; text = c.join(' '); }
+            else q = 'red=' + c.length;
+            const r = await api('/api/calc?kind=' + id + '&' + q);
+            all.push({ kind: id, text, bets: r.bets, amount: r.amount });
+          }
+          basketSet(all); renderBasket();
+          $('#fout').innerHTML = '已把 ' + lastFilter.combos.length + ' 注加入号码篮（副区取当前选择或默认，入篮后请在篮内逐注核对）。';
+        } catch (e) { errBox(e, $('#fout')); }
+      };
+    }
     $('#pkadd').onclick = async () => {
       try {
         let text = '', q = '';
