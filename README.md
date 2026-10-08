@@ -6,10 +6,10 @@
 
 **统计诚实性优先：每个「有效」结论都要有可复现的检验背书**
 
-![version](https://img.shields.io/badge/version-0.15.6-blue)
+![version](https://img.shields.io/badge/version-0.16.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
-![unit%20tests](https://img.shields.io/badge/unit%20tests-209-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-213-brightgreen)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
 Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
@@ -58,6 +58,7 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
   未擅自接通，是因为它会改变实际下注号码，而权重本身并无统计依据
 - **定胆**：频率 + 遗漏回归 + 邻号 + 重号
 - **胆拖投注单**：一键生成注数金额，可保存收藏 / 复制 / 导出 TXT
+- **选号工作台（「选号」页）**：8 彩种统一选球盘，每个球下标注当前遗漏（`/api/miss`，近 100 期口径与分析页一致）；支持普通/胆拖点选、机选、号码篮（本地暂存多注，逐注经 `/api/calc` 核价），篮子里的注可一键存进收藏。遗漏只是历史描述，页面明示不预示下期
 - **批量验奖 `POST /api/verify-batch`**：一沓票贴进来一次验多期（≤200 注 × ≤10 期）。奖级判定**复用**与单注验奖、
   中奖计算器同一套函数——两套验奖规则迟早分叉，分叉的结果就是「工具说中了、彩票站说没中」。
   金额只给本站校验过的固定奖级：双色球三~六等、大乐透固定奖（按开奖日期选择规则版本，2019-02-20 第19019期为界）；浮动奖返回 `null` 并说明原因，**不猜数、更不显示成 0**
@@ -194,7 +195,7 @@ flowchart LR
 | 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
 | 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
 | 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 209 项离线单元测试（191 worker + 13 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约、SW 离线队列、D1 迁移版本化、小彩种路由分派、交叉校验对拍、分析页数据契约（8 个彩种字段齐全，防止数字型彩种渲染成空白）、页面渲染契约（8 个彩种的号码/统计文字真的渲染得出来）、前端页面 JS 语法门禁与图表实例登记表、本轮缺陷回归锁）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
+| 测试 | `node --test` | 213 项离线单元测试（195 worker + 13 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约、SW 离线队列、D1 迁移版本化、小彩种路由分派、交叉校验对拍、分析页数据契约（8 个彩种字段齐全，防止数字型彩种渲染成空白）、页面渲染契约（8 个彩种的号码/统计文字真的渲染得出来）、前端页面 JS 语法门禁与图表实例登记表、本轮缺陷回归锁）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
 
 ---
 
@@ -285,7 +286,7 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（209 项，零依赖，离线可跑）
+npm test             # 单元测试（213 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
@@ -363,6 +364,7 @@ node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与
 | `/api/coldness/backtest` | — | 冷门度样本外回看（烘焙的观测 vs 预测五分位），D1 无历史注数列故由拟合脚本烘焙进 Worker |
 | `/api/records` | — | 破纪录遗漏预警（当前遗漏 vs 样本内历史最大遗漏） |
 | `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划（`chase>1` 时附 `plan[].date` / `chase.dates` 开奖日历投影 + 免责说明） |
+| `/api/miss` | `kind=`, `win=5..200` | 当前遗漏：每个号码的当前/平均/最大遗漏与窗口频次（号码池型给 `main`/`aux`，数字型给 `perPos[]`）；选号工作台选球盘的数据源，纯历史描述 |
 | `/api/prize` | `kind=` + 命中参数（大乐透可选 `date=YYYY-MM-DD` 选规则版本） | 奖级与固定奖金额 |
 | `/api/rotation` | `n=&pick=&hit=` | 旋转矩阵（覆盖设计，注数约理论下界 1.5 倍） |
 | `/api/favs` | GET/POST/DELETE | 收藏（需鉴权） |
@@ -422,6 +424,7 @@ lottery-web/
 │   │   ├── dlt.js          # 大乐透取数与验奖
 │   │   ├── small.js        # 6 小彩种解析 / 奖级 / 旋转矩阵
 │   │   ├── calc.js         # 注数 / 金额 / 追号 / 快乐8 奖金表
+│   │   ├── miss.js         # 当前遗漏（复用 predict.freqStats 口径，供选号工作台）
 │   │   ├── db.js           # D1 读写
 │   │   ├── net.js          # 带超时的上游 fetch（宁可降级，也不把请求拖死）
 │   │   └── ui.js           # ⚠️ 构建产物（不进仓库，先 build:ui）
@@ -441,6 +444,7 @@ lottery-web/
 │   │   ├── net.test.mjs    # 上游超时：用不回包的本地 server 验超时真的生效
 │   │   ├── sw-queue.test.mjs # Service Worker 离线队列
 │   │   ├── readme.test.mjs  # README 事实核对：测试数/版本/目录结构必须与仓库一致（防文档悄悄腐烂）
+│   │   ├── miss.test.mjs   # 当前遗漏：号码池/数字型逐位口径与空样本
 │   │   └── live.network.mjs # 真实数据源连通性（需联网，刻意不叫 *.test.mjs 以免混入离线套件）
 │   ├── wrangler.toml       # 部署模板（database_id 脱敏为 REPLACE_ME，routes 默认注释）
 │   └── wrangler.local.toml # 你自己的配置（.gitignore，不提交）
