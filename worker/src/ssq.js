@@ -6,11 +6,25 @@ const CWL_API = "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDr
 const T500 = (n) => `https://datachart.500.com/ssq/history/newinc/history.php?limit=${n}`;
 const T17500 = "http://data.17500.cn/ssq_asc.txt";
 
-export async function fetch500(limit = 100) {
-  const r = await fetchT(T500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
-  if (!r.ok) throw new Error("500 http " + r.status);
-  const html = await r.text();
-  const trs = html.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+// 500 历史页同一行还带开奖详情（奖池/一二等奖注数与奖金/总投注额）：列序 9=快乐星期天(常空),
+// 10=奖池、11/12=一等注数/奖金、13/14=二等注数/奖金、15=总投注额、16=日期。
+// 解析成纯数字，任一列对不上就整段 detail 缺省——详情缺失只是少显示，号码本身不受影响。
+export function detailFrom500(tds, poolIdx, salesIdx) {
+  const num = (v) => { const n = Number(String(v || "").replace(/[,\s]/g, "")); return Number.isFinite(n) && n >= 0 ? n : null; };
+  const pool = num(tds[poolIdx]), sales = num(tds[salesIdx]);
+  const p1c = num(tds[poolIdx + 1]), p1a = num(tds[poolIdx + 2]), p2c = num(tds[poolIdx + 3]), p2a = num(tds[poolIdx + 4]);
+  if (pool === null && sales === null && p1c === null) return undefined;
+  return {
+    pool, sales,
+    prizes: [
+      { level: "一等奖", count: p1c, amount: p1a },
+      { level: "二等奖", count: p2c, amount: p2a }
+    ]
+  };
+}
+
+export function parse500(html) {
+  const trs = String(html || "").match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
   const out = [];
   for (const tr of trs) {
     const tds = [...tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1].replace(/<[^>]+>/g, "").trim());
@@ -18,10 +32,17 @@ export async function fetch500(limit = 100) {
       const reds = [2, 3, 4, 5, 6, 7].map(i => parseInt(tds[i], 10)).sort((a, b) => a - b);
       const blue = parseInt(tds[8], 10);
       const d = { code: tds[1], red: reds, blue, date: tds[tds.length - 1] || "", src: "500" };
+      if (tds.length >= 16) d.detail = detailFrom500(tds, 10, 15);
       if (valid(d)) out.push(norm(d));
     }
   }
   return out;
+}
+
+export async function fetch500(limit = 100) {
+  const r = await fetchT(T500(limit), { headers: { "User-Agent": UA, "Accept": "text/html" } });
+  if (!r.ok) throw new Error("500 http " + r.status);
+  return parse500(await r.text());
 }
 
 export async function fetchCWL() {
@@ -81,7 +102,9 @@ export function normCode(code) {
   return c;
 }
 export function norm(d) {
-  return { code: normCode(d.code), red: d.red.map(x => String(x).padStart(2, "0")), blue: String(d.blue).padStart(2, "0"), date: d.date || "", src: d.src || "" };
+  const o = { code: normCode(d.code), red: d.red.map(x => String(x).padStart(2, "0")), blue: String(d.blue).padStart(2, "0"), date: d.date || "", src: d.src || "" };
+  if (d.detail) o.detail = d.detail; // 只有 500 源带 detail；cwl/17500 缺省，前端据此显示「—」
+  return o;
 }
 
 const PRIMES = new Set([2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]);
