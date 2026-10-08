@@ -34,6 +34,13 @@ th{background:#fafafa}
 .cal .d.hit{background:#fff1f0;border-color:#e11;color:#a8071a;font-weight:600}
 .cal .d .amt{display:block;color:#c00;font-weight:600}
 .cal .cum{font-size:11px;color:#666;margin-top:2px}
+.pk{display:inline-flex;flex-direction:column;align-items:center;margin:2px;cursor:pointer;vertical-align:top}
+.pk .ball{background:#eef0f4;color:#333}
+.pk .m{font-size:9px;color:#999;line-height:1.2}
+.pk.sel .ball{background:#e11;color:#fff}
+.pk.selA .ball{background:#06c;color:#fff}
+.pk.dan .ball{background:#f5a623;color:#fff}
+.pk.hot .m{color:#e11;font-weight:700}
 </style>
 </head>
 <body>
@@ -44,6 +51,7 @@ th{background:#fafafa}
   <button data-t="d">今日</button>
   <button data-t="a">分析</button>
   <button data-t="h">历史</button>
+  <button data-t="s">选号</button>
   <button data-t="v">验奖·矩阵</button>
   <button data-t="t">工具</button>
   <button data-t="f">收藏</button>
@@ -66,6 +74,7 @@ th{background:#fafafa}
   <div id="d" class="card" style="display:none">加载中…</div>
   <div id="a" class="card" style="display:none"><div id="chart" style="height:300px"></div><div id="stats" class="muted"></div></div>
   <div id="h" class="card" style="display:none"></div>
+  <div id="s" class="card" style="display:none"></div>
   <div id="v" class="card" style="display:none"></div>
   <div id="t" class="card" style="display:none"></div>
   <div id="f" class="card" style="display:none"></div>
@@ -137,7 +146,7 @@ function renderNums(o){
 document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () => {
   document.querySelectorAll('header button[data-t]').forEach(x => x.classList.remove('on'));
   b.classList.add('on');
-  ['d','p','a','h','v','t','f'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
+  ['d','p','a','h','v','t','f','s'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
   // 切页后统一 resize 全部图表实例：分析页与审计页的图是在页面加载时（标签页还 display:none）
   // 就画好的，ECharts 那时量到的是 0 宽，不 resize 就永远画不出来。
   // 原来只写了三个 if（__chart/__chart2/__chart3），分年柱图与审计页三张图一直漏着。
@@ -161,6 +170,7 @@ async function load(){
   loadStale();
   buildVerify(id);
   buildTools(id);
+  buildPicker(id);
 }
 
 // 数据新鲜度保险丝：/api/meta 的 stale 显示 D1 最新一期距今天数，任一彩种 ≥4 天 → 黄条提醒
@@ -931,6 +941,137 @@ const PRIZE_FIELDS = {
   dlt: [['hitMain', '命中前区', 90], ['hitAux', '命中后区', 90]],
   qlc: [['hitMain', '命中基本号', 90], ['hitAux', '中特别号(1/0)', 100]]
 };
+// ---------- 选号工作台：选球盘（带遗漏）/ 机选 / 胆拖 / 号码篮 ----------
+// 遗漏来自 /api/miss（后端按近 100 期算，与分析页同口径）；注数走既有 /api/calc；保存走既有 /api/favs。
+let __specs = null;
+const __pick = {}; // kind -> {mode, target, main:Set, aux:Set, dan:Set, danAux:Set, perPos:[Set], pickN}
+function pickState(id){
+  if (!__pick[id]) __pick[id] = { mode: 'normal', target: 'dan', main: new Set(), aux: new Set(), dan: new Set(), danAux: new Set(), perPos: [], pickN: 10 };
+  return __pick[id];
+}
+function basketGet(){ try { return JSON.parse(localStorage.getItem('lw_basket') || '[]'); } catch (e) { return []; } }
+function basketSet(b){ localStorage.setItem('lw_basket', JSON.stringify(b)); }
+async function buildPicker(id){
+  const el = $('#s'); if (!el) return;
+  const st = pickState(id);
+  el.innerHTML = '<div class="muted">选号工作台加载中…</div>';
+  try {
+    if (!__specs) __specs = await api('/api/specs');
+    const spec = __specs[id];
+    const miss = await api('/api/miss?kind=' + id);
+    const missMap = (rows) => { const m = {}; (rows || []).forEach(r => m[r.num] = r); return m; };
+    let h = '<h3 style="margin:0 0 6px">选号 · ' + esc(spec.name) + '</h3>' +
+      '<div class="muted">球下小字为当前遗漏（距最近一次出现期数，近 ' + esc(miss.count) + ' 期统计，最新 ' + esc(miss.latest) + ' 期）。遗漏只是历史描述，不预示下期。</div>';
+    h += '<div class="row"><button data-m="normal" class="' + (st.mode === 'normal' ? 'on' : '') + '">普通</button>' +
+      '<button data-m="dan" class="' + (st.mode === 'dan' ? 'on' : '') + '">胆拖</button>' +
+      (st.mode === 'dan' ? '<button data-tg="dan" class="' + (st.target === 'dan' ? 'on' : '') + '">点选=胆</button><button data-tg="tuo" class="' + (st.target === 'tuo' ? 'on' : '') + '">点选=拖</button>' : '') +
+      '<button id="pkrand">机选一注</button><button id="pkclear">清空</button></div>';
+    const cell = (zone, num, rows) => {
+      const r = rows[num];
+      let cls = 'pk';
+      if (zone === 'main') { if (st.dan.has(num)) cls += ' dan'; else if (st.main.has(num)) cls += ' sel'; }
+      if (zone === 'aux') { if (st.danAux.has(num)) cls += ' dan'; else if (st.aux.has(num)) cls += ' selA'; }
+      if (r && r.cur >= 10) cls += ' hot';
+      return '<span class="' + cls + '" data-z="' + zone + '" data-n="' + num + '"><span class="ball">' + num + '</span><span class="m">' + (r ? r.cur : '–') + '</span></span>';
+    };
+    if (spec.type === 'digit') {
+      if (!st.perPos.length) st.perPos = Array.from({ length: spec.digits }, () => new Set());
+      for (let p = 0; p < spec.digits; p++) {
+        const rows = missMap(miss.perPos && miss.perPos[p]);
+        const last = id === 'qxc' && p === 6 ? 14 : 9;
+        h += '<div class="muted" style="margin-top:8px">第 ' + (p + 1) + ' 位</div><div>';
+        for (let n = 0; n <= last; n++) {
+          const num = String(n);
+          const sel = st.perPos[p].has(num);
+          const r = rows[num];
+          h += '<span class="pk' + (sel ? ' sel' : '') + (r && r.cur >= 10 ? ' hot' : '') + '" data-p="' + p + '" data-n="' + num + '"><span class="ball">' + num + '</span><span class="m">' + (r ? r.cur : '–') + '</span></span>';
+        }
+        h += '</div>';
+      }
+    } else {
+      const zone = (zname, zspec, rows) => {
+        let s = '<div class="muted" style="margin-top:8px">' + esc(zspec.label) + '（选 ' + zspec.pick + ' 个）</div><div>';
+        for (let n = zspec.min; n <= zspec.max; n++) s += cell(zname, pad2(n), rows);
+        return s + '</div>';
+      };
+      h += zone('main', spec.main, missMap(miss.main));
+      if (spec.aux) h += zone('aux', spec.aux, missMap(miss.aux));
+      if (id === 'kl8') h += '<div class="row"><span class="muted">玩法</span><select id="pkpickn">' + [1,2,3,4,5,6,7,8,9,10].map(n => '<option value="' + n + '"' + (st.pickN === n ? ' selected' : '') + '>选' + n + '</option>').join('') + '</select></div>';
+    }
+    h += '<div class="row"><button id="pkadd">加入号码篮</button></div><div id="pkout" class="muted"></div><div id="pkbasket"></div>';
+    el.innerHTML = h;
+    el.querySelectorAll('button[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; buildPicker(id); });
+    el.querySelectorAll('button[data-tg]').forEach(b => b.onclick = () => { st.target = b.dataset.tg; buildPicker(id); });
+    const pkn = $('#pkpickn'); if (pkn) pkn.onchange = () => { st.pickN = Number(pkn.value); };
+    el.querySelectorAll('.pk').forEach(c => c.onclick = () => {
+      const n = c.dataset.n;
+      if (spec.type === 'digit') { const s = st.perPos[Number(c.dataset.p)]; s.has(n) ? s.delete(n) : s.add(n); }
+      else if (c.dataset.z === 'main') {
+        if (st.mode === 'dan' && id !== 'kl8') { const s = st.target === 'dan' ? st.dan : st.main; const o = st.target === 'dan' ? st.main : st.dan; o.delete(n); s.has(n) ? s.delete(n) : s.add(n); }
+        else { st.main.has(n) ? st.main.delete(n) : st.main.add(n); }
+      } else {
+        if (st.mode === 'dan' && (id === 'ssq' || id === 'dlt')) { const s = st.target === 'dan' ? st.danAux : st.aux; const o = st.target === 'dan' ? st.aux : st.danAux; o.delete(n); s.has(n) ? s.delete(n) : s.add(n); }
+        else { st.aux.has(n) ? st.aux.delete(n) : st.aux.add(n); }
+      }
+      buildPicker(id);
+    });
+    $('#pkclear').onclick = () => { st.main.clear(); st.aux.clear(); st.dan.clear(); st.danAux.clear(); st.perPos.forEach(s => s.clear()); buildPicker(id); };
+    $('#pkrand').onclick = () => {
+      const draw = (min, max, k, notIn) => { const out = new Set(); while (out.size < k) { const v = pad2(min + Math.floor(Math.random() * (max - min + 1))); if (notIn && notIn.has(v)) continue; out.add(v); } return out; };
+      st.main.clear(); st.aux.clear(); st.dan.clear(); st.danAux.clear(); st.perPos.forEach(s => s.clear());
+      if (spec.type === 'digit') st.perPos.forEach((s, p) => s.add(String(Math.floor(Math.random() * ((id === 'qxc' && p === 6) ? 15 : 10)))));
+      else if (id === 'kl8') { const out = new Set(); while (out.size < st.pickN) out.add(pad2(1 + Math.floor(Math.random() * 80))); st.main = out; }
+      else { st.main = draw(spec.main.min, spec.main.max, spec.main.pick); if (spec.aux) st.aux = draw(spec.aux.min, spec.aux.max, spec.aux.pick, id === 'qlc' ? st.main : null); }
+      buildPicker(id);
+    };
+    const renderBasket = () => {
+      const b = basketGet().filter(x => x.kind === id);
+      $('#pkbasket').innerHTML = b.length ? '<h4 style="margin:10px 0 4px">号码篮</h4>' + b.map((x, i) =>
+        '<div class="kv"><span>' + esc(x.text) + '</span><span>' + esc(x.bets) + ' 注 · ' + esc(x.amount) + ' 元 ' +
+        '<button data-save="' + i + '">收藏</button> <button data-del="' + i + '">删</button></span></div>').join('') : '';
+      $('#pkbasket').querySelectorAll('button[data-del]').forEach(btn => btn.onclick = () => {
+        const all = basketGet(); const mine = all.map((x, i) => [x, i]).filter(([x]) => x.kind === id);
+        all.splice(mine[Number(btn.dataset.del)][1], 1); basketSet(all); renderBasket();
+      });
+      $('#pkbasket').querySelectorAll('button[data-save]').forEach(btn => btn.onclick = async () => {
+        const mine = basketGet().filter(x => x.kind === id); const item = mine[Number(btn.dataset.save)];
+        try { await apiPost('/api/favs', { kind: id, numbers: item.text, note: '选号篮' }); btn.textContent = '已收藏'; }
+        catch (e) { errBox(e, $('#pkout')); }
+      });
+    };
+    renderBasket();
+    $('#pkadd').onclick = async () => {
+      try {
+        let text = '', q = '';
+        if (spec.type === 'digit') {
+          if (st.perPos.some(s => !s.size)) throw new Error('每一位至少选 1 个号');
+          text = st.perPos.map(s => [...s].sort().join('')).join(' ');
+          q = 'pos=' + st.perPos.map(s => s.size).join(',');
+        } else if (id === 'kl8') {
+          if (st.main.size < st.pickN) throw new Error('至少选 ' + st.pickN + ' 个号');
+          text = [...st.main].sort().join(' ');
+          q = 'pick=' + st.pickN + '&nums=' + st.main.size;
+        } else if (st.mode === 'dan' && st.dan.size) {
+          text = '胆[' + [...st.dan].sort().join(' ') + '] 拖[' + [...st.main].sort().join(' ') + ']' + (st.aux.size || st.danAux.size ? ' + ' + [...st.danAux].sort().join(' ') + [...st.aux].sort().join(' ') : '');
+          if (id === 'ssq') q = 'dan=' + st.dan.size + '&tuo=' + st.main.size + '&blue=' + (st.aux.size + st.danAux.size || 1);
+          else if (id === 'dlt') q = 'fdan=' + st.dan.size + '&ftuo=' + st.main.size + '&bdan=' + st.danAux.size + '&btuo=' + st.aux.size;
+          else q = 'dan=' + st.dan.size + '&tuo=' + st.main.size;
+        } else {
+          if (st.main.size < spec.main.pick) throw new Error(spec.main.label + '至少选 ' + spec.main.pick + ' 个');
+          text = [...st.main].sort().join(' ') + (spec.aux ? ' + ' + [...st.aux].sort().join(' ') : '');
+          if (id === 'ssq') q = 'red=' + st.main.size + '&blue=' + Math.max(1, st.aux.size);
+          else if (id === 'dlt') q = 'front=' + st.main.size + '&back=' + Math.max(1, st.aux.size);
+          else if (id === 'qlc') q = 'main=' + st.main.size;
+          else q = 'red=' + st.main.size;
+        }
+        const r = await api('/api/calc?kind=' + id + '&' + q);
+        const all = basketGet(); all.push({ kind: id, text, bets: r.bets, amount: r.amount });
+        basketSet(all); renderBasket();
+        $('#pkout').textContent = '已加入：' + text + '（' + r.bets + ' 注 · ' + r.amount + ' 元）';
+      } catch (e) { errBox(e, $('#pkout')); }
+    };
+  } catch (e) { errBox(e, el); }
+}
 function buildTools(id){
   // 数字型的 pos 有两种口径，placeholder 必须写清：直选=各位可选个数（长度=位数，只填一个=每位相同），
 // 组选=选号个数。位数对不上时后端会返回 400 并在结果区说明，不再静默按「全 1」算
