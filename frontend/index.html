@@ -861,9 +861,20 @@ async function loadHoldout(id){
 async function loadHistory(id){
   try {
     const his = await api('/api/' + id + '/history?limit=30');
-    let h = '<h3 style="margin:0 0 8px">历史 30 期</h3><table><tr><th>期号</th><th>号码</th><th>日期</th></tr>';
-    for (const d of his) h += '<tr><td>' + esc(d.code) + '</td><td>' + renderNums(d) + '</td><td>' + esc(d.date || '') + '</td></tr>';
-    $('#h').innerHTML = h + '</table>';
+    const fmt = (v) => v == null ? '—' : Number(v).toLocaleString('zh-CN');
+    const hasDetail = his.some(d => d.detail);
+    let h = '<h3 style="margin:0 0 8px">历史 30 期</h3><table><tr><th>期号</th><th>号码</th><th>日期</th>' +
+      (hasDetail ? '<th>奖池(元)</th><th>销量(元)</th><th>一等奖</th><th>二等奖</th>' : '') + '</tr>';
+    for (const d of his) {
+      h += '<tr><td>' + esc(d.code) + '</td><td>' + renderNums(d) + '</td><td>' + esc(d.date || '') + '</td>';
+      if (hasDetail) {
+        const dt = d.detail, p = (dt && dt.prizes) || [];
+        const pz = (x) => x ? fmt(x.count) + ' 注 · ' + fmt(x.amount) + ' 元' : '—';
+        h += '<td>' + (dt ? fmt(dt.pool) : '—') + '</td><td>' + (dt ? fmt(dt.sales) : '—') + '</td><td>' + pz(p[0]) + '</td><td>' + pz(p[1]) + '</td>';
+      }
+      h += '</tr>';
+    }
+    $('#h').innerHTML = h + '</table>' + (hasDetail ? '<div class="muted">奖池/销量/奖级来自 500 开奖页同行字段；走其他源（cwl/17500/D1 缓存）时该期无详情，显示「—」，不编造。</div>' : '');
   } catch (e) { errBox(e, $('#h')); }
 }
 
