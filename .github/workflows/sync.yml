@@ -121,7 +121,7 @@ jobs:
         if: env.DEPLOY_ENABLED == '1'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          EXPECT_VERSION: 0.16.0
+          EXPECT_VERSION: 0.17.0
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then
@@ -272,7 +272,7 @@ jobs:
         # 这类行会静默把 sync_health 染绿，且没有任何迹象表明它来自旧代码。
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          EXPECT_VERSION: 0.16.0
+          EXPECT_VERSION: 0.17.0
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then
