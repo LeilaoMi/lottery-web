@@ -4,6 +4,7 @@ import { fetchSmall, prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC, rotation }
 import { verifyBatch } from "./verify-batch.js";
 import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf, posPool, digitBaseline, sampleGate, DISCLAIMER } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize, chaseDrawDates } from "./calc.js";
+import { missStats } from "./miss.js";
 import { coldness, COLD_KINDS } from "./coldness.js";
 import { COLDBT } from "./coldness-backtest.js";
 import { fetchT } from "./net.js";
@@ -29,7 +30,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.15.6", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.16.0", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -39,6 +40,7 @@ const API_ROUTES = {
   },
   "/api/specs": () => json(Object.fromEntries(Object.entries(SPECS).map(([k, v]) => [k, { name: v.name, type: v.type, digits: v.digits || null, main: v.main || null, aux: v.aux || null, suggest: v.suggest }])), 200, 3600),
   "/api/calc": (rq, env, ctx, url) => calcRoute(url),
+  "/api/miss": (rq, env, ctx, url) => missRoute(env, url),
   "/api/coldness": (rq, env, ctx, url) => {
     // 纯函数、不取数、与期号无关 → 可长缓存；参数非法时 coldness() 返回 { error } 转 400
     const kind = (url.searchParams.get("kind") || "ssq").trim();
@@ -400,6 +402,15 @@ async function stashCache(ck, res, ttl) {
     try { await caches.default.put(new Request(ck, { method: "GET" }), res.clone()); } catch {}
     res.headers.set("x-cache", "MISS");
   } catch {}
+}
+// 当前遗漏（选号工作台的选球盘数据源）：纯描述统计，口径与 predict.freqStats 一致
+async function missRoute(env, url) {
+  const kind = (url.searchParams.get("kind") || "").trim();
+  if (!SPECS[kind]) return json({ error: "unknown kind", kinds: Object.keys(SPECS) }, 400);
+  try {
+    const draws = await drawsOf(env, kind, 100);
+    return json({ ...missStats(kind, draws, num(url, "win", 100, 5, 200)), degraded: !!draws._degraded }, 200, 300);
+  } catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
 // 注数/金额/追号计算器
 function calcRoute(url) {
