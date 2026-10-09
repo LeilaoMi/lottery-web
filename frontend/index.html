@@ -10,44 +10,50 @@
 <style>
 body{font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;margin:0;background:#f6f7fb;color:#111}
 header{position:sticky;top:0;z-index:9;background:#fff;padding:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-header b{margin-right:4px}
-select,button,input{padding:8px 10px;border:1px solid #ddd;border-radius:8px;background:#fff;font-size:14px}
+header h1{font-size:16px;margin:0 4px 0 0;font-weight:700}
+select,button,input,textarea{padding:8px 10px;border:1px solid #ddd;border-radius:8px;background:#fff;font-size:14px}
 button{cursor:pointer}
 button.on{background:#111;color:#fff;border-color:#111}
 .wrap{max-width:980px;margin:auto;padding:12px}
 .card{background:#fff;border-radius:12px;padding:14px;margin:10px 0;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-.ball{display:inline-block;min-width:28px;height:28px;line-height:28px;text-align:center;border-radius:50%;background:#e11;color:#fff;margin:2px;font-size:13px}
+details.card summary{cursor:pointer;font-weight:600}
+.ball{display:inline-block;min-width:28px;height:28px;line-height:28px;text-align:center;border-radius:50%;background:#d60000;color:#fff;margin:2px;font-size:13px;font-variant-numeric:tabular-nums}
 .ball.b{background:#06c}
 .muted{color:#666;font-size:12px;line-height:1.7}
-table{border-collapse:collapse;width:100%;font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
 td,th{border:1px solid #eee;padding:4px;text-align:center}
 th{background:#fafafa}
+.tblwrap{overflow-x:auto}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
-.kv{display:flex;justify-content:space-between;border-bottom:1px dashed #eee;padding:3px 0;font-size:13px;align-items:center}
+.kv{display:flex;justify-content:space-between;border-bottom:1px dashed #eee;padding:3px 0;font-size:13px;align-items:center;font-variant-numeric:tabular-nums}
 .warn{background:#fff7e6;border:1px solid #ffd591;border-radius:8px;padding:8px;font-size:12px;color:#874d00;margin:10px 0}
 .err{background:#fff1f0;border:1px solid #ffa39e;border-radius:8px;padding:8px;font-size:13px;color:#a8071a;white-space:pre-wrap;word-break:break-all;margin:8px 0}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
-.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin:6px 0}
-.cal .wd{text-align:center;font-size:11px;color:#888;padding:2px 0}
-.cal .d{min-height:52px;border:1px solid #eee;border-radius:6px;padding:3px;font-size:11px;background:#fafafa;line-height:1.35}
-.cal .d.out{background:#f3f3f3;color:#bbb}
+.fld{display:inline-flex;gap:4px;align-items:center;font-size:12px;color:#666}
+.fld input{color:#111}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin:6px 0;font-variant-numeric:tabular-nums}
+.cal .wd{text-align:center;font-size:12px;color:#595959;padding:2px 0}
+.cal .d{min-height:52px;border:1px solid #eee;border-radius:6px;padding:3px;font-size:12px;background:#fafafa;line-height:1.35}
+.cal .d.out{background:#f3f3f3;color:#595959}
 .cal .d.hit{background:#fff1f0;border-color:#e11;color:#a8071a;font-weight:600}
 .cal .d .amt{display:block;color:#c00;font-weight:600}
-.cal .cum{font-size:11px;color:#666;margin-top:2px}
-.pk{display:inline-flex;flex-direction:column;align-items:center;margin:2px;cursor:pointer;vertical-align:top}
+.cal .cum{font-size:12px;color:#666;margin-top:2px}
+.pk{display:inline-flex;flex-direction:column;align-items:center;margin:2px;cursor:pointer;vertical-align:top;background:none;border:none;padding:0;font:inherit;color:inherit}
 .pk .ball{background:#eef0f4;color:#333}
-.pk .m{font-size:9px;color:#999;line-height:1.2}
-.pk.sel .ball{background:#e11;color:#fff}
+.pk .m{font-size:12px;color:#595959;line-height:1.2}
+.pk.sel .ball{background:#d60000;color:#fff}
 .pk.selA .ball{background:#06c;color:#fff}
-.pk.dan .ball{background:#f5a623;color:#fff}
-.pk.hot .m{color:#e11;font-weight:700}
+.pk.dan .ball{background:#f5a623;color:#111}
+.pk[aria-pressed="true"] .ball{outline:2px solid #111;outline-offset:1px}
+.pk.hot .m{color:#c00;font-weight:700}
 </style>
 </head>
 <body>
 <header>
-  <b>自用彩票</b>
+  <h1>自用彩票</h1>
+  <label class="fld" for="lot">彩种</label>
   <select id="lot"></select>
-  <button class="on" data-t="p">预测</button>
+  <button class="on" data-t="p" aria-current="page">预测</button>
   <button data-t="d">今日</button>
   <button data-t="a">分析</button>
   <button data-t="h">历史</button>
@@ -57,16 +63,16 @@ th{background:#fafafa}
   <button data-t="f">收藏</button>
 </header>
 
-<div class="wrap">
-  <div class="card" id="cfg">
+<main class="wrap">
+  <details class="card" id="cfg">
+    <summary>Worker 配置（地址 / Token，点此展开）</summary>
     <div class="row">
-      <span class="muted">Worker 地址</span>
-      <input id="api" style="flex:1;min-width:220px" placeholder="https://lottery-web.你的子域.workers.dev">
-      <input id="tok" style="width:170px" placeholder="API_TOKEN（可选）">
+      <label class="fld" for="api">Worker 地址 <input id="api" style="flex:1;min-width:220px" placeholder="https://cp.example.com"></label>
+      <label class="fld" for="tok">API_TOKEN <input id="tok" style="width:170px" placeholder="可选，未启用可留空"></label>
       <button id="save">保存并加载</button>
     </div>
-    <div class="muted" id="st">未加载</div>
-  </div>
+    <div class="muted" id="st" role="status">未加载</div>
+  </details>
 
   <div class="warn">随机游戏，统计仅供娱乐，不保证中奖。数据来自 500 / cwl / 17500 多源交叉校验。</div>
 
@@ -78,7 +84,7 @@ th{background:#fafafa}
   <div id="v" class="card" style="display:none"></div>
   <div id="t" class="card" style="display:none"></div>
   <div id="f" class="card" style="display:none"></div>
-</div>
+</main>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -98,6 +104,7 @@ LOTS.forEach(l => { const o = document.createElement('option'); o.value = l.id; 
 
 $('#api').value = localStorage.getItem('lw_api') || (location.origin.indexOf('http') === 0 ? location.origin : '');
 $('#tok').value = localStorage.getItem('lw_tok') || '';
+if (!$('#api').value) { const cfg = $('#cfg'); if (cfg) cfg.open = true; }
 $('#save').onclick = () => {
   localStorage.setItem('lw_api', $('#api').value.trim());
   localStorage.setItem('lw_tok', $('#tok').value.trim());
@@ -105,25 +112,51 @@ $('#save').onclick = () => {
 };
 function base(){ return ($('#api').value || '').trim().replace(/\/+$/, ''); }
 function headers(){ const t = ($('#tok').value || '').trim(); return t ? { Authorization: 'Bearer ' + t } : {}; }
+function httpErr(status, detail){
+  const e = new Error(detail || ('HTTP ' + status));
+  e.status = status;
+  return e;
+}
+function errText(e){
+  const raw = String((e && e.message) || e || '');
+  const status = e && e.status;
+  if (status === 401 || /\bunauthorized\b/i.test(raw))
+    return '需要授权才能加载：请展开页面上方的「Worker 配置」，填入 API_TOKEN 后点「保存并加载」。（原始信息：' + raw + '）';
+  if (status === 403 || /\bforbidden\b/i.test(raw))
+    return '当前没有访问权限：请检查「Worker 配置」里的 API_TOKEN 是否正确后重试。（原始信息：' + raw + '）';
+  if (/Failed to fetch|NetworkError|Load failed|网络/i.test(raw) && !/请先|至少|每一位/.test(raw))
+    return '网络请求失败：请检查网络连接，或确认「Worker 配置」里的 Worker 地址填写正确。（原始信息：' + raw + '）';
+  if (/响应不是 JSON/.test(raw))
+    return 'Worker 地址可能填错了：该地址没有返回 JSON。请确认填的是本站 Worker 入口地址。' + raw;
+  if (status >= 500)
+    return '服务暂时不可用：请稍后重试；若持续出现，请检查 Worker 是否正常运行。（原始信息：' + raw + '）';
+  if (status === 404)
+    return '请求的接口不存在：请确认 Worker 地址与版本是否正确。（原始信息：' + raw + '）';
+  return raw;
+}
 async function api(path){
   const b = base();
-  if (!b) throw new Error('请先填写 Worker 地址（保存后自动加载）');
-  const r = await fetch(b + path, { headers: headers() });
+  if (!b) throw new Error('请先在「Worker 配置」里填写 Worker 地址（保存后自动加载）');
+  let r;
+  try { r = await fetch(b + path, { headers: headers() }); }
+  catch (e) { throw new Error('网络请求失败：无法连接 Worker（' + (e.message || e) + '）'); }
   const txt = await r.text();
   let j = null;
-  try { j = JSON.parse(txt); } catch (e) { throw new Error('响应不是 JSON（HTTP ' + r.status + '）：' + txt.slice(0, 200)); }
-  if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  try { j = JSON.parse(txt); } catch (e) { throw httpErr(r.status, '响应不是 JSON（HTTP ' + r.status + '）：' + txt.slice(0, 200)); }
+  if (!r.ok) throw httpErr(r.status, (j && j.error) || ('HTTP ' + r.status));
   return j;
 }
 function pad2(x){ return String(x).padStart(2, '0'); }
 async function apiPost(path, body){
   const b = base();
-  if (!b) throw new Error('请先填写 Worker 地址（保存后自动加载）');
-  const r = await fetch(b + path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, headers()), body: JSON.stringify(body) });
+  if (!b) throw new Error('请先在「Worker 配置」里填写 Worker 地址（保存后自动加载）');
+  let r;
+  try { r = await fetch(b + path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, headers()), body: JSON.stringify(body) }); }
+  catch (e) { throw new Error('网络请求失败：无法连接 Worker（' + (e.message || e) + '）'); }
   const txt = await r.text();
   let j = null;
-  try { j = JSON.parse(txt); } catch (e) { throw new Error('响应不是 JSON（HTTP ' + r.status + '）：' + txt.slice(0, 200)); }
-  if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  try { j = JSON.parse(txt); } catch (e) { throw httpErr(r.status, '响应不是 JSON（HTTP ' + r.status + '）：' + txt.slice(0, 200)); }
+  if (!r.ok) throw httpErr(r.status, (j && j.error) || ('HTTP ' + r.status));
   return j;
 }
 // 后端字段类型不统一：双色球的 blue 是字符串 "15"，大乐透的 back 是数组。
@@ -131,7 +164,7 @@ async function apiPost(path, body){
 function asArr(x){ if (x == null) return []; return Array.isArray(x) ? x : [x]; }
 function balls(arr, cls){ return asArr(arr).map(x => '<span class="ball ' + (cls || '') + '">' + x + '</span>').join(''); }
 function esc(s){ return String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
-function errBox(e, el){ el.innerHTML = '<div class="err">请求失败：' + esc(e.message || e) + '</div>'; }
+function errBox(e, el){ el.innerHTML = '<div class="err">' + esc(errText(e)) + '</div>'; }
 function renderNums(o){
   if (!o) return '';
   if (o.digits) return balls(o.digits);
@@ -144,8 +177,9 @@ function renderNums(o){
 
 // ---------- 标签页 ----------
 document.querySelectorAll('header button[data-t]').forEach(b => b.onclick = () => {
-  document.querySelectorAll('header button[data-t]').forEach(x => x.classList.remove('on'));
+  document.querySelectorAll('header button[data-t]').forEach(x => { x.classList.remove('on'); x.removeAttribute('aria-current'); });
   b.classList.add('on');
+  b.setAttribute('aria-current', 'page');
   ['d','p','a','h','v','t','f','s'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = id === b.dataset.t ? '' : 'none'; });
   // 切页后统一 resize 全部图表实例：分析页与审计页的图是在页面加载时（标签页还 display:none）
   // 就画好的，ECharts 那时量到的是 0 宽，不 resize 就永远画不出来。
@@ -227,7 +261,7 @@ async function loadDaily(){
   const drawing = LOTS.filter(l => (LOT_DAYS[l.id] || '').includes(w) || LOT_DAYS[l.id] === '每日');
   const chips = LOTS.map(l => {
     const on = drawing.includes(l);
-    return '<span class="ball' + (on ? '' : ' b') + '" style="min-width:0;border-radius:6px;padding:0 8px;' + (on ? '' : 'background:#bbb;text-decoration:line-through') + '">' + esc(l.name) + '</span>';
+    return '<span class="ball' + (on ? '' : ' b') + '" style="min-width:0;border-radius:6px;padding:0 8px;' + (on ? '' : 'background:#595959;text-decoration:line-through') + '">' + esc(l.name) + '</span>';
   }).join('');
   let h = '<div class="row">' + chips + '<span class="muted">红=今日开奖 · 灰=休市</span></div>';
   const box = sec => '<div class="muted">加载中…</div>';
@@ -238,17 +272,17 @@ async function loadDaily(){
   // ① 破纪录遗漏：/api/records 全彩种，破纪录红标、逼近黄标
   api('/api/records').then(r => {
     const rec = r.records || {};
-    let t = '<table><tr><th>彩种</th><th>破纪录</th><th>逼近纪录（≥80%）</th><th>当前遗漏最深</th></tr>';
+    let t = '<div class="tblwrap"><table><tr><th>彩种</th><th>破纪录</th><th>逼近纪录（≥80%）</th><th>当前遗漏最深</th></tr>';
     for (const l of LOTS) {
       const x = rec[l.id];
       if (!x) { t += '<tr><td>' + esc(l.name) + '</td><td colspan="3" class="muted">无数据</td></tr>'; continue; }
       const fmt = arr => (arr || []).map(i => '<b style="color:#c00">' + esc(i.label) + '</b>(' + i.cur + '/' + i.best + ')').join('、') || '<span class="muted">—</span>';
-      const fmtN = arr => (arr || []).map(i => '<b style="color:#b60">' + esc(i.label) + '</b>(' + i.cur + '/' + i.best + ')').join('、') || '<span class="muted">—</span>';
+      const fmtN = arr => (arr || []).map(i => '<b style="color:#9a5a00">' + esc(i.label) + '</b>(' + i.cur + '/' + i.best + ')').join('、') || '<span class="muted">—</span>';
       t += '<tr><td>' + esc(l.name) + '<div class="muted">' + esc(x.scanned) + '期</div></td><td>' + fmt(x.breaking) + '</td><td>' + fmtN(x.near) + '</td><td class="muted">' +
         (x.top || []).map(i => esc(i.label) + ' ' + i.cur).join(' · ') + '</td></tr>';
     }
     const e1 = document.getElementById('drec');
-    if (e1) e1.innerHTML = t + '</table><div class="muted">' + esc(r.note || '') + '</div>';
+    if (e1) e1.innerHTML = t + '</table></div><div class="muted">' + esc(r.note || '') + '</div>';
   }).catch(e => { const x = document.getElementById('drec'); if (x) errBox(e, x); });
   // ②③ 复盘：上期对账（最新 checked）+ 下期快照（最新 unchecked），一次 /api/review 拿全
   api('/api/review').then(r => {
@@ -326,8 +360,8 @@ async function loadPredict(id){
       dl.perPos.map(pp => '第' + pp.pos + '位 ' + pp.dan.slice(0, 3).map(x => esc(x.n)).join(',')).join('　') + '</div>';
   }
   html += '<h4 style="margin:14px 0 6px">胆拖投注单</h4><div class="row">' +
-    '<input id="tkd" placeholder="胆数" style="width:70px" value="2">' +
-    '<input id="tkt" placeholder="拖数" style="width:70px" value="6">' +
+    '<label class="fld" for="tkd">胆数 <input id="tkd" style="width:70px" value="2"></label>' +
+    '<label class="fld" for="tkt">拖数 <input id="tkt" style="width:70px" value="6"></label>' +
     '<button id="tkgo">生成胆拖单</button></div><div id="tkout" class="muted"></div>';
   if (rec.formHint) html += '<div class="muted">近 ' + esc(rec.count) + ' 期形态：组三 ' + esc(rec.formHint['组三']) +
     ' / 组六 ' + esc(rec.formHint['组六']) + ' / 豹子 ' + esc(rec.formHint['豹子']) + '</div>';
@@ -526,7 +560,7 @@ function drawChart(title, cats, vals){
     regChart('chart', el).setOption({
     title: { text: title, textStyle: { fontSize: 14 } },
     grid: { left: 40, right: 12, top: 40, bottom: 30 },
-    xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 10 } },
+    xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 12 } },
     yAxis: { type: 'value', minInterval: 1 },
     series: [{ type: 'bar', data: vals, itemStyle: { color: '#e11' } }]
   }, true);
@@ -545,9 +579,9 @@ function drawGroupedChart(title, cats, series, elId){
   inst.setOption({
     title: { text: title, textStyle: { fontSize: 14 } },
     tooltip: { trigger: 'axis' },
-    legend: { data: series.map(s => s.name), textStyle: { fontSize: 10 }, top: 24 },
+    legend: { data: series.map(s => s.name), textStyle: { fontSize: 12 }, top: 24 },
     grid: { left: 40, right: 12, top: 52, bottom: 30 },
-    xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 10 } },
+    xAxis: { type: 'category', data: cats, axisLabel: { fontSize: 12 } },
     yAxis: { type: 'value', minInterval: 1 },
     series: series.map((s, i) => ({ name: s.name, type: 'bar', data: s.vals, itemStyle: { color: GROUP_COLORS[i % GROUP_COLORS.length] } }))
   }, true);
@@ -627,7 +661,7 @@ async function loadAnalyze(id){
     if (an.freq && Object.keys(an.freq).length) {
       $('#stats').insertAdjacentHTML('beforeend',
         '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>遗漏走势</b> <span class="muted">（各号码当期连续未出期数，回到 0 = 当期开出）</span>' +
-        '<div class="row"><input id="trn" placeholder="号码，逗号分隔；留空取当前遗漏最深 4 个" style="flex:1;min-width:200px">' +
+        '<div class="row"><label class="fld" for="trn">走势号码 <input id="trn" placeholder="逗号分隔；留空取当前遗漏最深 4 个" style="flex:1;min-width:200px"></label>' +
         '<button id="trgo">画走势</button></div><div id="chart2" style="height:340px"></div></div>');
       document.getElementById('trgo').onclick = () => drawTrend(id);
       drawTrend(id);
@@ -685,14 +719,14 @@ async function drawTrend(id){
     regChart('chart2', el).setOption({
       title: { text: LOT[id].name + ' 遗漏走势（近 ' + rows.length + ' 期）', textStyle: { fontSize: 14 } },
       tooltip: { trigger: 'axis' },
-      legend: { data: nums, textStyle: { fontSize: 10 }, top: 24 },
+      legend: { data: nums, textStyle: { fontSize: 12 }, top: 24 },
       grid: { left: 40, right: 12, top: 52, bottom: 48 },
       dataZoom: [{ type: 'inside' }, { type: 'slider', height: 14, bottom: 10 }],
       xAxis: { type: 'category', data: rows.map(r => r.code), axisLabel: { fontSize: 9 } },
       yAxis: { type: 'value', minInterval: 1 },
       series: nums.map(n => ({ name: n, type: 'line', showSymbol: false, data: rows.map(r => r.miss[n] || 0) }))
     }, true);
-  } catch (e) { el.innerHTML = '<div class="err">走势加载失败：' + esc(e.message || e) + '</div>'; }
+  } catch (e) { el.innerHTML = '<div class="err">走势加载失败：' + esc(errText(e)) + '</div>'; }
 }
 
 // 噪声对照图：真实频次 vs 随机 ±2σ 带 —— 教眼睛把"冷热"读成随机波动而不是规律。
@@ -722,12 +756,12 @@ function drawNoiseChart(id, an){
   if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），上方带外计数仍可读。</div>'; return; }
 regChart('chart3', el).setOption({
     grid: { left: 40, right: 12, top: 14, bottom: 30 },
-    xAxis: { type: 'category', data: ks, axisLabel: { fontSize: 10 } },
+    xAxis: { type: 'category', data: ks, axisLabel: { fontSize: 12 } },
     yAxis: { type: 'value' },
     series: [{
       type: 'bar',
       data: vals.map(v => ({ value: v, itemStyle: { color: (v < lo || v > hi) ? '#e11' : '#bbb' } })),
-      markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#888' }, data: [{ yAxis: +mu.toFixed(2) }], label: { formatter: '期望 ' + mu.toFixed(1), fontSize: 10 } },
+      markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#888' }, data: [{ yAxis: +mu.toFixed(2) }], label: { formatter: '期望 ' + mu.toFixed(1), fontSize: 12 } },
       markArea: { silent: true, itemStyle: { color: 'rgba(136,136,136,.12)' }, data: [[{ yAxis: +lo.toFixed(2) }, { yAxis: +hi.toFixed(2) }]] }
     }]
   }, true);
@@ -736,7 +770,7 @@ regChart('chart3', el).setOption({
 // p 值展示：p<0.05 视为显著偏离基线；null = 样本不足（不评估）
 function pTag(p){
   if (p == null) return ' <span class="muted">（样本不足，不评估显著性）</span>';
-  if (p < 0.05) return ' <b style="color:#0a7">p=' + p + ' 显著</b>';
+  if (p < 0.05) return ' <b style="color:#00684a">p=' + p + ' 显著</b>';
   return ' <span class="muted">p=' + p + '</span>';
 }
 // 判定最低样本量：低于此值只报"样本不足，无法判断"，不给"有效/无信息/√/显著"结论
@@ -764,7 +798,7 @@ async function loadBacktest(id, periods){
       if (fs.length) extra += '<br><b>杀号公式校准</b>（√=低于基线且杀号样本 ≥' + MIN_BT_SAMPLE + '）：' +
         fs.map(f => esc(f.label) + ' ' + (f.rate * 100).toFixed(1) + '%（基线 ' + (f.baseline * 100).toFixed(1) + '%）' +
           (f.killed < MIN_BT_SAMPLE ? '<span class="muted">样本不足，无法判断</span>'
-            : (f.verdict === '有效' ? '√' : '—') + (f.p != null && f.p < 0.05 ? '<b style="color:#0a7">·显著</b>' : ''))).join('　');
+            : (f.verdict === '有效' ? '√' : '—') + (f.p != null && f.p < 0.05 ? '<b style="color:#00684a">·显著</b>' : ''))).join('　');
       extra += '<br><span class="muted">样本上限提示：本回测可用的最深历史约 650 期；检出单号 ±10% 级别的偏差约需 3500 期（见 docs/randomness-2026-09.md）。' +
         '所以"未发现信号"= 当前样本量下检不出来，不等于"已证明随机"。</span>';
       // 分年稳定性：单一学年没有对比意义，>1 个年代才展示
@@ -789,7 +823,7 @@ async function loadBacktest(id, periods){
     }
     if (bt.note) extra += '<br><span>' + esc(bt.note) + '</span>';
     if (bt.eras && bt.eras.length > 1) extra += '<div id="btchart" style="height:220px;margin-top:8px"></div>';
-    extra += '<div class="row" style="margin-top:6px"><input id="btp" placeholder="回测期数（≤600，>40 自动抽样）" style="width:200px"><button id="btgo">按期数重算</button>' +
+    extra += '<div class="row" style="margin-top:6px"><label class="fld" for="btp">回测期数 <input id="btp" placeholder="≤600，>40 自动抽样" style="width:200px"></label><button id="btgo">按期数重算</button>' +
       '<button id="btho">校准外推检验</button><button id="btkt">杀号阈值寻优</button><span id="hoout" class="muted"></span><span id="ktout" class="muted"></span></div>';
     // insertAdjacentHTML + 先移除旧块：重算时不会丢失走势图的按钮事件
     const old = document.getElementById('btout');
@@ -804,7 +838,7 @@ regChart('btchart', bcel).clear(), regChart('btchart', bcel).setOption({
           legend: { top: 0, textStyle: { fontSize: 11 } },
           tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
           xAxis: { type: 'category', data: bt.eras.map(e => e.era), axisLabel: { fontSize: 11 } },
-          yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => (v * 100).toFixed(0) + '%' } },
+          yAxis: { type: 'value', axisLabel: { fontSize: 12, formatter: v => (v * 100).toFixed(0) + '%' } },
           series: [
             { name: '热号命中率', type: 'bar', data: bt.eras.map(e => e.hotRate), itemStyle: { color: '#c0392b' } },
             { name: '杀号命中率', type: 'bar', data: bt.eras.map(e => e.killRate), itemStyle: { color: '#2980b9' } },
@@ -832,13 +866,13 @@ async function loadKillTune(id){
     const row = arr => arr.map(x => '<td>' + (x.frac * 100).toFixed(0) + '%<br><b>' + (x.hitRate * 100).toFixed(1) + '%</b></td>').join('');
     const atFrac = f => r.test.find(x => x.frac === f) || { hitRate: NaN };
     if (el) el.innerHTML = '<br><b>杀号阈值寻优</b>（旧 ' + esc(r.tested.train) + ' 期拟合 → 新 ' + esc(r.tested.test) + ' 期验证，杀号命中率越低越好）' +
-      '<table><tr><th>分位</th>' + r.train.map(x => '<th>' + (x.frac * 100).toFixed(0) + '%</th>').join('') + '</tr>' +
+      '<div class="tblwrap"><table><tr><th>分位</th>' + r.train.map(x => '<th>' + (x.frac * 100).toFixed(0) + '%</th>').join('') + '</tr>' +
       '<tr><td>train</td>' + row(r.train) + '</tr>' +
-      '<tr><td>test</td>' + row(r.test) + '</tr></table>' +
+      '<tr><td>test</td>' + row(r.test) + '</tr></table></div>' +
       '<div>train 最优 ' + (r.trainBest.frac * 100).toFixed(0) + '% → test 上 ' + (atFrac(r.trainBest.frac).hitRate * 100).toFixed(1) + '%；test 事后最优 ' +
       (r.oracle.frac * 100).toFixed(0) + '% → ' + (r.oracle.hitRate * 100).toFixed(1) + '%，gap=' + r.gap.toFixed(4) + '</div>' +
       '<div><b>' + esc(r.verdict || '') + '</b></div>';
-  } catch (e) { if (el) el.innerHTML = '<span class="err">阈值寻优失败：' + esc(e.message || e) + '</span>'; }
+  } catch (e) { if (el) el.innerHTML = '<span class="err">阈值寻优失败：' + esc(errText(e)) + '</span>'; }
 }
 
 // 校准外推检验：权重只用旧段拟合，在新段对比「加权 vs 未加权」杀号命中率（防过拟合的直接证据）
@@ -850,11 +884,11 @@ async function loadHoldout(id){
     const h = r.holdout || {};
     if (!h.calibrated) { if (el) el.innerHTML = esc(h.note || '无外推检验结果'); return; }
     const c = h.calibrated, rw = h.raw;
-    const cmp = c.hitRate < rw.hitRate ? '<b style="color:#0a7">校准在新段仍更准（外推有效）</b>'
-      : c.hitRate > rw.hitRate ? '<b style="color:#c60">校准在新段反而更差（过拟合嫌疑）</b>' : '持平';
+    const cmp = c.hitRate < rw.hitRate ? '<b style="color:#00684a">校准在新段仍更准（外推有效）</b>'
+      : c.hitRate > rw.hitRate ? '<b style="color:#a8071a">校准在新段反而更差（过拟合嫌疑）</b>' : '持平';
     if (el) el.innerHTML = '<br><b>外推检验</b>（旧 ' + esc(h.fitN) + ' 期拟合 → 新 ' + esc(h.evalN) + ' 期验证，抽样 ' + esc(h.tested) + ' 点）：加权杀号 ' +
       (c.hitRate * 100).toFixed(1) + '% vs 未加权 ' + (rw.hitRate * 100).toFixed(1) + '%（基线 ' + (c.baseline * 100).toFixed(1) + '%）→ ' + cmp;
-  } catch (e) { if (el) el.innerHTML = '<span class="err">外推检验失败：' + esc(e.message || e) + '</span>'; }
+  } catch (e) { if (el) el.innerHTML = '<span class="err">外推检验失败：' + esc(errText(e)) + '</span>'; }
 }
 
 // ---------- 历史 ----------
@@ -863,7 +897,7 @@ async function loadHistory(id){
     const his = await api('/api/' + id + '/history?limit=30');
     const fmt = (v) => v == null ? '—' : Number(v).toLocaleString('zh-CN');
     const hasDetail = his.some(d => d.detail);
-    let h = '<h3 style="margin:0 0 8px">历史 30 期</h3><table><tr><th>期号</th><th>号码</th><th>日期</th>' +
+    let h = '<h3 style="margin:0 0 8px">历史 30 期</h3><div class="tblwrap"><table><tr><th>期号</th><th>号码</th><th>日期</th>' +
       (hasDetail ? '<th>奖池(元)</th><th>销量(元)</th><th>一等奖</th><th>二等奖</th>' : '') + '</tr>';
     for (const d of his) {
       h += '<tr><td>' + esc(d.code) + '</td><td>' + renderNums(d) + '</td><td>' + esc(d.date || '') + '</td>';
@@ -874,7 +908,7 @@ async function loadHistory(id){
       }
       h += '</tr>';
     }
-    $('#h').innerHTML = h + '</table>' + (hasDetail ? '<div class="muted">奖池/销量/奖级来自 500 开奖页同行字段；走其他源（cwl/17500/D1 缓存）时该期无详情，显示「—」，不编造。</div>' : '');
+    $('#h').innerHTML = h + '</table></div>' + (hasDetail ? '<div class="muted">奖池/销量/奖级来自 500 开奖页同行字段；走其他源（cwl/17500/D1 缓存）时该期无详情，显示「—」，不编造。</div>' : '');
   } catch (e) { errBox(e, $('#h')); }
 }
 
@@ -920,14 +954,14 @@ function chaseCalendarHtml(chase) {
 function renderAudit(r) {
   const checks = r.checks || [];
   if (!checks.length) return '<div class="muted">审计未返回任何检查项</div>';
-  const badge = s => ({ fail: '<b style="color:#a8071a">FAIL</b>', warn: '<b style="color:#b26a00">WARN</b>', pass: '<b style="color:#2e7d32">PASS</b>', skip: '<b style="color:#888">SKIP</b>' }[s] || esc(s));
+  const badge = s => ({ fail: '<b style="color:#a8071a">FAIL</b>', warn: '<b style="color:#9a5a00">WARN</b>', pass: '<b style="color:#2e7d32">PASS</b>', skip: '<b style="color:#595959">SKIP</b>' }[s] || esc(s));
   let h = '<div class="card"><b>站内审计</b> · 总体 ' + badge(r.overall) +
     '<div class="muted">生成于 ' + esc(r.generatedAt || '') + '　' + esc(r.note || '') + '</div>' +
-    '<table><tr><th>检查项</th><th>结果</th><th>说明</th></tr>';
+    '<div class="tblwrap"><table><tr><th>检查项</th><th>结果</th><th>说明</th></tr>';
   for (const c of checks) {
     h += '<tr><td>' + esc(c.label || c.id) + '</td><td>' + badge(c.status) + '</td><td style="text-align:left">' + esc(c.detail || '') + '</td></tr>';
   }
-  h += '</table>';
+  h += '</table></div>';
   // 新鲜度明细：陈旧彩种单独列出来，一眼能看到是哪一家拖后腿
   const fresh = checks.find(c => c.id === 'data_freshness' && Array.isArray(c.items));
   if (fresh && fresh.items.length) {
@@ -962,6 +996,7 @@ function pickState(id){
 }
 function basketGet(){ try { return JSON.parse(localStorage.getItem('lw_basket') || '[]'); } catch (e) { return []; } }
 function basketSet(b){ localStorage.setItem('lw_basket', JSON.stringify(b)); }
+let __basketUndo = null;
 async function buildPicker(id){
   const el = $('#s'); if (!el) return;
   const st = pickState(id);
@@ -980,10 +1015,11 @@ async function buildPicker(id){
     const cell = (zone, num, rows) => {
       const r = rows[num];
       let cls = 'pk';
-      if (zone === 'main') { if (st.dan.has(num)) cls += ' dan'; else if (st.main.has(num)) cls += ' sel'; }
-      if (zone === 'aux') { if (st.danAux.has(num)) cls += ' dan'; else if (st.aux.has(num)) cls += ' selA'; }
+      let pressed = false;
+      if (zone === 'main') { if (st.dan.has(num)) { cls += ' dan'; pressed = true; } else if (st.main.has(num)) { cls += ' sel'; pressed = true; } }
+      if (zone === 'aux') { if (st.danAux.has(num)) { cls += ' dan'; pressed = true; } else if (st.aux.has(num)) { cls += ' selA'; pressed = true; } }
       if (r && r.cur >= 10) cls += ' hot';
-      return '<span class="' + cls + '" data-z="' + zone + '" data-n="' + num + '"><span class="ball">' + num + '</span><span class="m">' + (r ? r.cur : '–') + '</span></span>';
+      return '<button type="button" class="' + cls + '" data-z="' + zone + '" data-n="' + num + '" aria-pressed="' + pressed + '" aria-label="号码 ' + num + '，当前遗漏 ' + (r ? r.cur : '–') + '"><span class="ball">' + num + '</span><span class="m">' + (r ? r.cur : '–') + '</span></button>';
     };
     if (spec.type === 'digit') {
       if (!st.perPos.length) st.perPos = Array.from({ length: spec.digits }, () => new Set());
@@ -995,7 +1031,7 @@ async function buildPicker(id){
           const num = String(n);
           const sel = st.perPos[p].has(num);
           const r = rows[num];
-          h += '<span class="pk' + (sel ? ' sel' : '') + (r && r.cur >= 10 ? ' hot' : '') + '" data-p="' + p + '" data-n="' + num + '"><span class="ball">' + num + '</span><span class="m">' + (r ? r.cur : '–') + '</span></span>';
+          h += '<button type="button" class="pk' + (sel ? ' sel' : '') + (r && r.cur >= 10 ? ' hot' : '') + '" data-p="' + p + '" data-n="' + num + '" aria-pressed="' + sel + '" aria-label="第 ' + (p + 1) + ' 位号码 ' + num + '，当前遗漏 ' + (r ? r.cur : '–') + '"><span class="ball">' + num + '</span><span class="m">' + (r ? r.cur : '–') + '</span></button>';
         }
         h += '</div>';
       }
@@ -1007,16 +1043,16 @@ async function buildPicker(id){
       };
       h += zone('main', spec.main, missMap(miss.main));
       if (spec.aux) h += zone('aux', spec.aux, missMap(miss.aux));
-      if (id === 'kl8') h += '<div class="row"><span class="muted">玩法</span><select id="pkpickn">' + [1,2,3,4,5,6,7,8,9,10].map(n => '<option value="' + n + '"' + (st.pickN === n ? ' selected' : '') + '>选' + n + '</option>').join('') + '</select></div>';
+      if (id === 'kl8') h += '<div class="row"><label class="fld" for="pkpickn">玩法 <select id="pkpickn">' + [1,2,3,4,5,6,7,8,9,10].map(n => '<option value="' + n + '"' + (st.pickN === n ? ' selected' : '') + '>选' + n + '</option>').join('') + '</select></label></div>';
     }
     h += '<div class="row"><button id="pkadd">加入号码篮</button></div><div id="pkout" class="muted"></div><div id="pkbasket"></div>';
     if (spec.type === 'pool') {
       h += '<h4 style="margin:14px 0 4px">缩水过滤</h4><div class="muted">以当前选球盘主区已选号码为候选池（没选则用全池），按形态条件筛组合。过滤只改变覆盖范围，不改变单注中奖概率。</div>' +
         '<div class="row">' +
-        '<input id="f-summin" placeholder="和值≥" style="width:84px"><input id="f-summax" placeholder="和值≤" style="width:84px">' +
-        '<input id="f-oddmin" placeholder="奇数≥" style="width:84px"><input id="f-oddmax" placeholder="奇数≤" style="width:84px">' +
-        '<input id="f-spanmin" placeholder="跨度≥" style="width:84px"><input id="f-spanmax" placeholder="跨度≤" style="width:84px">' +
-        '<input id="f-exclude" placeholder="排除号 如 03,18" style="width:170px"></div>' +
+        '<label class="fld" for="f-summin">和值≥ <input id="f-summin" style="width:84px"></label><label class="fld" for="f-summax">和值≤ <input id="f-summax" style="width:84px"></label>' +
+        '<label class="fld" for="f-oddmin">奇数≥ <input id="f-oddmin" style="width:84px"></label><label class="fld" for="f-oddmax">奇数≤ <input id="f-oddmax" style="width:84px"></label>' +
+        '<label class="fld" for="f-spanmin">跨度≥ <input id="f-spanmin" style="width:84px"></label><label class="fld" for="f-spanmax">跨度≤ <input id="f-spanmax" style="width:84px"></label>' +
+        '<label class="fld" for="f-exclude">排除号 <input id="f-exclude" placeholder="如 03,18" style="width:170px"></label></div>' +
         '<div class="row"><button id="fgo">开始缩水</button><button id="fadd" style="display:none">结果全部加入号码篮</button></div>' +
         '<div id="fout" class="muted"></div>' +
         '<h4 style="margin:14px 0 4px">走势（近 30 期）</h4><div id="ptrend" class="muted">加载中…</div>';
@@ -1048,12 +1084,30 @@ async function buildPicker(id){
     };
     const renderBasket = () => {
       const b = basketGet().filter(x => x.kind === id);
-      $('#pkbasket').innerHTML = b.length ? '<h4 style="margin:10px 0 4px">号码篮</h4>' + b.map((x, i) =>
+      const undo = __basketUndo && __basketUndo.kind === id ? __basketUndo : null;
+      let bh = undo ? '<div class="warn">已删除号码篮中的一注。 <button type="button" id="pkundel">撤销删除</button></div>' : '';
+      bh += b.length ? '<h4 style="margin:10px 0 4px">号码篮</h4>' + b.map((x, i) =>
         '<div class="kv"><span>' + esc(x.text) + '</span><span>' + esc(x.bets) + ' 注 · ' + esc(x.amount) + ' 元 ' +
-        '<button data-save="' + i + '">收藏</button> <button data-del="' + i + '">删</button></span></div>').join('') : '';
+        '<button data-save="' + i + '">收藏</button> <button data-del="' + i + '">删除</button></span></div>').join('') : '';
+      $('#pkbasket').innerHTML = bh;
+      if (undo) {
+        const ub = document.getElementById('pkundel');
+        if (ub) ub.onclick = () => {
+          clearTimeout(undo.timer);
+          const all = basketGet();
+          all.splice(Math.min(undo.index, all.length), 0, undo.item);
+          basketSet(all);
+          __basketUndo = null;
+          renderBasket();
+        };
+      }
       $('#pkbasket').querySelectorAll('button[data-del]').forEach(btn => btn.onclick = () => {
+        if (__basketUndo) clearTimeout(__basketUndo.timer);
         const all = basketGet(); const mine = all.map((x, i) => [x, i]).filter(([x]) => x.kind === id);
-        all.splice(mine[Number(btn.dataset.del)][1], 1); basketSet(all); renderBasket();
+        const gi = mine[Number(btn.dataset.del)][1];
+        const removed = all.splice(gi, 1)[0]; basketSet(all);
+        __basketUndo = { kind: id, item: removed, index: gi, timer: setTimeout(() => { __basketUndo = null; if (document.getElementById('pkbasket')) renderBasket(); }, 8000) };
+        renderBasket();
       });
       $('#pkbasket').querySelectorAll('button[data-save]').forEach(btn => btn.onclick = async () => {
         const mine = basketGet().filter(x => x.kind === id); const item = mine[Number(btn.dataset.save)];
@@ -1069,15 +1123,15 @@ async function buildPicker(id){
         const rows = (tr.rows || []).slice().reverse(); // 最新在上
         if (!rows.length) { tEl.textContent = '暂无走势数据'; return; }
         const nums = Object.keys(rows[0].miss || {}).sort();
-        let th = '<div style="overflow-x:auto"><table><tr><th>期号</th>' + nums.map(n => '<th>' + n + '</th>').join('') + '</tr>';
+        let th = '<div class="tblwrap"><table><tr><th>期号</th>' + nums.map(n => '<th>' + n + '</th>').join('') + '</tr>';
         for (const row of rows) {
           const hit = new Set(row.main || []);
           th += '<tr><td>' + esc(row.code) + '</td>' + nums.map(n => hit.has(n)
-            ? '<td><span class="ball" style="min-width:22px;height:22px;line-height:22px;font-size:11px">' + n + '</span></td>'
-            : '<td style="color:#bbb;font-size:10px">' + (row.miss ? row.miss[n] : '') + '</td>').join('') + '</tr>';
+            ? '<td><span class="ball" style="min-width:22px;height:22px;line-height:22px;font-size:12px">' + n + '</span></td>'
+            : '<td style="color:#595959;font-size:12px">' + (row.miss ? row.miss[n] : '') + '</td>').join('') + '</tr>';
         }
         tEl.innerHTML = th + '</table></div>';
-      }).catch(e => { const tEl = $('#ptrend'); if (tEl) tEl.textContent = '走势加载失败：' + e.message; });
+      }).catch(e => { const tEl = $('#ptrend'); if (tEl) tEl.textContent = '走势加载失败：' + errText(e); });
       let lastFilter = null;
       $('#fgo').onclick = async () => {
         try {
@@ -1151,11 +1205,11 @@ function buildTools(id){
 // 组选=选号个数。位数对不上时后端会返回 400 并在结果区说明，不再静默按「全 1」算
 const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / 组选:选号个数', 200], ['group', '组选 3/6', 80]];
   const pf = PRIZE_FIELDS[id] || [['exact', '是否全中(1/0)', 120]];
-  const inputs = (arr) => arr.map(f => '<input data-f="' + f[0] + '" placeholder="' + f[1] + '" style="width:' + f[2] + 'px">').join('');
+  const inputs = (arr) => arr.map(f => '<label class="fld">' + esc(f[1]) + ' <input data-f="' + f[0] + '" style="width:' + f[2] + 'px"></label>').join('');
   $('#t').innerHTML =
     '<h3 style="margin:0 0 8px">注数 / 金额 / 追号</h3><div class="row" id="crow">' + inputs(cf) +
-    '<input data-f="chase" placeholder="追号期数" style="width:100px">' +
-    '<input data-f="mults" placeholder="倍数序列 1,2,4" style="width:150px"></div>' +
+    '<label class="fld" for="cf-chase">追号期数 <input id="cf-chase" data-f="chase" style="width:100px"></label>' +
+    '<label class="fld" for="cf-mults">倍数序列 <input id="cf-mults" data-f="mults" placeholder="如 1,2,4" style="width:150px"></label></div>' +
     '<div class="row"><button id="cgo">计算注数</button></div><div id="cout" class="muted"></div>' +
     '<h3 style="margin:16px 0 8px">中奖计算器</h3><div class="row" id="prow">' + inputs(pf) + '</div>' +
     '<div class="row"><button id="pgo">判定奖级</button></div><div id="pout" class="muted"></div>' +
@@ -1219,10 +1273,10 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
         : '<div class="muted">暂无已对账记录：同步任务运行后逐期累积。</div>';
       const rows = (r.rows || []).filter(x => x.checked && x.hit).slice(0, 8);
       if (rows.length) {
-        h += '<table><tr><th>期号</th><th>推荐（各策略主区）</th><th>开奖</th><th>命中</th></tr>' +
+        h += '<div class="tblwrap"><table><tr><th>期号</th><th>推荐（各策略主区）</th><th>开奖</th><th>命中</th></tr>' +
           rows.map(x => '<tr><td>' + esc(x.code) + '</td><td>' +
             esc((x.payload.picks || []).map(p => (p.main || []).join(' ')).join(' / ')) + '</td><td>' + esc(x.hit.actual) + '</td><td>' +
-            esc((x.hit.picks || []).map(p => p.hit).join('/') + '，胆' + (x.hit.danHit || 0) + '，杀错' + (x.hit.killWrong || []).length) + '</td></tr>').join('') + '</table>';
+            esc((x.hit.picks || []).map(p => p.hit).join('/') + '，胆' + (x.hit.danHit || 0) + '，杀错' + (x.hit.killWrong || []).length) + '</td></tr>').join('') + '</table></div>';
       }
       $('#rout').innerHTML = h || '<div class="muted">暂无数据</div>';
       // 复盘小图：推荐命中 / 杀号错杀 各自对照随机基线（p<0.05 的项标题栏标绿）
@@ -1234,9 +1288,9 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
             legend: { top: 0, textStyle: { fontSize: 11 } },
             tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
             xAxis: { type: 'category', data: ['推荐命中', '随机基准', '杀号错杀'], axisLabel: { fontSize: 11 } },
-            yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => (v * 100).toFixed(0) + '%' } },
+            yAxis: { type: 'value', axisLabel: { fontSize: 12, formatter: v => (v * 100).toFixed(0) + '%' } },
             series: [
-              { name: '实际', type: 'bar', data: [s.pickHitRate, s.randHitRate, s.killWrongRate], itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 10, formatter: p => p.value == null ? '' : (p.value * 100).toFixed(1) + '%' } },
+              { name: '实际', type: 'bar', data: [s.pickHitRate, s.randHitRate, s.killWrongRate], itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 12, formatter: p => p.value == null ? '' : (p.value * 100).toFixed(1) + '%' } },
               { name: '随机基线', type: 'bar', data: [s.pickBaseline, s.pickBaseline, s.pickBaseline], itemStyle: { color: '#bbb' } }
             ]
           });
@@ -1264,11 +1318,11 @@ regChart('cbtchart', el).setOption({
             tooltip: { trigger: 'axis' },
             xAxis: { type: 'category', data: qs.map(q => 'Q' + q.q + '(冷→热)'), axisLabel: { fontSize: 11 } },
             yAxis: [
-              { type: 'value', name: '注数/亿', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
-              { type: 'value', name: '预测指数', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } }
+              { type: 'value', name: '注数/亿', nameTextStyle: { fontSize: 12 }, axisLabel: { fontSize: 12 } },
+              { type: 'value', name: '预测指数', nameTextStyle: { fontSize: 12 }, axisLabel: { fontSize: 12 } }
             ],
             series: [
-              { name: '实际注数/亿', type: 'bar', data: qs.map(q => q.observed), itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 10 } },
+              { name: '实际注数/亿', type: 'bar', data: qs.map(q => q.observed), itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 12 } },
               { name: '预测指数', type: 'line', yAxisIndex: 1, data: qs.map(q => q.predicted), itemStyle: { color: '#06c' }, lineStyle: { width: 2 } }
             ]
           });
@@ -1310,8 +1364,8 @@ regChart('syncchart', el).setOption({
             legend: { top: 0, textStyle: { fontSize: 11 } },
             tooltip: { trigger: 'axis' },
             dataZoom: [{ type: 'inside' }, { type: 'slider', height: 14, bottom: 4 }],
-            xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, rotate: labels.length > 12 ? 40 : 0 } },
-            yAxis: { type: 'value', name: '条数', nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 10 } },
+            xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 12, rotate: labels.length > 12 ? 40 : 0 } },
+            yAxis: { type: 'value', name: '条数', nameTextStyle: { fontSize: 12 }, axisLabel: { fontSize: 12 } },
             series: [
               { name: '拉取', type: 'line', step: 'end', data: rows.map(x => x.fetched), itemStyle: { color: '#06c' }, lineStyle: { width: 2 } },
               { name: '落库', type: 'line', step: 'end', data: rows.map(x => x.inserted), itemStyle: { color: '#2e7d32' }, lineStyle: { width: 2 } },
@@ -1375,9 +1429,9 @@ function renderVerifyBatch(r){
     const wins = all.filter(x => x.grade !== '未中');
     const loss = all.length - wins.length;
     if (wins.length) {
-      h += '<table><tr><th>号码</th><th>奖级</th><th>命中</th><th>金额</th></tr>' +
+      h += '<div class="tblwrap"><table><tr><th>号码</th><th>奖级</th><th>命中</th><th>金额</th></tr>' +
         wins.map(w => '<tr><td style="text-align:left">' + esc(w.ticket) + '</td><td>' + esc(w.grade) +
-          '</td><td>' + esc(hitText(w)) + '</td><td>' + (w.amount == null ? '—（见公告）' : esc(w.amount) + ' 元') + '</td></tr>').join('') + '</table>';
+          '</td><td>' + esc(hitText(w)) + '</td><td>' + (w.amount == null ? '—（见公告）' : esc(w.amount) + ' 元') + '</td></tr>').join('') + '</table></div>';
       const notes = [];
       wins.forEach(w => { if (w.note && notes.indexOf(w.note) < 0) notes.push(w.note); });
       h += '<div class="muted">' + (loss ? '其余 ' + loss + ' 注未中。' : '') + esc(notes.join(' ')) + '</div>';
@@ -1392,23 +1446,23 @@ function renderVerifyBatch(r){
 function buildVerify(id){
   const l = LOT[id];
   let h = '<h3 style="margin:0 0 8px">验奖</h3><div class="row">' +
-    '<input id="vc" placeholder="期号，如 2026103" style="width:150px">';
+    '<label class="fld" for="vc">期号 <input id="vc" placeholder="如 2026103" style="width:150px"></label>';
   if (l.mode === 'rb') {
-    h += '<input id="vr" placeholder="' + (id === 'ssq' ? '红球 6 个' : '前区 5 个') + '，逗号分隔" style="flex:1;min-width:180px">' +
-         '<input id="vb" placeholder="' + (id === 'ssq' ? '蓝球 1 个' : '后区 2 个') + '" style="width:140px">';
+    h += '<label class="fld" for="vr">' + (id === 'ssq' ? '红球' : '前区') + ' <input id="vr" placeholder="' + (id === 'ssq' ? '6 个' : '5 个') + '，逗号分隔" style="flex:1;min-width:180px"></label>' +
+         '<label class="fld" for="vb">' + (id === 'ssq' ? '蓝球' : '后区') + ' <input id="vb" placeholder="' + (id === 'ssq' ? '1 个' : '2 个') + '" style="width:140px"></label>';
   } else {
-    h += '<input id="vn" placeholder="号码，逗号分隔" style="flex:1;min-width:220px">';
+    h += '<label class="fld" for="vn">号码 <input id="vn" placeholder="逗号分隔" style="flex:1;min-width:220px"></label>';
   }
   h += '<button id="vgo">验奖</button></div><div id="vo"></div>';
   h += '<h3 style="margin:16px 0 8px">批量验奖（一沓票一次验完）</h3>' +
-    '<div class="row"><input id="bcp" placeholder="期号，多个用逗号分隔；留空＝最近一期" style="flex:1;min-width:200px">' +
-    '<input id="bcm" placeholder="倍数" style="width:70px" value="1"></div>' +
-    '<textarea id="bvt" placeholder="每行一注，例：' + vbExample(id) + '" style="width:100%;box-sizing:border-box;min-height:96px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:ui-monospace,Consolas,monospace;line-height:1.6"></textarea>' +
+    '<div class="row"><label class="fld" for="bcp">期号 <input id="bcp" placeholder="多个用逗号分隔；留空＝最近一期" style="flex:1;min-width:200px"></label>' +
+    '<label class="fld" for="bcm">倍数 <input id="bcm" style="width:70px" value="1"></label></div>' +
+    '<label class="fld" for="bvt">票面（每行一注）</label><textarea id="bvt" placeholder="例：' + vbExample(id) + '" style="width:100%;box-sizing:border-box;min-height:96px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:ui-monospace,Consolas,monospace;line-height:1.6"></textarea>' +
     '<div class="row"><button id="bgo">批量验奖</button><span class="muted">最多 200 注、10 期；坏行只报错不吞掉其余票</span></div><div id="bo"></div>';
   h += '<h3 style="margin:16px 0 8px">旋转矩阵（覆盖设计）</h3>' +
-    '<div class="row"><input id="mn" placeholder="自选 n" style="width:100px" value="12">' +
-    '<input id="mp" placeholder="每注 k" style="width:90px" value="6">' +
-    '<input id="mh" placeholder="保中 t" style="width:80px" value="4">' +
+    '<div class="row"><label class="fld" for="mn">自选 n <input id="mn" style="width:100px" value="12"></label>' +
+    '<label class="fld" for="mp">每注 k <input id="mp" style="width:90px" value="6"></label>' +
+    '<label class="fld" for="mh">保中 t <input id="mh" style="width:80px" value="4"></label>' +
     '<button id="mgo">生成</button></div><div id="mo" class="muted"></div>';
   $('#v').innerHTML = h;
 
@@ -1469,11 +1523,18 @@ function buildVerify(id){
 }
 
 // ---------- 收藏 ----------
+let __favUndo = null;
+async function commitFavDelete(id){
+  const resp = await fetch(base() + '/api/favs?id=' + encodeURIComponent(id), { method: 'DELETE', headers: headers() }).catch(() => null);
+  const fl = $('#flist');
+  if (resp && resp.status === 202) { if (fl) fl.insertAdjacentHTML('afterbegin', '<div class="muted">删除已离线排队，网络恢复后生效。</div>'); return; }
+  if (!__favUndo) loadFavs();
+}
 async function loadFavs(){
   const el = $('#f');
   el.innerHTML = '<h3 style="margin:0 0 8px">收藏</h3>' +
-    '<div class="row"><input id="fn" placeholder="号码，逗号分隔" style="flex:1;min-width:200px">' +
-    '<input id="fno" placeholder="备注" style="width:140px">' +
+    '<div class="row"><label class="fld" for="fn">号码 <input id="fn" placeholder="逗号分隔" style="flex:1;min-width:200px"></label>' +
+    '<label class="fld" for="fno">备注 <input id="fno" style="width:140px"></label>' +
     '<button id="fadd">添加</button></div><div id="flist" class="muted">加载中…</div>';
   $('#fadd').onclick = async () => {
     try {
@@ -1495,10 +1556,16 @@ async function loadFavs(){
           (x.note ? ' <span class="muted">' + esc(x.note) + '</span>' : '') + '</span>' +
           '<button data-id="' + esc(x.id) + '" class="fdel">删除</button></div>').join('')
       : '<div class="muted">暂无收藏（需在 Worker 配置 D1 与 API_TOKEN）</div>';
-    document.querySelectorAll('.fdel').forEach(b => b.onclick = async () => {
-      const resp = await fetch(base() + '/api/favs?id=' + b.dataset.id, { method: 'DELETE', headers: headers() }).catch(() => null);
-      if (resp && resp.status === 202) { $('#flist').insertAdjacentHTML('afterbegin', '<div class="muted">删除已离线排队，网络恢复后生效。</div>'); return; }
-      loadFavs();
+    document.querySelectorAll('.fdel').forEach(b => b.onclick = () => {
+      if (__favUndo) { clearTimeout(__favUndo.timer); commitFavDelete(__favUndo.id); __favUndo = null; }
+      const row = b.closest ? b.closest('.kv') : null;
+      if (row) row.remove();
+      const undo = { id: b.dataset.id, timer: null };
+      __favUndo = undo;
+      $('#flist').insertAdjacentHTML('afterbegin', '<div class="warn">已删除这条收藏。 <button type="button" id="fundel">撤销删除</button></div>');
+      const ub = document.getElementById('fundel');
+      if (ub) ub.onclick = () => { clearTimeout(undo.timer); if (__favUndo === undo) __favUndo = null; loadFavs(); };
+      undo.timer = setTimeout(() => { if (__favUndo === undo) { __favUndo = null; commitFavDelete(undo.id); } }, 8000);
     });
   } catch (e) { errBox(e, $('#flist')); }
 }
