@@ -96,3 +96,36 @@ test("前端 index.html：重画前必须 dispose 旧实例并从登记表删除
   assert.match(html, /disposeChart\('cbtchart'\)/, "冷门度回看图重画前未销毁旧实例");
   assert.match(html, /disposeChart\('syncchart'\)/, "同步时序图重画前未销毁旧实例");
 });
+
+test("前端 index.html：界面评审回归锁（键盘可达、语义、地标、宽表与删除撤销）", () => {
+  const html = readFileSync(HTML_PATH, "utf8");
+  // 选号球必须是原生 button + aria-pressed，四条路径（主/副区、数字按位）都不能退回 span
+  assert.doesNotMatch(html, /<span class="pk/, "选号球退回了 span（键盘不可达）");
+  assert.match(html, /<button type="button" class="pk/, "号码池选号球不是原生 button");
+  assert.match(html, /<button type="button" class="pk' \+ \(sel/, "数字型按位选号球不是原生 button");
+  assert.match(html, /aria-pressed=/, "选号球缺少 aria-pressed 选中状态");
+  // 页签当前态、地标与状态播报
+  assert.match(html, /aria-current="page"/, "页签缺少 aria-current");
+  assert.match(html, /setAttribute\('aria-current', 'page'\)/, "切页时未同步 aria-current");
+  assert.match(html, /<main class="wrap">/, "缺少 main 地标");
+  assert.match(html, /<h1>自用彩票<\/h1>/, "缺少一级标题");
+  assert.match(html, /id="st" role="status"/, "加载状态缺少 role=status 播报");
+  // 宽表要有横向滚动容器，配置卡折叠
+  assert.ok((html.match(/class="tblwrap"/g) || []).length >= 6, "宽表滚动容器不足 6 处");
+  assert.match(html, /<details class="card" id="cfg">/, "配置卡未折叠");
+  // 表单标签：关键输入都要有 for 关联，通用字段生成器也要产 label
+  for (const id of ["lot", "api", "tok", "tkd", "tkt", "trn", "btp", "vc", "vr", "vb", "vn", "bcp", "bcm", "bvt", "mn", "mp", "mh", "fn", "fno", "pkpickn"]) {
+    assert.match(html, new RegExp('for="' + id + '"'), "输入 #" + id + " 缺可见 label");
+  }
+  assert.match(html, /<label class="fld">.*<input data-f=/, "工具页字段生成器未产 label");
+  // 删除要有撤销且文案统一，不许再出现孤字「删」
+  assert.match(html, /id="pkundel"/, "号码篮删除缺少撤销");
+  assert.match(html, /id="fundel"/, "收藏删除缺少撤销");
+  assert.doesNotMatch(html, />删</, "仍有孤字「删」按钮");
+  // 错误人话映射与低对比旧色不得回潮
+  assert.match(html, /function errText\(/, "缺少错误人话映射 errText");
+  assert.match(html, /填入 API_TOKEN 后点「保存并加载」/, "401 错误未给出填 Token 的下一步");
+  assert.doesNotMatch(html, /\.pk \.m\{font-size:9px;color:#999/, "球下遗漏小字退回 9px/#999 低对比");
+  assert.match(html, /\.pk\.dan \.ball\{background:#f5a623;color:#111\}/, "胆球未用深字保证对比度");
+});
+

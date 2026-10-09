@@ -9,7 +9,7 @@
 ![version](https://img.shields.io/badge/version-0.18.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
-![unit%20tests](https://img.shields.io/badge/unit%20tests-223-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-224-brightgreen)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
 Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
@@ -197,7 +197,7 @@ flowchart LR
 | 存储 | [D1](https://developers.cloudflare.com/d1/) | SQLite，6 张表（开奖×3 / 复盘 / 收藏 / 同步日志） |
 | 前端 | 原生单页 + [ECharts 5](https://echarts.apache.org/) | `frontend/` 为唯一事实源，构建时内联进 Worker |
 | 定时 | GitHub Actions | 免费版 Workers cron 配额已满，改由 Actions 按开奖日触发落库 |
-| 测试 | `node --test` | 223 项离线单元测试（205 worker + 13 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约、SW 离线队列、D1 迁移版本化、小彩种路由分派、交叉校验对拍、分析页数据契约（8 个彩种字段齐全，防止数字型彩种渲染成空白）、页面渲染契约（8 个彩种的号码/统计文字真的渲染得出来）、前端页面 JS 语法门禁与图表实例登记表、本轮缺陷回归锁）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
+| 测试 | `node --test` | 224 项离线单元测试（206 worker + 13 统计内核 + 5 推送，零依赖离线可跑，含批量验奖的前后端契约、SW 离线队列、D1 迁移版本化、小彩种路由分派、交叉校验对拍、分析页数据契约（8 个彩种字段齐全，防止数字型彩种渲染成空白）、页面渲染契约（8 个彩种的号码/统计文字真的渲染得出来）、前端页面 JS 语法门禁与图表实例登记表、本轮缺陷回归锁）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
 
 ---
 
@@ -304,7 +304,7 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（223 项，零依赖，离线可跑）
+npm test             # 单元测试（224 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
