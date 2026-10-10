@@ -127,5 +127,10 @@ test("前端 index.html：界面评审回归锁（键盘可达、语义、地标
   assert.match(html, /填入 API_TOKEN 后点「保存并加载」/, "401 错误未给出填 Token 的下一步");
   assert.doesNotMatch(html, /\.pk \.m\{font-size:9px;color:#999/, "球下遗漏小字退回 9px/#999 低对比");
   assert.match(html, /\.pk\.dan \.ball\{background:#f5a623;color:#111\}/, "胆球未用深字保证对比度");
+  // 选号球切换后整盘重渲染会销毁焦点，重渲染后必须按同一球回焦，否则键盘连选断链
+  assert.match(html, /async function buildPicker\(id, refocus\)/, "buildPicker 未支持重渲染回焦");
+  assert.match(html, /if \(refocus\) \{ const f = el\.querySelector\(refocus\); if \(f\) f\.focus\(\); \}/, "重渲染后未恢复焦点");
+  assert.match(html, /\.pk\[data-p=/, "数字型选号球未传按位回焦选择器");
+  assert.match(html, /\.pk\[data-z=/, "号码池选号球未传按区回焦选择器");
 });
 

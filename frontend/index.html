@@ -997,7 +997,7 @@ function pickState(id){
 function basketGet(){ try { return JSON.parse(localStorage.getItem('lw_basket') || '[]'); } catch (e) { return []; } }
 function basketSet(b){ localStorage.setItem('lw_basket', JSON.stringify(b)); }
 let __basketUndo = null;
-async function buildPicker(id){
+async function buildPicker(id, refocus){
   const el = $('#s'); if (!el) return;
   const st = pickState(id);
   el.innerHTML = '<div class="muted">选号工作台加载中…</div>';
@@ -1058,8 +1058,9 @@ async function buildPicker(id){
         '<h4 style="margin:14px 0 4px">走势（近 30 期）</h4><div id="ptrend" class="muted">加载中…</div>';
     }
     el.innerHTML = h;
-    el.querySelectorAll('button[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; buildPicker(id); });
-    el.querySelectorAll('button[data-tg]').forEach(b => b.onclick = () => { st.target = b.dataset.tg; buildPicker(id); });
+    if (refocus) { const f = el.querySelector(refocus); if (f) f.focus(); }
+    el.querySelectorAll('button[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; buildPicker(id, 'button[data-m="' + b.dataset.m + '"]'); });
+    el.querySelectorAll('button[data-tg]').forEach(b => b.onclick = () => { st.target = b.dataset.tg; buildPicker(id, 'button[data-tg="' + b.dataset.tg + '"]'); });
     const pkn = $('#pkpickn'); if (pkn) pkn.onchange = () => { st.pickN = Number(pkn.value); };
     el.querySelectorAll('.pk').forEach(c => c.onclick = () => {
       const n = c.dataset.n;
@@ -1071,16 +1072,19 @@ async function buildPicker(id){
         if (st.mode === 'dan' && (id === 'ssq' || id === 'dlt')) { const s = st.target === 'dan' ? st.danAux : st.aux; const o = st.target === 'dan' ? st.aux : st.danAux; o.delete(n); s.has(n) ? s.delete(n) : s.add(n); }
         else { st.aux.has(n) ? st.aux.delete(n) : st.aux.add(n); }
       }
-      buildPicker(id);
+      const refocus = spec.type === 'digit'
+        ? '.pk[data-p="' + c.dataset.p + '"][data-n="' + n + '"]'
+        : '.pk[data-z="' + c.dataset.z + '"][data-n="' + n + '"]';
+      buildPicker(id, refocus);
     });
-    $('#pkclear').onclick = () => { st.main.clear(); st.aux.clear(); st.dan.clear(); st.danAux.clear(); st.perPos.forEach(s => s.clear()); buildPicker(id); };
+    $('#pkclear').onclick = () => { st.main.clear(); st.aux.clear(); st.dan.clear(); st.danAux.clear(); st.perPos.forEach(s => s.clear()); buildPicker(id, '#pkclear'); };
     $('#pkrand').onclick = () => {
       const draw = (min, max, k, notIn) => { const out = new Set(); while (out.size < k) { const v = pad2(min + Math.floor(Math.random() * (max - min + 1))); if (notIn && notIn.has(v)) continue; out.add(v); } return out; };
       st.main.clear(); st.aux.clear(); st.dan.clear(); st.danAux.clear(); st.perPos.forEach(s => s.clear());
       if (spec.type === 'digit') st.perPos.forEach((s, p) => s.add(String(Math.floor(Math.random() * ((id === 'qxc' && p === 6) ? 15 : 10)))));
       else if (id === 'kl8') { const out = new Set(); while (out.size < st.pickN) out.add(pad2(1 + Math.floor(Math.random() * 80))); st.main = out; }
       else { st.main = draw(spec.main.min, spec.main.max, spec.main.pick); if (spec.aux) st.aux = draw(spec.aux.min, spec.aux.max, spec.aux.pick, id === 'qlc' ? st.main : null); }
-      buildPicker(id);
+      buildPicker(id, '#pkrand');
     };
     const renderBasket = () => {
       const b = basketGet().filter(x => x.kind === id);
