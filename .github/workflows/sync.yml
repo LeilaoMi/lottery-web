@@ -121,7 +121,7 @@ jobs:
         if: env.DEPLOY_ENABLED == '1'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          EXPECT_VERSION: 0.18.0
+          EXPECT_VERSION: 0.18.1
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then
@@ -217,7 +217,7 @@ jobs:
           fi
           # 显式 HTTP 调用，不再只依赖 adminSync 内部的 waitUntil 自 fetch：
           # 那条通路在免费层会被静默丢弃，v0.11~v0.12 期间闭环死亡五天而 CI 全绿就是它造成的
-          code=$(curl -sS -m 120 -o /tmp/reviewjob.json -w "%{http_code}" -X POST \
+          code=$(curl -sS -m 120 --retry 2 --retry-delay 15 --retry-all-errors -o /tmp/reviewjob.json -w "%{http_code}" -X POST \
             "$WORKER_URL/api/admin/review-job" -H "Authorization: Bearer $API_TOKEN")
           echo "HTTP $code"; cat /tmp/reviewjob.json
           [ "$code" = "200" ] || { echo "::error::review-job 返回 $code"; exit 1; }
@@ -272,7 +272,7 @@ jobs:
         # 这类行会静默把 sync_health 染绿，且没有任何迹象表明它来自旧代码。
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          EXPECT_VERSION: 0.18.0
+          EXPECT_VERSION: 0.18.1
         run: |
           set -euo pipefail
           if [ -z "${WORKER_URL:-}" ]; then
@@ -300,7 +300,9 @@ jobs:
             echo "::error::未配置 secrets.WORKER_URL 或 secrets.API_TOKEN，跳过同步"
             exit 1
           fi
-          code=$(curl -sS -o /tmp/sync.json -w "%{http_code}" -X POST \
+          # 落库是 INSERT OR REPLACE，幂等可重放：连接被掐（2026-10-14 两次 curl 56 Connection reset）时重试，
+          # 不让一次网络抖动把整晚的落库/复盘/推送全部连带跳过
+          code=$(curl -sS -m 240 --retry 2 --retry-delay 20 --retry-all-errors -o /tmp/sync.json -w "%{http_code}" -X POST \
             "$WORKER_URL/api/admin/sync" -H "Authorization: Bearer $API_TOKEN")
           echo "HTTP $code"
           cat /tmp/sync.json

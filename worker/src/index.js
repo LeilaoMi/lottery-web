@@ -31,7 +31,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.18.0", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.18.1", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -74,6 +74,13 @@ const PREFIX_ROUTES = [
 ];
 export default {
   async fetch(request, env, ctx) {
+    // 兜底：任何处理器漏掉的异常都回 JSON 500，而不是 CF 的 1101 HTML 错误页（前端 res.json() 会再崩一次）
+    try { return await route(request, env, ctx); }
+    catch (e) { return json({ error: "internal", detail: String((e && e.message) || e).slice(0, 200) }, 500); }
+  }
+};
+async function route(request, env, ctx) {
+  {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return cors();
     const page = STATIC_ROUTES[url.pathname];
@@ -85,7 +92,7 @@ export default {
     }
     return json({ error: "not_found" }, 404);
   }
-};
+}
 async function ssqRoute(request, env, url) {
   try {
     const cache = caches.default, ck = new Request(url.toString(), { method: "GET" });
@@ -482,7 +489,12 @@ async function verifyBatchRoute(request, env, url) {
 // 未设置 API_TOKEN 时写接口一律拒绝（fail-closed）。
 function requireAuth(r, env) {
   if (!env.API_TOKEN) return false;
-  return (r.headers.get("Authorization") || "") === `Bearer ${env.API_TOKEN}`;
+  // 定长比较：逐字节 === 会因首个不同字节提前返回而泄露前缀长度（公网可测时序）
+  const a = r.headers.get("Authorization") || "", b = `Bearer ${env.API_TOKEN}`;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 async function getDraws(env, limit) {
   if (env.DATA_SOURCE_OFFICIAL || env.DATA_SOURCE_PUBLIC) return getCustom(env);
@@ -554,7 +566,14 @@ async function adminSync(request, env, ctx) {
   if (!requireAuth(request, env)) return json({ error: "unauthorized admin" }, 401);
   const out = { ran: new Date().toISOString(), results: {} };
   try {
-    const live = await getDraws(env, 100);
+    let live = await getDraws(env, 100);
+    // 快源（500/cwl）全挂时退回 17500 静态文件或 mock 占位，这批就没法交叉校验。
+    // 线上 sync_log 里这类批次多是几秒级抖动（同一晚第二次同步就恢复），写路径值得等 3 秒重试一次；
+    // 读路径不重试（不能把用户请求再拖 8 秒）。
+    if (live._degraded || live._mock) {
+      await new Promise(r => setTimeout(r, 3000));
+      try { const again = await getDraws(env, 100); if (!again._mock && (!again._degraded || live._mock)) live = again; } catch {}
+    }
     // ---- 交叉校验的对等源：17500 全量文件（dlt 路径早就在用它对 500 做 30 期交叉校验）----
     // 为什么必须在这里补：getDraws 的快源层是 500 + cwl，而 cwl 是境内站、从 CF 边缘出口实测长期不通
     // （线上近 30 次同步一次都没应答），于是快层常年只剩 1 个源 → 无从比较 → sync_health 只能判 warn，
@@ -647,7 +666,11 @@ async function favsRoute(request, env, url) {
     try { const r = await env.DB.prepare("SELECT id,kind,numbers,note,created_at FROM favs ORDER BY id DESC LIMIT 100").all(); return json(r.results || []); } catch (e) { return json({ error: String(e) }, 500); }
   }
   if (request.method === "POST") {
-    try { const b = await request.json(); await env.DB.prepare("INSERT INTO favs(kind,numbers,note) VALUES(?,?,?)").bind(String(b.kind || "ssq"), String(b.numbers || ""), String(b.note || "").slice(0, 200)).run(); return json({ ok: true }); } catch (e) { return json({ error: String(e) }, 500); }
+    try { const b = await request.json(); const kind = String(b.kind || "ssq"), numbers = String(b.numbers || "").trim();
+      // 入参校验：kind 必须是已知彩种、号码非空且限长——否则任意大小的串都能写进 D1
+      if (!LOTS.some(l => l.id === kind)) return json({ error: "unknown kind" }, 400);
+      if (!numbers || numbers.length > 500) return json({ error: "numbers required (≤500 chars)" }, 400);
+      await env.DB.prepare("INSERT INTO favs(kind,numbers,note) VALUES(?,?,?)").bind(kind, numbers, String(b.note || "").slice(0, 200)).run(); return json({ ok: true }); } catch (e) { return json({ error: String(e) }, 500); }
   }
   if (request.method === "DELETE") {
     const id = parseInt(url.searchParams.get("id") || "0", 10);
@@ -826,6 +849,10 @@ function syncGrade(consistent, note) {
   // crosscheck_latest_issue_mismatch 是 v0.15.0/0.15.1 时期的旧名，已并入 crosscheck_skipped_*；
   // D1 里那批历史行还带着旧名，不认它会把它们从 warn 误判成 fail（等于用一次改名制造假红）
   if (n.startsWith("crosscheck_skipped") || n === "crosscheck_latest_issue_mismatch") return "warn";
+  // mock = 三源全挂、读路径占位，saveSSQ 对 src=mock 一律跳过 → 0 落库、D1 旧值完好。
+  // 它是「上游短时不可达」而不是「号码冲突」：判 fail 会让一次 5 分钟的抖动把审计染红 50 批（约三周），
+  // 且 detail 里被算成「号码冲突」，等于用措辞制造假警。最新一批仍是 mock 的情况由 auditRoute 单独升级为 fail。
+  if (n === "mock") return "warn";
   return "fail";
 }
 // 一批同步里最严重的档位就是整批的档位
@@ -933,6 +960,8 @@ async function auditRoute(env) {
     // 三态：号码冲突 = fail；单源应答 / 源未同步 / 只剩 17500 = warn（不该染红，但必须明说没校验）
     const fail = syncRows.filter(r => syncGrade(r.consistent, r.note) === "fail");
     const warn = syncRows.filter(r => syncGrade(r.consistent, r.note) === "warn");
+    const outage = syncRows.filter(r => r.note === "mock");
+    const latestDown = syncRows[0] && syncRows[0].note === "mock";
     // 「实际比过几批」与「一致几批」必须分开报。对等源（17500）交叉校验真跑过时，
     // 一致 = 最近 30 期逐期比对全同（比「只看最新一期」强得多）；没跑过只算 warn，不计入「全同」。
     //
@@ -944,10 +973,11 @@ async function auditRoute(env) {
     const strong = syncRows.filter(r => (r.sources || []).length >= 2 && r.consistent).length;
     push({
       id: "sync_health", label: "上游同步健康",
-      status: fail.length ? "fail" : warn.length ? "warn" : "pass",
+      status: (fail.length || latestDown) ? "fail" : warn.length ? "warn" : "pass",
       detail: `近 ${syncRows.length} 次同步：双源比对覆盖 ${crossChecked}/${syncRows.length} 批` +
         (single ? `，其中 ${single} 批只有单一源应答（未做交叉校验）` : "") +
         (fail.length ? `；号码冲突 ${fail.length} 次（最近 ${fail[0].ranAt}）` : "") +
+        (outage.length ? `；三源全挂 ${outage.length} 次（未落库，最近 ${outage[0].ranAt}${latestDown ? "，且最近一次同步仍未恢复" : ""}）` : "") +
         (warn.length ? `；未完成交叉校验 ${warn.length} 次（最近 ${warn[0].ranAt}）` : "") +
         `；口径：对等源 17500 与快源最近 30 期逐期比对，其中 ${strong} 批全同（只有单一源的批次不计入）；最近一次 ${syncRows[0].ranAt}`,
       items: fail.slice(0, 5).map(r => ({ ranAt: r.ranAt, note: r.note }))

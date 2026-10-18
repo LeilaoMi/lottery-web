@@ -1,7 +1,7 @@
 // 离线缓存：外壳缓存优先，开奖数据以网络为准、断网时回退到上次结果
 // 离线写队列：/api/favs 的 POST/DELETE 断网时入队（Cache 存完整 Request），网络恢复后重放。
 // 只队列 favs——其余写接口（admin sync 等）带管理语义，静默重放会把断网期间的运维意图延迟执行，不该做。
-const CACHE = "lottery-web-v3";
+const CACHE = "lottery-web-v4";
 const SHELL = ["/", "/manifest.json", "/icon.svg"];
 const QUEUE = "lw-offline-queue";
 
@@ -77,6 +77,8 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET") return;
 
   const put = r => {
+    // 只缓存成功响应：否则一次 500/超时页会覆盖上次的好数据，离线回退时拿到的就是错误页
+    if (!r || !r.ok) return r;
     const c = r.clone();
     caches.open(CACHE).then(ch => ch.put(req, c)).catch(() => {});
     return r;

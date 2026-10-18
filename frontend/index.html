@@ -163,7 +163,7 @@ async function apiPost(path, body){
 // 统一在这里收敛，避免 "(arr || []).map is not a function"。
 function asArr(x){ if (x == null) return []; return Array.isArray(x) ? x : [x]; }
 function balls(arr, cls){ return asArr(arr).map(x => '<span class="ball ' + (cls || '') + '">' + x + '</span>').join(''); }
-function esc(s){ return String(s == null ? '' : s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function esc(s){ return String(s == null ? '' : s).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
 function errBox(e, el){ el.innerHTML = '<div class="err">' + esc(errText(e)) + '</div>'; }
 function renderNums(o){
   if (!o) return '';

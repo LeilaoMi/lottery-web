@@ -2,17 +2,30 @@ export async function dbGet(db, sql, args = []) {
   if (!db) return null;
   try { return await db.prepare(sql).bind(...args).all(); } catch { return null; }
 }
-export async function saveSSQ(db, draws) {
-  if (!db || !draws?.length) return 0;
+// 批量写：逐行 await 在 880 行/次的同步里要 2~3 分钟（实测 GitHub Actions 端 curl 等到 Connection reset），
+// 改用 D1 batch 按块提交，往返从 ~900 次降到 ~20 次。
+// 逐行先在 JS 侧构造语句（字段缺失会在这里抛、只丢这一行），整块提交失败再退回逐行，保持「坏一行不连坐」的旧语义。
+const CHUNK = 50;
+async function writeRows(db, rows, build) {
+  const stmts = [];
+  for (const d of rows) { try { const st = build(d); if (st) stmts.push(st); } catch {} }
   let n = 0;
-  for (const d of draws.slice(0, 120)) {
-    // src=mock 是 getDraws 三源全挂时的读路径占位（index.js），不是真实开奖。
-    // 落库会让 D1 多出一条假期号（2025091），/api/ssq/history、复盘对账、验奖都会命中它——
-    // 宁可这次 0 落库（D1 旧值仍是好的），也不能让假数据进事实源。
-    if (!d || d.src === "mock") continue;
-    try { await db.prepare("INSERT OR REPLACE INTO draws(code,red,blue,draw_date,src) VALUES(?,?,?,?,?)").bind(d.code, d.red.join(","), d.blue, d.date || "", d.src || "").run(); n++; } catch {}
+  for (let i = 0; i < stmts.length; i += CHUNK) {
+    const part = stmts.slice(i, i + CHUNK);
+    try {
+      if (typeof db.batch === "function") { await db.batch(part); n += part.length; continue; }
+    } catch {}
+    for (const st of part) { try { await st.run(); n++; } catch {} }
   }
   return n;
+}
+export async function saveSSQ(db, draws) {
+  if (!db || !draws?.length) return 0;
+  // src=mock 是 getDraws 三源全挂时的读路径占位（index.js），不是真实开奖。
+  // 落库会让 D1 多出一条假期号（2025091），/api/ssq/history、复盘对账、验奖都会命中它——
+  // 宁可这次 0 落库（D1 旧值仍是好的），也不能让假数据进事实源。
+  return writeRows(db, draws.slice(0, 120), d => (!d || d.src === "mock") ? null :
+    db.prepare("INSERT OR REPLACE INTO draws(code,red,blue,draw_date,src) VALUES(?,?,?,?,?)").bind(d.code, d.red.join(","), d.blue, d.date || "", d.src || ""));
 }
 export async function loadSSQ(db, limit = 30) {
   const r = await dbGet(db, "SELECT code,red,blue,draw_date,src FROM draws ORDER BY code DESC LIMIT ?", [limit]);
@@ -21,15 +34,9 @@ export async function loadSSQ(db, limit = 30) {
 }
 export async function saveDLT(db, draws) {
   if (!db || !draws?.length) return 0;
-  let n = 0;
-  for (const d of draws.slice(0, 120)) {
-    try {
-      await db.prepare("INSERT OR REPLACE INTO dlt_draws(code,front,back,draw_date,src) VALUES(?,?,?,?,?)")
-        .bind(d.code, d.front.join(","), d.back.join(","), d.date || "", d.src || "").run();
-      n++;
-    } catch {}
-  }
-  return n;
+  return writeRows(db, draws.slice(0, 120), d =>
+    db.prepare("INSERT OR REPLACE INTO dlt_draws(code,front,back,draw_date,src) VALUES(?,?,?,?,?)")
+      .bind(d.code, d.front.join(","), d.back.join(","), d.date || "", d.src || ""));
 }
 
 export async function loadDLT(db, limit = 30) {
@@ -44,18 +51,11 @@ export async function loadDLT(db, limit = 30) {
 }
 
 // 小彩种统一以 JSON 存 payload，避免为 6 种玩法各建一张表
-export async function saveSmall(db, kind, draws) {
+export async function saveSmall(db, kind, draws, max = 120) {
   if (!db || !draws?.length) return 0;
-  let n = 0;
-  for (const d of draws.slice(0, 120)) {
-    const payload = JSON.stringify({ digits: d.digits, main: d.main, special: d.special, nums: d.nums });
-    try {
-      await db.prepare("INSERT OR REPLACE INTO small_draws(kind,code,payload,draw_date,src) VALUES(?,?,?,?,?)")
-        .bind(kind, d.code, payload, d.date || "", d.src || "").run();
-      n++;
-    } catch {}
-  }
-  return n;
+  return writeRows(db, draws.slice(0, max), d =>
+    db.prepare("INSERT OR REPLACE INTO small_draws(kind,code,payload,draw_date,src) VALUES(?,?,?,?,?)")
+      .bind(kind, d.code, JSON.stringify({ digits: d.digits, main: d.main, special: d.special, nums: d.nums }), d.date || "", d.src || ""));
 }
 
 export async function loadSmall(db, kind, limit = 30) {
