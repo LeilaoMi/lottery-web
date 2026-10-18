@@ -615,6 +615,8 @@ async function adminSync(request, env, ctx) {
   try {
     let d = [], alt = [];
     try { d = await fetchDLT(60); } catch {}
+    // 与 ssq 同策略：500 抖动时等 3 秒重试一次，否则这批只剩 17500 全量文件、交叉校验被静默跳过
+    if (!d.length) { await new Promise(r => setTimeout(r, 3000)); try { d = await fetchDLT(60); } catch {} }
     try { alt = await fetch17500DLT(); } catch {}
     if (!d.length) d = alt;
     // dlt 交叉校验（与 ssq 同标准）：500 与 17500 最近 30 期逐期比对，不一致的期号拒绝落库
