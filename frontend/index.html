@@ -1219,10 +1219,12 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
     '<div class="row"><button id="pgo">判定奖级</button></div><div id="pout" class="muted"></div>' +
     '<h3 style="margin:16px 0 8px">预测复盘</h3><div class="row"><button id="rgo">加载复盘数据</button></div>' +
     '<div id="rout" class="muted">每日同步会自动快照下一期推荐，开奖后自动对账；此处查看滚动命中率与近期对账明细。</div>' +
-    '<h3 style="margin:16px 0 8px">双色球 · 每注期望回报 + 反热门机选</h3><div class="row"><button id="evg">估算下一期</button> <label class="fld" for="evn">机选 <select id="evn"><option>1</option><option selected>5</option><option>10</option></select> 注</label> <button id="cpg">反热门机选</button></div>' +
+    '<h3 style="margin:16px 0 8px">每注期望回报 + 反热门机选（双色球）</h3><div class="row"><label class="fld" for="evk">彩种 <select id="evk"><option value="ssq">双色球</option><option value="dlt">大乐透</option></select></label> <button id="evg">估算下一期</button> <label class="fld" for="evn">机选 <select id="evn"><option>1</option><option selected>5</option><option>10</option></select> 注</label> <button id="cpg">反热门机选</button></div>' +
     '<div id="evout" class="muted">按现行规则、奖池滚存与近 6 期销量估算一注 2 元的期望回报；反热门机选在冷门度模型认得的特征上取最冷一侧——中奖概率不变，中了之后分奖的人更少。</div>' +
     '<h3 style="margin:16px 0 8px">冷门度 · 观测 vs 预测</h3><div class="row"><button id="cbtg">加载回看数据</button></div>' +
     '<div id="cbtout" class="muted">按预测指数五分位（冷→热）对照实际一等奖注数/亿元。样本外五分位单调上升 = 拟合不是噪声；只影响分奖人数，不改变中奖概率。</div>' +
+    '<h3 style="margin:16px 0 8px">开奖偏差监测（CUSUM）</h3><div class="row"><button id="drg">检测当前彩种</button></div>' +
+    '<div id="drout" class="muted">近 500 期每个号码的双侧 CUSUM，阈值由随机开奖蒙特卡洛标定（误报 ≤5%）。全部在阈值内 = 没有可利用的偏差。</div>' +
     '<h3 style="margin:16px 0 8px">上游同步健康</h3><div class="row"><button id="synctg">加载同步时序</button></div>' +
     '<div id="syncout" class="muted">每次定时同步的拉取量 / 落库量时序；交叉校验不一致的批次会标红——同步任务停摆或上游改版时这里先亮。</div>' +
     '<h3 style="margin:16px 0 8px">站内审计</h3><div class="row"><button id="auditgo">运行站内审计</button></div>' +
@@ -1275,6 +1277,8 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
           (s.randHitRate != null ? '<div>随机基准命中率 ' + (s.randHitRate * 100).toFixed(1) + '%（同批期号对照组：与上面接近 = 策略无信息量）' + pTag(s.randP) + '</div>' : '') +
           (s.danHitRate != null ? '<div>定胆命中率 ' + (s.danHitRate * 100).toFixed(1) + '%' + pTag(s.danP) + '</div>' : '') +
           (s.killWrongRate != null ? '<div>杀号杀错率 ' + (s.killWrongRate * 100).toFixed(1) + '%（越低越好，低于基线才有价值）' + pTag(s.killP) + '</div>' : '') +
+          (s.pickHolm != null ? '<div class="muted">多重比较校正（Holm，' + esc((r.scoreboard || {}).tests) + ' 个检验）后：推荐 p=' + esc(s.pickHolm) + (s.danHolm != null ? '，定胆 p=' + esc(s.danHolm) : '') + (s.killHolm != null ? '，杀号 p=' + esc(s.killHolm) : '') + '</div>' : '') +
+          (s.sprt ? '<div><b>序贯检验（SPRT）：' + (s.sprt.verdict === 'h0' ? '已证伪</b>——已有足够证据说明推荐没有比随机高 20%' : s.sprt.verdict === 'h1' ? '检出提升</b>——命中显著高于随机 20%（仍需排除误报）' : '继续观察</b>——证据还不够下结论') + '（LLR ' + esc(s.sprt.llr) + '，判决线 ' + esc(s.sprt.lower) + ' / ' + esc(s.sprt.upper) + '）</div>' : '') +
           '<div id="revchart" style="height:200px;margin-top:8px"></div>' + '</div>'
         : '<div class="muted">暂无已对账记录：同步任务运行后逐期累积。</div>';
       const rows = (r.rows || []).filter(x => x.checked && x.hit).slice(0, 8);
@@ -1309,7 +1313,7 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
   const pctS = v => v == null ? '—' : (v * 100).toFixed(2) + '%';
   $('#evg').onclick = async () => {
     try {
-      const r = await api('/api/ev');
+      const r = await api('/api/ev?kind=' + $('#evk').value);
       if (r.error) { $('#evout').innerHTML = '<div class="muted">' + esc(r.note || r.error) + '</div>'; return; }
       const n = r.next, h = r.history || [], rr = h.map(x => x.returnRate);
       $('#evout').innerHTML = '<div class="card"><b>' + esc(n.afterCode) + ' 之后一期</b>：每注 2 元期望回报 <b>' + esc(n.avg.ev.toFixed(3)) + ' 元</b>（回报率 ' + pctS(n.avg.returnRate) + '）' +
@@ -1318,6 +1322,8 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
         '<div class="kv"><span>构成：低等奖 / 一等奖 / 二等奖</span><span>' + [n.avg.breakdown.low, n.avg.breakdown.first, n.avg.breakdown.second].map(x => x.toFixed(3)).join(' / ') + ' 元</span></div>' +
         '<div class="kv"><span>预计同期他人中一等奖</span><span>' + esc(n.avg.othersExpected.first) + ' 注</span></div>' +
         (rr.length ? '<div class="kv"><span>近 ' + rr.length + ' 期赛前回报率区间</span><span>' + pctS(Math.min.apply(null, rr)) + ' ~ ' + pctS(Math.max.apply(null, rr)) + '</span></div>' : '') +
+        (n.avg.tier ? '<div class="kv"><span>奖池档位</span><span>' + esc(n.avg.tier) + '</span></div>' : '') +
+        (n.avg.addOn ? '<div class="kv"><span>追加 1 元的期望 / 3 元整注回报率</span><span>' + esc(n.avg.addOn.ev.toFixed(3)) + ' 元 / ' + pctS(n.avg.addOn.ticket3.returnRate) + '</span></div>' : '') +
         '<div class="muted">' + esc(r.note || '') + ' ' + esc(r.disclaimer || '') + '</div></div>';
     } catch (e) { errBox(e, $('#evout')); }
   };
@@ -1331,6 +1337,15 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
         (r.avg ? '<div class="muted">同期普通号码回报率 ' + pctS(r.avg.returnRate) + '；差额全部来自「中了以后少分」。</div>' : '') +
         '<div class="muted">' + esc(r.note || '') + '</div></div>';
     } catch (e) { errBox(e, $('#evout')); }
+  };
+  $('#drg').onclick = async () => {
+    try {
+      const r = await api('/api/drift?kind=' + id);
+      if (r.error) { $('#drout').innerHTML = '<div class="muted">' + esc(r.note || r.error) + '</div>'; return; }
+      $('#drout').innerHTML = '<div class="card"><b>' + esc(r.from) + ' ~ ' + esc(r.to) + '（' + esc(r.window) + ' 期）</b>' +
+        (r.zones || []).map(z => '<div class="kv"><span>' + esc(z.label) + '</span><span>峰值 ' + esc(z.peak) + ' / 阈值 ' + esc(z.threshold) + (z.alarm ? ' · 越界：' + esc(z.alarms.slice(0, 3).map(a => a.name + a.dir).join('、')) : ' · 正常') + '</span></div>').join('') +
+        '<div>' + esc(r.verdict) + '</div><div class="muted">' + esc(r.method) + '</div></div>';
+    } catch (e) { errBox(e, $('#drout')); }
   };
   // 冷门度观测 vs 预测：五分位双轴柱线图。数据由 ssq-fit 烘焙进 Worker，D1 里没有历史注数。
   $('#cbtg').onclick = async () => {

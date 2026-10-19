@@ -124,15 +124,26 @@ describe("奖级规则", () => {
     assert.equal(prizeDLTOld(0, 2), "六等");
     assert.equal(prizeDLTOld(0, 0), "未中");
   });
-  test("大乐透按开奖日期选择版本（分界 2019-02-20，缺失日期沿用现行）", () => {
+  test("大乐透按开奖日期选择版本（分界 2019-02-20 / 2026-02-02，缺失日期沿用现行 2026 版）", () => {
     assert.equal(prizeDLTFor("2019-02-19", 4, 2), "三等");
     assert.equal(prizeDLTFor("2019-02-20", 4, 2), "四等");
-    assert.equal(prizeDLTFor("", 4, 2), "四等");
-    assert.equal(prizeDLTFor(null, 4, 2), "四等");
+    assert.equal(prizeDLTFor("2026-01-31", 4, 2), "四等");
+    assert.equal(prizeDLTFor("2026-02-02", 4, 2), "三等");
+    assert.equal(prizeDLTFor("2026-02-02", 4, 0), "五等");
+    assert.equal(prizeDLTFor("2026-02-02", 3, 1), "六等");
+    assert.equal(prizeDLTFor("2026-02-02", 0, 2), "七等");
+    assert.equal(prizeDLTFor("", 4, 2), "三等");
+    assert.equal(prizeDLTFor(null, 3, 2), "五等");
   });
   test("大乐透固定奖按版本取常量，浮动奖为 null", () => {
-    assert.equal(dltFixedAmount("三等", "2026-09-16"), 10000);
-    assert.equal(dltFixedAmount("九等", "2026-09-16"), 5);
+    assert.equal(dltFixedAmount("三等", "2025-09-16"), 10000);
+    assert.equal(dltFixedAmount("九等", "2025-09-16"), 5);
+    // 2026 新规：随赛前奖池分档；不知道奖池就不猜
+    assert.equal(dltFixedAmount("三等", "2026-09-16"), null);
+    assert.equal(dltFixedAmount("三等", "2026-09-16", 7.9e8), 5000);
+    assert.equal(dltFixedAmount("三等", "2026-09-16", 8e8), 6666);
+    assert.equal(dltFixedAmount("七等", "2026-09-16", 9e8), 7);
+    assert.equal(dltFixedAmount("九等", "2026-09-16", 9e8), null);
     assert.equal(dltFixedAmount("一等", "2026-09-16"), null);
     assert.equal(dltFixedAmount("二等", "2026-09-16"), null);
     assert.equal(dltFixedAmount("三等", "2018-01-01"), null);

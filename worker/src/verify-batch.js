@@ -1,7 +1,7 @@
 // verify-batch：一沓号码一次验完（自用场景：买了 5 注 2 个彩种，想知道昨晚中了什么）
 // 纯函数 + 零依赖，不碰 node 内置模块（Workers 限制）；奖级判定一律复用既有函数，
 // 绝不在这里另写一套奖级规则 —— 两套实现迟早分叉，分叉的就是「验奖说中了、官方说没中」。
-import { prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC } from "./small.js";
+import { prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC, annotatePoolBefore } from "./small.js";
 import { kl8Prize, digit3Prize } from "./calc.js";
 
 // 固定奖金额表：**只收录本站有把握的项**，其余一律返回 null 并说明原因。
@@ -74,7 +74,7 @@ export function scoreTicket(kind, t, d) {
     const F = new Set((d.front || []).map(pad2)), K = new Set((d.back || []).map(pad2));
     const hm = t.main.filter(x => F.has(x)).length, ha = t.aux.filter(x => K.has(x)).length;
     const grade = prizeDLTFor(d.date, hm, ha);
-    const amount = grade === "未中" ? 0 : dltFixedAmount(grade, d.date);
+    const amount = grade === "未中" ? 0 : dltFixedAmount(grade, d.date, d.poolBefore);
     return { hitMain: hm, hitAux: ha, grade, amount, ...(amount == null ? { note: AMOUNT_NOTE.dlt } : {}) };
   }
   if (kind === "qlc") {
@@ -100,6 +100,7 @@ export function scoreTicket(kind, t, d) {
 
 // 主体：tickets（字符串数组）× codes（期号数组）→ 逐注逐期结果 + 汇总
 export function verifyBatch(kind, draws, tickets, codes, mult = 1) {
+  if (kind === "dlt") annotatePoolBefore(draws);
   const sp = SPEC[kind];
   if (!sp) return { error: "未知彩种，可选：" + Object.keys(SPEC).join("/") };
   const list = (tickets || []).map((t, i) => ({ raw: typeof t === "string" ? t : [t.main, t.aux].filter(Boolean).map(x => (Array.isArray(x) ? x : [x]).join(" ")).join(" + "), line: i + 1 })).filter(x => String(x.raw).trim());

@@ -114,21 +114,52 @@ export function prizeDLTOld(hf, hb) {
   return "未中";
 }
 
-// 按开奖日期（YYYY-MM-DD）选择奖级映射；日期缺失或非法时沿用现行规则（保持旧行为）。
+// 2026 新规（财综〔2025〕51 号，第 26014 期 2026-02-02 首次开奖起）：13 个中奖条件不变，9 奖级合并为 7 个——
+// 「5+0」与「4+2」并为三等，「4+0」与「3+2」并为五等；三~七等固定奖随奖池分两档（<8 亿 / ≥8 亿）。
+export const DLT_CUTOVER_2026 = "2026-02-02";
+export function prizeDLT2026(hf, hb) {
+  if (hf === 5 && hb === 2) return "一等";
+  if (hf === 5 && hb === 1) return "二等";
+  if ((hf === 5 && hb === 0) || (hf === 4 && hb === 2)) return "三等";
+  if (hf === 4 && hb === 1) return "四等";
+  if ((hf === 4 && hb === 0) || (hf === 3 && hb === 2)) return "五等";
+  if ((hf === 3 && hb === 1) || (hf === 2 && hb === 2)) return "六等";
+  if ((hf === 3 && hb === 0) || (hf === 2 && hb === 1) || (hf === 1 && hb === 2) || (hf === 0 && hb === 2)) return "七等";
+  return "未中";
+}
+const dayOf = d => { const x = String(d || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : ""; };
+// 按开奖日期（YYYY-MM-DD）选择奖级映射；日期缺失或非法时沿用现行规则（2026 版）。
 export function prizeDLTFor(dateStr, hf, hb) {
-  const day = String(dateStr || "").slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(day) && day < DLT_CUTOVER) return prizeDLTOld(hf, hb);
-  return prizeDLT(hf, hb);
+  const day = dayOf(dateStr);
+  if (day && day < DLT_CUTOVER) return prizeDLTOld(hf, hb);
+  if (day && day < DLT_CUTOVER_2026) return prizeDLT(hf, hb);
+  return prizeDLT2026(hf, hb);
 }
 
 // 大乐透固定奖官方值（基本投注；追加/派奖/特别规定另计）。旧规则三等、新规则一二等为浮动奖。
 export const DLT_FIXED_NEW = { 三等: 10000, 四等: 3000, 五等: 300, 六等: 200, 七等: 100, 八等: 15, 九等: 5 };
 export const DLT_FIXED_OLD = { 四等: 200, 五等: 10, 六等: 5 };
-export function dltFixedAmount(grade, dateStr) {
+export const DLT_FIXED_2026_LOW = { 三等: 5000, 四等: 300, 五等: 150, 六等: 15, 七等: 5 };
+export const DLT_FIXED_2026_HIGH = { 三等: 6666, 四等: 380, 五等: 200, 六等: 18, 七等: 7 };
+// poolBefore = 该期开奖前的奖池滚存（即上一期开奖后的奖池）。2026 新规下固定奖随奖池分档，
+// 不知道奖池时返回 null（「本站未校验」），不猜低档——猜错就是把 6666 说成 5000。
+export function dltFixedAmount(grade, dateStr, poolBefore) {
   if (!grade || grade === "未中") return null;
-  const day = String(dateStr || "").slice(0, 10);
-  const table = (/^\d{4}-\d{2}-\d{2}$/.test(day) && day < DLT_CUTOVER) ? DLT_FIXED_OLD : DLT_FIXED_NEW;
-  return table[grade] ?? null;
+  const day = dayOf(dateStr);
+  if (day && day < DLT_CUTOVER) return DLT_FIXED_OLD[grade] ?? null;
+  if (day && day < DLT_CUTOVER_2026) return DLT_FIXED_NEW[grade] ?? null;
+  if (!(grade in DLT_FIXED_2026_LOW)) return null;
+  if (!(poolBefore >= 0)) return null;
+  return (poolBefore >= 8e8 ? DLT_FIXED_2026_HIGH : DLT_FIXED_2026_LOW)[grade];
+}
+// 给开奖序列（新→旧）补上 poolBefore：第 i 期的赛前奖池 = 第 i+1 期开奖后的奖池（500 详情的 pool 列）
+export function annotatePoolBefore(draws) {
+  for (let i = 0; i < (draws || []).length; i++) {
+    const prev = draws[i + 1];
+    const p = prev && prev.detail && prev.detail.pool;
+    if (draws[i] && draws[i].poolBefore === undefined && p >= 0) draws[i].poolBefore = p;
+  }
+  return draws;
 }
 
 // 七乐彩奖级（官方七档）：hitMain 基本号命中数，hitSpecial 特别号是否命中

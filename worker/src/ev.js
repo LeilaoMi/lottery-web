@@ -113,3 +113,59 @@ export function coldPicks(n = 5, rnd = Math.random) {
   }
   return out;
 }
+
+// ---------------- 大乐透（2026 新规，第 26014 期起） ----------------
+// 规则（财综〔2025〕51 号）：当期奖金 = 销售额 × 49%；R = 当期奖金 − 固定奖总额
+//   一等奖：奖池 <1 亿 → 78%R + 奖池；1~8 亿 → (58%R + 奖池) 与 20%R 两段；≥8 亿 → (20%R + 奖池) 与 40%R 两段；各段单注封顶 500 万
+//   二等奖：奖池 <8 亿 → 22%R；≥8 亿 → 40%R；封顶 500 万。一、二等奖单期总额各限 1 亿（期望注数下几乎不触发，未建模）
+//   三~七等固定奖随奖池分档（<8 亿：5000/300/150/15/5；≥8 亿：6666/380/200/18/7）
+//   追加投注 +1 元：浮动奖按基本投注的 80% 另得，均分时按 0.8 注计（追加占比未知，λ 按基本投注计）
+export const DLT_TOTAL = 21425712; // C(35,5) × C(12,2)
+export const DLT_PROB = { p1: 1, p2: 20, p3: 195, p4: 3000, p5: 11100, p6: 127600, p7: 1287281 };
+const DLT_FIX = { low: [5000, 300, 150, 15, 5], high: [6666, 380, 200, 18, 7] };
+function dltLowEV(high) {
+  const a = high ? DLT_FIX.high : DLT_FIX.low, P = DLT_PROB;
+  return (P.p3 * a[0] + P.p4 * a[1] + P.p5 * a[2] + P.p6 * a[3] + P.p7 * a[4]) / DLT_TOTAL;
+}
+export function dltEV({ sales, pool }) {
+  if (!(sales > 0) || !(pool >= 0)) return null;
+  const high = pool >= 8e8, tickets = sales / PRICE, low = dltLowEV(high);
+  const R = Math.max(0, 0.49 * sales - tickets * low);
+  const l1 = tickets * DLT_PROB.p1 / DLT_TOTAL, l2 = tickets * DLT_PROB.p2 / DLT_TOTAL;
+  const pay1 = pool < 1e8 ? expShare(0.78 * R + pool, l1)
+    : high ? expShare(0.20 * R + pool, l1) + expShare(0.40 * R, l1)
+    : expShare(0.58 * R + pool, l1) + expShare(0.20 * R, l1);
+  const pay2 = expShare((high ? 0.40 : 0.22) * R, l2);
+  const ev1 = pay1 * DLT_PROB.p1 / DLT_TOTAL, ev2 = pay2 * DLT_PROB.p2 / DLT_TOTAL;
+  const ev = low + ev1 + ev2, addOn = 0.8 * (ev1 + ev2);
+  return {
+    ev: +ev.toFixed(4), returnRate: +(ev / PRICE).toFixed(4),
+    breakdown: { low: +low.toFixed(4), first: +ev1.toFixed(4), second: +ev2.toFixed(4) },
+    // 追加：多付 1 元换 0.8×浮动奖期望
+    addOn: { ev: +addOn.toFixed(4), returnRate: +addOn.toFixed(4), ticket3: { ev: +(ev + addOn).toFixed(4), returnRate: +((ev + addOn) / 3).toFixed(4) } },
+    tier: high ? "≥8亿（固定奖上调档）" : pool >= 1e8 ? "1~8亿" : "<1亿",
+    expectPay: { first: Math.round(pay1), second: Math.round(pay2) },
+    othersExpected: { first: +l1.toFixed(2), second: +l2.toFixed(1) },
+    highFund: Math.round(R)
+  };
+}
+export function dltEVReport(draws) {
+  // 只用新规执行后的期号做回放（26014 起）；更早的期按旧规则开奖，套新规会算错
+  const rows = (draws || []).filter(d => d && d.detail && d.detail.sales > 0 && d.detail.pool >= 0 && /^\d{5}$/.test(String(d.code)));
+  if (rows.length < 7) return { supported: true, error: "insufficient_detail", note: "500 源未返回奖池/销量详情，暂时无法估算" };
+  const recent = rows.slice(0, 6);
+  const salesEst = Math.round(recent.reduce((s, d) => s + d.detail.sales, 0) / recent.length);
+  const poolNow = rows[0].detail.pool;
+  const next = { afterCode: rows[0].code, pool: poolNow, salesEst, avg: dltEV({ sales: salesEst, pool: poolNow }) };
+  const history = [];
+  for (let i = 0; i + 1 < rows.length && history.length < 60; i++) {
+    if (String(rows[i].code) < "26014") break;
+    const e = dltEV({ sales: rows[i].detail.sales, pool: rows[i + 1].detail.pool });
+    if (e) history.push({ code: rows[i].code, date: rows[i].date, poolBefore: rows[i + 1].detail.pool, sales: rows[i].detail.sales, ev: e.ev, returnRate: e.returnRate, tier: e.tier });
+  }
+  return {
+    supported: true, kind: "dlt", next, history,
+    note: "按 2026 新规与期望注数估算，销量取近 6 期均值、奖池取最近一期滚存；追加投注占比未知，均分人数按基本投注计；一二等奖单期 1 亿总额上限未建模。",
+    disclaimer: "随机游戏，期望回报恒为负；本数字只用于比较不同期之间哪期亏得少，不构成购买建议。"
+  };
+}

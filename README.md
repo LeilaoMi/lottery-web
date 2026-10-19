@@ -6,13 +6,13 @@
 
 Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 
-![version](https://img.shields.io/badge/version-0.19.0-blue)
+![version](https://img.shields.io/badge/version-0.20.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
-![unit%20tests](https://img.shields.io/badge/unit%20tests-237-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-242-brightgreen)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
-*开奖查询 · 批量验奖 · 每注期望回报 · 反热门机选 · 冷门度 · 选号工作台 · 缩水过滤 · 统计分析 · 预测复盘 · 站内审计*
+*开奖查询 · 批量验奖 · 每注期望回报 · 反热门机选 · 冷门度 · 选号工作台 · 缩水过滤 · 统计分析 · 预测复盘记分牌 · 开奖偏差监测 · 站内审计*
 
 </div>
 
@@ -49,17 +49,25 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 有高有低、没有一个显著，和纯随机的表现一致。预测模块因此保留为**可证伪的娱乐功能**：
 页面照常给出推荐，但复盘数字公开挂着，不再继续加杀号公式（只会制造过拟合）。
 
-**② 真正能动的只有「分奖」，v0.19 把它做成了工具。**
+**② 真正能动的是「分奖」和「挑期」，v0.19~v0.20 把它们做成了工具（`/api/ev`、`/api/coldpick`）。**
 
-- **每注期望回报**（`/api/ev`）：按现行双色球规则 + 奖池滚存 + 近 6 期销量，估算一注 2 元能拿回多少。
-  当前约 **0.99 元（回报率 49.5%）**。奖池常年 10 亿上下、远超两段封顶能派发的上限，
-  近 60 期赛前回报率只在 49.51%~49.53% 之间——**「挑奖池大的期买」在现在这个奖池水位下没有区别**，数字会如实显示这一点。
-- **反热门机选**（`/api/coldpick`）：在冷门度模型认得的特征上取最冷一侧（含 32/33、无尾 8、含尾 4、蓝球 01/14/15/16），
-  同奖倍率约 0.745，回报率约 **51.7%**（普通号码 49.5%）。中奖概率完全不变，多出来的那 2 个百分点全部来自「中了以后少分」。
-- **冷门度**只发双色球：大乐透拟合过，但预注册的安慰剂对照没通过，按规则不发布（见 [docs/coldness-dlt-2026-09.md](docs/coldness-dlt-2026-09.md)）；
+- **双色球**：一注 2 元当前期望拿回约 **0.99 元（回报率 49.5%）**。奖池常年约 10 亿、远超两段封顶能派发的上限，
+  近 60 期赛前回报率只在 49.51%~49.53% 之间——**双色球挑期没有意义**。
+- **大乐透**（2026 新规）：近 60 期赛前回报率 **48.2%~58.3%**，差距全部来自奖池是否 ≥8 亿——
+  到了这一档，三~七等固定奖上调 20%~40%、二等奖从 22% 提到 40%。**大乐透是唯一值得「看奖池再买」的彩种**；
+  追加投注只分浮动奖，3 元整注的回报率反而低于 2 元基本投注。
+- **反热门机选（双色球）**：在冷门度模型认得的特征上取最冷一侧（含 32/33、无尾 8、含尾 4、蓝球 01/14/15/16），
+  同奖倍率约 0.745，回报率约 **51.7%**（普通号码 49.5%）。中奖概率完全不变，多出来的全部来自「中了以后少分」。
+- 冷门度只发双色球：大乐透拟合过，但预注册的安慰剂对照没通过，按规则不发布（见 [docs/coldness-dlt-2026-09.md](docs/coldness-dlt-2026-09.md)）；
   固定奖玩法（快乐8 / 3D / 排列3 / 排列5）没人和你分，冷门度对它们的影响严格为 0。
 
-**③ 工程状态**：8 个彩种每天自动落库，复盘闭环、每日 D1 备份、站内审计都在跑；`/api/audit` 当前是 **warn**，
+**③ 开奖机没有可利用的偏差。** `/api/drift` 对 8 个彩种近 500 期的每个号码跑双侧 CUSUM，阈值由随机开奖蒙特卡洛标定（误报 ≤5%）。
+2026-10-19 全部在阈值内（如双色球红球峰值 12.0 / 阈值 14.9，蓝球 16.7 / 18.3）。
+
+**④ 复盘记分牌加了预先写死的终止规则。** 8 彩种 × 3 指标先做 Holm 多重比较校正；推荐命中再跑序贯概率比检验（SPRT，H1 = 比随机高 20%）。
+SPRT 一旦判 h0，该彩种的推荐就标为「已证伪」，不再靠人眼盯 p 值。
+
+**⑤ 工程状态**：8 个彩种每天自动落库，复盘闭环、每日 D1 备份、站内审计都在跑；`/api/audit` 当前是 **warn**，
 原因如实写在里面：500.com 从 CF 出口偶尔不通，这些批次只剩单一源，没做成交叉校验。
 
 ## ✨ 它能做什么
@@ -68,10 +76,12 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 |---|---|---|
 | 查开奖、看奖池销量 | 开奖页 / `/api/{kind}/latest`、`history` | 双色球·大乐透附奖池、销量、一二等奖（仅 500 源有，其余显示「—」，不编造） |
 | 对一堆票 | 批量验奖 `/api/verify-batch` | ≤200 注 × ≤10 期；浮动奖金额标 `null`（未校验），不当成 0；大乐透按开奖日期选奖级版本 |
-| 知道这期亏多少 | 每注期望回报 `/api/ev` | 双色球；拆成低等奖/一等奖/二等奖三部分，附近 60 期赛前回放 |
+| 知道这期亏多少 | 每注期望回报 `/api/ev?kind=ssq|dlt` | 拆成低等奖/一等奖/二等奖；大乐透附奖池档位与追加投注回报；近 60 期赛前回放 |
 | 选一组少人买的号 | 反热门机选 `/api/coldpick`、冷门度 `/api/coldness` | 只影响分奖人数；每注附带自己的期望回报 |
 | 自己选号、算注数 | 选号工作台、`/api/calc`、`/api/filter`、`/api/rotation` | 选球盘标当前遗漏；缩水过滤只改变覆盖范围，不改变单注概率；旋转矩阵约理论下界 1.5 倍注数 |
 | 看统计、玩预测 | `/api/predict`、`/api/analyze`、`/api/backtest`、`/api/kill-calibrated` | 6 套策略 + 10 类杀号公式 + 定胆；回测给随机基线与 p 值，有未来函数防护 |
+| 看预测到底有没有用 | `/api/review` 记分牌 | 滚动命中率 + 二项检验 + Holm 校正 + SPRT 判决（已证伪 / 继续观察 / 检出提升） |
+| 看开奖机有没有偏 | `/api/drift?kind=` | 近 500 期逐号 CUSUM，阈值蒙特卡洛标定 |
 | 检查站点健康 | `/api/audit`、`/api/review`、`/api/sync-log` | 新鲜度 / 复盘闭环 / 同步健康 / 冷门度回看 / 免责声明五项；skip 绝不算 pass |
 
 ## 🛡️ 数据与可靠性
@@ -83,6 +93,8 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 - **快源抖动重试**：落库时 500 源失败会等 3 秒重试一次；GitHub 端落库与复盘请求带 `--retry`（两者都幂等）。
 - **批量落库**：D1 `batch` 50 条一块，一次同步约 20 次往返，整轮约 1 分钟（以前逐行 880 次、2~3 分钟，会被掐断）。
 - **降级要开口**：小彩种上游挂了读 D1 并标 `degraded`；双色球全挂时的占位数据在页面上红框标明；所有上游 fetch 有硬超时（8s / 全量 20s）。
+- **大乐透 2026 新规验奖**：第 26014 期（2026-02-02）起奖级 9→7、固定奖随赛前奖池分 <8 亿 / ≥8 亿两档。
+  验奖与批量验奖按开奖日期自动选 2007 / 2019 / 2026 三版规则，固定奖档位取上一期开奖后的奖池；拿不到奖池就返回 `null`（未校验），不猜。
 - **防假数据进库**：占位期号永不落库；Service Worker 只缓存成功响应；未捕获异常统一回 JSON 500。
 
 ## ⚙️ 运维现状
@@ -112,7 +124,7 @@ GitHub Actions ──POST /api/admin/sync──▶ Worker ──▶ 500 / 17500�
 | 运行时 | Cloudflare Workers | 纯 JS 路由表，零 npm 依赖 |
 | 存储 | D1 | 6 张表（开奖×3 / 复盘 / 收藏 / 同步日志），迁移版本化 |
 | 前端 | 原生单页 + ECharts 5 | `frontend/` 是唯一事实源，构建时内联 |
-| 测试 | `node --test` | 237 项离线单元测试（219 worker + 13 统计内核 + 5 推送，零依赖离线可跑）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
+| 测试 | `node --test` | 242 项离线单元测试（224 worker + 13 统计内核 + 5 推送，零依赖离线可跑）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
 
 ## 🎫 支持彩种
 
@@ -217,7 +229,7 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（237 项，零依赖，离线可跑）
+npm test             # 单元测试（242 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
@@ -273,11 +285,12 @@ node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与
 | `/api/backtest` | `kind=`, `periods=1..600` | 历史回测：真实命中率 vs 随机基线 + p 值 + 分年稳定性；>60 期自动抽样（返回 `tested/stride`） |
 | `/api/kill-calibrated` | `kind=`, `holdout=0..0.5` | 校准杀号（按分公式回测生成动态权重）；`holdout=0.3` 触发外推检验；结果缓存 6h |
 | `/api/kill-tune` | `kind=` | 杀号阈值寻优：5 分位 × 两段 10 次回测，`gap` 判据防调参过拟合；结果缓存 6h |
-| `/api/review` | `kind=`（可选） | 预测复盘：滚动命中率 + 二项检验 p 值 + 对账明细 |
+| `/api/review` | `kind=`（可选，只筛明细） | 预测复盘：全部已对账行的滚动命中率 + 二项检验 p 值 + `*Holm` 校正 p 值 + `sprt` 判决；`scoreboard` 汇总已证伪彩种 |
 | `/api/trend` | `kind=`, `limit=5..60` | 逐期遗漏走势 |
 | `/api/ticket` | `kind=`, `dan=`, `tuo=` | 胆拖投注单（ssq/dlt/qlc） |
 | `/api/coldness` | `kind=ssq`, `nums=01,05,...`, `blue=09` | 冷门度：估计中奖后**与多少人分奖**（`ratio`<1 有利）。只影响分奖人数，**不改变中奖概率**；仅双色球有拟合系数 |
-| `/api/ev` | `kind=ssq` | 双色球下一期每注期望回报（低等奖/一等奖/二等奖拆分）+ 近 60 期赛前回放；只有 500 源带奖池/销量，备源降级时如实 503 |
+| `/api/ev` | `kind=ssq` 或 `dlt` | 下一期每注期望回报（低等奖/一等奖/二等奖拆分）+ 近 60 期赛前回放；大乐透按 2026 新规，附奖池档位与追加投注回报。只有 500 源带奖池/销量，备源降级时如实 503 |
+| `/api/drift` | `kind=` | 开奖偏差 CUSUM：近 500 期逐号（数字型逐位逐数字）双侧 CUSUM 峰值 vs 蒙特卡洛 95% 阈值，越界号码点名；缓存 6h |
 | `/api/coldpick` | `n=1..20` | 反热门机选：冷门度最冷一侧的随机组合，每注附同奖倍率与期望回报；中奖概率不变 |
 
 > **数字型彩种（fc3d / pl3 / pl5 / qxc）没有号码池**，因此：`/api/trend` 的逐期遗漏走势不适用（改看「各位置当前遗漏」）、
@@ -300,7 +313,7 @@ node scripts/coldness/ssq-fit.mjs                     # 冷门度重拟合 + 与
 | `/api/calc` | `kind=` + 复式/胆拖/追号参数 | 注数 / 金额 / 追号计划（`chase>1` 时附 `plan[].date` / `chase.dates` 开奖日历投影 + 免责说明） |
 | `/api/miss` | `kind=`, `win=5..200` | 当前遗漏：每个号码的当前/平均/最大遗漏与窗口频次（号码池型给 `main`/`aux`，数字型给 `perPos[]`）；选号工作台选球盘的数据源，纯历史描述 |
 | `/api/filter` | POST `{kind, pool?, dan?, exclude?, pick?, conditions:{sumMin,sumMax,oddMin,oddMax,spanMin,spanMax,acMin,acMax,consecMin,consecMax,repeatMin,repeatMax}}` | 缩水过滤：枚举候选池组合按形态条件筛（仅号码池型）；枚举空间上限 30 万、返回上限 2000 注；过滤只改变覆盖范围，不改变单注中奖概率 |
-| `/api/prize` | `kind=` + 命中参数（大乐透可选 `date=YYYY-MM-DD` 选规则版本） | 奖级与固定奖金额 |
+| `/api/prize` | `kind=` + 命中参数（大乐透可选 `date=YYYY-MM-DD` 选规则版本、`pool=` 赛前奖池） | 奖级与固定奖金额；大乐透 2026 新规不传奖池时给出两档 `tiers` |
 | `/api/rotation` | `n=&pick=&hit=` | 旋转矩阵（覆盖设计，注数约理论下界 1.5 倍） |
 | `/api/favs` | GET/POST/DELETE | 收藏（需鉴权） |
 | `/api/admin/sync` | POST | 触发 8 彩种落库（需鉴权），响应含各彩种 `crosscheck` 报告 |
@@ -354,7 +367,9 @@ lottery-web/
 │   │   ├── predict.js      # 统一预测引擎（8 彩种共用）
 │   │   ├── coldness.js     # 冷门度（分奖人数）评分，系数由 scripts/coldness 拟合
 │   │   ├── coldness-backtest.js # 冷门度回看：观测分档 vs 预测是否同向
-│   │   ├── ev.js           # 双色球每注期望回报（现行规则 + 泊松均分）+ 反热门机选
+│   │   ├── ev.js           # 每注期望回报（双色球现行规则 / 大乐透 2026 新规 + 泊松均分）+ 反热门机选
+│   │   ├── scoreboard.js   # 复盘记分牌：Holm 多重比较校正 + 二项 SPRT
+│   │   ├── drift.js        # 开奖偏差 CUSUM 监测（阈值蒙特卡洛标定）
 │   │   ├── verify-batch.js # 批量验奖：解析贴进来的票 → 复用上面的奖级函数逐注判
 │   │   ├── ssq.js          # 双色球取数（500 + cwl + 17500）与验奖
 │   │   ├── dlt.js          # 大乐透取数与验奖
@@ -385,6 +400,7 @@ lottery-web/
 │   │   ├── detail.test.mjs # 开奖详情：500 页面奖池/销量/奖级列序夹具
 │   │   ├── filter.test.mjs # 缩水过滤：枚举/条件/胆码排除/空间上限
 │   │   ├── ev.test.mjs     # 期望回报：组合数 / 两段封顶规则 / 冷门倍率 / 机选约束
+│   │   ├── scoreboard-drift.test.mjs # Holm / SPRT / CUSUM 越界点名 / 大乐透新规 EV
 │   │   ├── hardening.test.mjs # v0.18.1 深挖回归锁：批量落库 / 收藏入参 / 全局兜底 / 定长鉴权 / 全挂分级 / 转义
 │   │   └── live.network.mjs # 真实数据源连通性（需联网，刻意不叫 *.test.mjs 以免混入离线套件）
 │   ├── wrangler.toml       # 部署模板（database_id 脱敏为 REPLACE_ME，routes 默认注释）
@@ -393,7 +409,8 @@ lottery-web/
 │   ├── build-ui.mjs        # frontend/ → worker/src/ui.js 打包脚本
 │   ├── notify.mjs          # 开奖推送：读公共接口 → 按各家格式 POST webhook（默认不发）
 │   ├── notify.test.mjs     # 推送测试：payload 形状 + 本地 http server 真发一次
-│   ├── page-audit.mjs      # 线上巡检：7 个标签页 × 8 彩种逐接口查空响应/空字段（BASE 环境变量可覆盖站点）
+│   ├── drift-calibrate.mjs # 重新标定 CUSUM 阈值（蒙特卡洛 95% 分位）
+│   ├── page-audit.mjs      # 线上巡检：各标签页 × 8 彩种逐接口查空响应/空字段（BASE 环境变量可覆盖站点）
 │   ├── verify-live-ui.mjs  # 部署后核对线上页面脚本的关键渲染事实（不依赖浏览器）
 │   ├── randomness/         # 随机性审计：8 彩种取数 + A/B/C/D/E 检验（零依赖，见其 README）
 │   └── coldness/           # 冷门度系数拟合 + 样本外验证 + 与线上常量对账
@@ -438,7 +455,8 @@ lottery-web/
 `v0.13` 顺手与可运维（批量验奖 + 前后端契约测试 + 可选 D1 备份 / 开奖推送，默认关闭）→
 `v0.14` 大乐透奖级版本化 → `v0.15` 缺陷排查两轮 + CI 自动部署 → `v0.16` 选号工作台 + 当前遗漏 →
 `v0.17` 缩水过滤 + 走势格子图 → `v0.18` 开奖详情（奖池/销量/一二等奖，仅双色球·大乐透）→
-`v0.19` 从猜号转向算账：每注期望回报 + 反热门机选（并含 v0.18.1 的全量深挖修复）
+`v0.19` 从猜号转向算账：每注期望回报 + 反热门机选（并含 v0.18.1 的全量深挖修复）→
+`v0.20` 大乐透 2026 新规（验奖修正 + 期望回报）+ 复盘记分牌（Holm / SPRT）+ 开奖偏差 CUSUM
 
 完整变更记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 

@@ -88,12 +88,12 @@ test("前端渲染：大乐透浮动奖仍用见公告占位（固定奖按版�
   assert.ok(html.includes("部分奖级金额未校验"), "要有彩种级别的说明");
 });
 
-test("前端渲染：大乐透固定奖按版本给金额（新规则三等 10000，旧规则四等 200）", () => {
+test("前端渲染：大乐透固定奖按版本给金额（2019 规则三等 10000，旧规则四等 200）", () => {
   const draws = [
-    { code: "26106", date: "2026-09-16", front: ["01", "05", "12", "22", "30"], back: ["03", "07"] },
+    { code: "25106", date: "2025-09-16", front: ["01", "05", "12", "22", "30"], back: ["03", "07"] },
     { code: "18001", date: "2018-01-03", front: ["01", "05", "12", "22", "30"], back: ["03", "07"] },
   ];
-  const rNew = verifyBatch("dlt", draws, ["01 05 12 22 30 + 08 09"], ["26106"], 1);
+  const rNew = verifyBatch("dlt", draws, ["01 05 12 22 30 + 08 09"], ["25106"], 1);
   assert.equal(rNew.rounds[0].results[0].grade, "三等");
   assert.equal(rNew.rounds[0].results[0].amount, 10000);
   const rOld = verifyBatch("dlt", draws, ["01 05 12 22 07 + 03 08"], ["18001"], 1);

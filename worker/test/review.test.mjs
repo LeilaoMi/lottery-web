@@ -20,6 +20,8 @@ function makeDB(seed) {
       const rows = args.length ? state.predlog.filter(r => r.kind === args[0]) : state.predlog;
       return rows.map(({ id, kind, code, payload, hit, checked, created_at }) => ({ id, kind, code, payload, hit, checked, created_at }));
     }
+    // 汇总查询（全部彩种的已对账行，不受明细 LIMIT 截断）
+    if (/^SELECT kind,hit,checked FROM predlog WHERE checked=1/.test(sql)) return state.predlog.filter(r => r.checked).map(({ kind, hit, checked }) => ({ kind, hit, checked }));
     if (/^UPDATE predlog/.test(sql)) { state.updates.push({ id: args[1], hit: JSON.parse(args[0]) }); return []; }
     if (/^INSERT INTO predlog/.test(sql)) { const [kind, code, payload] = args; if (!state.predlog.some(r => r.kind === kind && r.code === code)) { state.inserts.push({ kind, code, payload }); state.predlog.push({ id: 900, kind, code, payload, checked: 0 }); } return []; }
     if (/small_draws/.test(sql)) return args[0] === "fc3d" ? state.small : [];

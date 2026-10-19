@@ -1,6 +1,6 @@
 import { fetch500, fetchCWL, fetch17500, trend, verify } from "./ssq.js";
 import { fetchDLT, verifyDLT, fetch17500DLT } from "./dlt.js";
-import { fetchSmall, prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC, rotation } from "./small.js";
+import { fetchSmall, prizeSSQ, prizeDLTFor, dltFixedAmount, prizeQLC, rotation, annotatePoolBefore } from "./small.js";
 import { verifyBatch } from "./verify-batch.js";
 import { SPECS, analyzeAll, killList, danList, recommendAll, backtest, calibrate, ticket, trendPool, shapeTrans, thresholdTune, binomP, poolOf, mainOf, auxOf, posPool, digitBaseline, sampleGate, DISCLAIMER } from "./predict.js";
 import { calcBet, kl8Prize, digit3Prize, chaseDrawDates } from "./calc.js";
@@ -9,7 +9,9 @@ import { filterPool } from "./filter.js";
 import { coldness, COLD_KINDS } from "./coldness.js";
 import { COLDBT } from "./coldness-backtest.js";
 import { fetchT } from "./net.js";
-import { ssqEVReport, ssqEV, coldPicks } from "./ev.js";
+import { ssqEVReport, ssqEV, coldPicks, dltEVReport } from "./ev.js";
+import { holm, sprt } from "./scoreboard.js";
+import { driftReport } from "./drift.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall, loadSyncLog } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "前6位0-9+第7位0-14", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
@@ -32,7 +34,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.19.0", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.20.0", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -62,15 +64,25 @@ const API_ROUTES = {
   "/api/admin/review-job": (rq, env) => reviewJob(rq, env),
   "/api/review": (rq, env, ctx, url) => reviewRoute(rq, env, url),
   "/api/ev": (rq, env, ctx, url) => evRoute(env, url),
+  "/api/drift": (rq, env, ctx, url) => driftRoute(env, url),
   "/api/coldpick": (rq, env, ctx, url) => coldPickRoute(env, url),
 };
 // 双色球期望回报：只有 500 源带奖池/销量；备源降级时如实 503，不拿空详情硬算
 async function evRoute(env, url) {
   const kind = (url.searchParams.get("kind") || "ssq").trim();
-  if (kind !== "ssq") return json({ supported: false, kind, note: "期望回报目前只覆盖双色球（大乐透奖级/追加/奖池分档规则不同，未建模）" }, 200, 3600);
-  const draws = await drawsOf(env, "ssq", 100);
-  const r = ssqEVReport(draws);
+  if (kind !== "ssq" && kind !== "dlt") return json({ supported: false, kind, note: "期望回报只对浮动奖彩种有意义（双色球、大乐透）；其余彩种奖金固定，回报率恒定" }, 200, 3600);
+  const draws = await drawsOf(env, kind, 100);
+  const r = kind === "dlt" ? dltEVReport(draws) : ssqEVReport(draws);
   return r.error ? json(r, 503) : json(r, 200, 1800);
+}
+// 开奖偏差 CUSUM 监测：近 500 期每个号码（数字型为每位 × 每个数字）的双侧 CUSUM，
+// 阈值由蒙特卡洛按「全族 500 期内误报 ≤5%」标定（drift.js 的 H 表）
+async function driftRoute(env, url) {
+  const kind = (url.searchParams.get("kind") || "ssq").trim();
+  if (!SPECS[kind]) return json({ error: "unknown kind" }, 400);
+  const draws = await drawsDeep(env, kind);
+  const r = driftReport(kind, draws);
+  return r.error ? json(r, 503) : json(r, 200, 21600);
 }
 async function coldPickRoute(env, url) {
   const n = num(url, "n", 5, 1, 20);
@@ -177,10 +189,12 @@ async function dltRoute(request, env, url) {
     else if (url.pathname.endsWith("/predict")) res = json(recommendAll("dlt", draws, { win: num(url, "win", 30, 5, 100), n: optN(url) }), 200, 0);
     else if (url.pathname.endsWith("/verify")) {
       const code = url.searchParams.get("code") || "", f = (url.searchParams.get("front") || "").split(/[ ,]+/).filter(Boolean), b = (url.searchParams.get("back") || "").split(/[ ,]+/).filter(Boolean);
+      annotatePoolBefore(draws);
       const r = verifyDLT(draws, code, f, b);
       if (r.hit) {
+        const src = draws.find(x => String(x.code) === String(r.actual && r.actual.code)) || {};
         r.prize = prizeDLTFor(r.actual && r.actual.date, r.hitFront, r.hitBack);
-        r.amount = dltFixedAmount(r.prize, r.actual && r.actual.date);
+        r.amount = dltFixedAmount(r.prize, r.actual && r.actual.date, src.poolBefore);
       }
       res = json(r);
     } else return json({ error: "not_found" }, 404);
@@ -485,7 +499,12 @@ function prizeRoute(url) {
   if (kind === "dlt") {
     const dateStr = (url.searchParams.get("date") || "").trim();
     const r = prizeDLTFor(dateStr, g("hitMain"), g("hitAux"));
-    return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r, amount: dltFixedAmount(r, dateStr) }, 200, 0);
+    // 2026 新规固定奖随奖池分档：可传 pool=（开奖前奖池，元）；不传则该档金额为 null 并给出两档
+    const poolQ = parseFloat(url.searchParams.get("pool"));
+    const pool = Number.isFinite(poolQ) ? poolQ : undefined;
+    const amt = dltFixedAmount(r, dateStr, pool);
+    const tiers = amt == null && r !== "未中" ? { low: dltFixedAmount(r, dateStr, 0), high: dltFixedAmount(r, dateStr, 8e8) } : undefined;
+    return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r, amount: amt, ...(tiers && tiers.low != null ? { tiers, note: "2026 新规：奖池 <8 亿 / ≥8 亿两档，传 pool= 可得确数" } : {}) }, 200, 0);
   }
   if (kind === "qlc") { const r = prizeQLC(g("hitMain"), g("hitAux")); return json({ kind, hitMain: g("hitMain"), hitAux: g("hitAux"), prize: r }, 200, 0); }
   return json({ kind, prize: g("exact") ? "直选" : "未中", note: "数字型逐位比对，全中即直选" }, 200, 0);
@@ -810,8 +829,16 @@ async function reviewRoute(request, env, url) {
       ? await env.DB.prepare("SELECT id,kind,code,payload,hit,checked,created_at FROM predlog WHERE kind=? ORDER BY id DESC LIMIT 100").bind(kind).all()
       : await env.DB.prepare("SELECT id,kind,code,payload,hit,checked,created_at FROM predlog ORDER BY id DESC LIMIT 200").all();
     const list = (rows.results || []).map(r => { try { r.payload = JSON.parse(r.payload); r.hit = r.hit ? JSON.parse(r.hit) : null; } catch {} return r; });
+    // 汇总必须基于「全部已对账行」，不能只用上面截断的明细（LIMIT 200）：
+    // 8 彩种每天各写一行，约 25 天后 200 行就装不下全部历史，滚动命中率会悄悄只剩最近一段
+    let all = list;
+    try {
+      // 汇总总是覆盖全部彩种：Holm 校正的「族」是 8 彩种 × 3 指标，按单彩种查询时也不能缩成 3 个检验
+      const q = await env.DB.prepare("SELECT kind,hit,checked FROM predlog WHERE checked=1").all();
+      if (q && Array.isArray(q.results)) all = q.results.map(r => { try { r.hit = r.hit ? JSON.parse(r.hit) : null; } catch { r.hit = null; } return r; });
+    } catch {}
     const agg = {};
-    for (const r of list) {
+    for (const r of all) {
       if (!r.checked || !r.hit) continue;
       const a = agg[r.kind] || (agg[r.kind] = { checked: 0, picksTotal: 0, picksHit: 0, randTotal: 0, randHit: 0, danTotal: 0, danHit: 0, killTotal: 0, killWrong: 0 });
       a.checked++;
@@ -853,8 +880,25 @@ async function reviewRoute(request, env, url) {
         killP: base != null ? binomP(a.killWrong, a.killTotal, base) : null
       };
     }
+    // 记分牌：①跨 8 彩种 × 3 指标的 Holm 多重比较校正（随机基准是对照组，不参与）；
+    // ②推荐命中的序贯概率比检验（SPRT，H0 = 基线，H1 = 相对提升 20%，α=β=0.05）——
+    // 预先写死的终止规则：判 H0 即「已证伪」，不再靠人眼盯 p 值（盯得越久越容易撞上假阳性）
+    const tests = [];
+    for (const [k, v] of Object.entries(summary)) for (const m of ["pickP", "danP", "killP"]) if (v[m] != null) tests.push({ kind: k, metric: m, p: v[m] });
+    const adj = holm(tests.map(t => t.p));
+    tests.forEach((t, i) => { summary[t.kind][t.metric.replace(/P$/, "Holm")] = adj[i]; });
+    for (const [k, a] of Object.entries(agg)) {
+      const v = summary[k];
+      v.sprt = v.pickBaseline != null ? sprt(a.picksHit, a.picksTotal, v.pickBaseline, 1.2) : null;
+    }
+    const scoreboard = {
+      tests: tests.length,
+      significantAfterHolm: tests.filter((t, i) => adj[i] != null && adj[i] < 0.05).map(t => t.kind + "." + t.metric),
+      falsified: Object.entries(summary).filter(([, v]) => v.sprt && v.sprt.verdict === "h0").map(([k]) => k),
+      note: "Holm 校正后仍 <0.05 才算显著；SPRT 判 h0 = 已有足够证据说明推荐没有比随机高 20% 的效果（同一期内各号相关，SPRT 为近似）。"
+    };
     const unreconciled = list.filter(r => !r.checked).length;
-    return json({ summary, rows: list.slice(0, 50), meta: { total: list.length, unreconciled, hint: Object.keys(summary).length ? null : "复盘尚未产生任何已对账样本：summary 为空表示「没能力判断」，不表示「已验证无效果」" } });
+    return json({ summary, scoreboard, rows: list.slice(0, 50), meta: { total: list.length, unreconciled, hint: Object.keys(summary).length ? null : "复盘尚未产生任何已对账样本：summary 为空表示「没能力判断」，不表示「已验证无效果」" } });
   } catch (e) { return json({ error: String(e) }, 500); }
 }
 // 同步健康三态分级。consistent 只表示「≥2 个源对同一期号的号码真的比过并且一致」，
