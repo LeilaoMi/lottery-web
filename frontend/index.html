@@ -1219,6 +1219,8 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
     '<div class="row"><button id="pgo">判定奖级</button></div><div id="pout" class="muted"></div>' +
     '<h3 style="margin:16px 0 8px">预测复盘</h3><div class="row"><button id="rgo">加载复盘数据</button></div>' +
     '<div id="rout" class="muted">每日同步会自动快照下一期推荐，开奖后自动对账；此处查看滚动命中率与近期对账明细。</div>' +
+    '<h3 style="margin:16px 0 8px">双色球 · 每注期望回报 + 反热门机选</h3><div class="row"><button id="evg">估算下一期</button> <label class="fld" for="evn">机选 <select id="evn"><option>1</option><option selected>5</option><option>10</option></select> 注</label> <button id="cpg">反热门机选</button></div>' +
+    '<div id="evout" class="muted">按现行规则、奖池滚存与近 6 期销量估算一注 2 元的期望回报；反热门机选在冷门度模型认得的特征上取最冷一侧——中奖概率不变，中了之后分奖的人更少。</div>' +
     '<h3 style="margin:16px 0 8px">冷门度 · 观测 vs 预测</h3><div class="row"><button id="cbtg">加载回看数据</button></div>' +
     '<div id="cbtout" class="muted">按预测指数五分位（冷→热）对照实际一等奖注数/亿元。样本外五分位单调上升 = 拟合不是噪声；只影响分奖人数，不改变中奖概率。</div>' +
     '<h3 style="margin:16px 0 8px">上游同步健康</h3><div class="row"><button id="synctg">加载同步时序</button></div>' +
@@ -1301,6 +1303,34 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
         }
       }
     } catch (e) { errBox(e, $('#rout')); }
+  };
+  // 期望回报：/api/ev 返回下一期估算 + 近 60 期赛前回放；反热门机选：/api/coldpick 逐注附带 EV
+  const yuan = v => v == null ? '—' : (v >= 1e8 ? (v / 1e8).toFixed(2) + ' 亿' : v >= 1e4 ? (v / 1e4).toFixed(0) + ' 万' : String(v));
+  const pctS = v => v == null ? '—' : (v * 100).toFixed(2) + '%';
+  $('#evg').onclick = async () => {
+    try {
+      const r = await api('/api/ev');
+      if (r.error) { $('#evout').innerHTML = '<div class="muted">' + esc(r.note || r.error) + '</div>'; return; }
+      const n = r.next, h = r.history || [], rr = h.map(x => x.returnRate);
+      $('#evout').innerHTML = '<div class="card"><b>' + esc(n.afterCode) + ' 之后一期</b>：每注 2 元期望回报 <b>' + esc(n.avg.ev.toFixed(3)) + ' 元</b>（回报率 ' + pctS(n.avg.returnRate) + '）' +
+        '<div class="kv"><span>奖池滚存</span><span>' + yuan(n.pool) + '</span></div>' +
+        '<div class="kv"><span>预计销量（近 6 期均值）</span><span>' + yuan(n.salesEst) + '</span></div>' +
+        '<div class="kv"><span>构成：低等奖 / 一等奖 / 二等奖</span><span>' + [n.avg.breakdown.low, n.avg.breakdown.first, n.avg.breakdown.second].map(x => x.toFixed(3)).join(' / ') + ' 元</span></div>' +
+        '<div class="kv"><span>预计同期他人中一等奖</span><span>' + esc(n.avg.othersExpected.first) + ' 注</span></div>' +
+        (rr.length ? '<div class="kv"><span>近 ' + rr.length + ' 期赛前回报率区间</span><span>' + pctS(Math.min.apply(null, rr)) + ' ~ ' + pctS(Math.max.apply(null, rr)) + '</span></div>' : '') +
+        '<div class="muted">' + esc(r.note || '') + ' ' + esc(r.disclaimer || '') + '</div></div>';
+    } catch (e) { errBox(e, $('#evout')); }
+  };
+  $('#cpg').onclick = async () => {
+    try {
+      const r = await api('/api/coldpick?n=' + encodeURIComponent($('#evn').value));
+      const ps = r.picks || [];
+      if (!ps.length) throw new Error('未生成号码');
+      $('#evout').innerHTML = '<div class="card"><b>反热门机选 ' + ps.length + ' 注</b>' +
+        ps.map(p => '<div class="kv"><span>' + p.red.map(x => '<span class="ball">' + esc(x) + '</span>').join('') + '<span class="ball b">' + esc(p.blue) + '</span></span><span>同奖倍率 ' + esc(p.ratio) + (p.ev ? ' · 回报率 ' + pctS(p.ev.returnRate) : '') + '</span></div>').join('') +
+        (r.avg ? '<div class="muted">同期普通号码回报率 ' + pctS(r.avg.returnRate) + '；差额全部来自「中了以后少分」。</div>' : '') +
+        '<div class="muted">' + esc(r.note || '') + '</div></div>';
+    } catch (e) { errBox(e, $('#evout')); }
   };
   // 冷门度观测 vs 预测：五分位双轴柱线图。数据由 ssq-fit 烘焙进 Worker，D1 里没有历史注数。
   $('#cbtg').onclick = async () => {

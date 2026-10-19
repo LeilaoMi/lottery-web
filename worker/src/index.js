@@ -9,6 +9,7 @@ import { filterPool } from "./filter.js";
 import { coldness, COLD_KINDS } from "./coldness.js";
 import { COLDBT } from "./coldness-backtest.js";
 import { fetchT } from "./net.js";
+import { ssqEVReport, ssqEV, coldPicks } from "./ev.js";
 import { saveSSQ, loadSSQ, logSync, saveDLT, loadDLT, saveSmall, loadSmall, loadSyncLog } from "./db.js";
 import { HTML, SW, MANIFEST, ICON } from "./ui.js";
 const LOTS = [{ id: "ssq", name: "双色球", rule: "红6/33+蓝1/16", days: "二四日" }, { id: "dlt", name: "大乐透", rule: "前5/35+后2/12", days: "一三六" }, { id: "fc3d", name: "福彩3D", rule: "3位0-9", days: "每日" }, { id: "pl3", name: "排列3", rule: "3位0-9", days: "每日" }, { id: "pl5", name: "排列5", rule: "5位0-9", days: "每日" }, { id: "qlc", name: "七乐彩", rule: "7/30+特别", days: "一三五" }, { id: "qxc", name: "七星彩", rule: "前6位0-9+第7位0-14", days: "二五日" }, { id: "kl8", name: "快乐8", rule: "20/80", days: "每日" }];
@@ -31,7 +32,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.18.1", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.19.0", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -60,7 +61,30 @@ const API_ROUTES = {
   "/api/admin/sync": (rq, env, ctx) => adminSync(rq, env, ctx),
   "/api/admin/review-job": (rq, env) => reviewJob(rq, env),
   "/api/review": (rq, env, ctx, url) => reviewRoute(rq, env, url),
+  "/api/ev": (rq, env, ctx, url) => evRoute(env, url),
+  "/api/coldpick": (rq, env, ctx, url) => coldPickRoute(env, url),
 };
+// 双色球期望回报：只有 500 源带奖池/销量；备源降级时如实 503，不拿空详情硬算
+async function evRoute(env, url) {
+  const kind = (url.searchParams.get("kind") || "ssq").trim();
+  if (kind !== "ssq") return json({ supported: false, kind, note: "期望回报目前只覆盖双色球（大乐透奖级/追加/奖池分档规则不同，未建模）" }, 200, 3600);
+  const draws = await drawsOf(env, "ssq", 100);
+  const r = ssqEVReport(draws);
+  return r.error ? json(r, 503) : json(r, 200, 1800);
+}
+async function coldPickRoute(env, url) {
+  const n = num(url, "n", 5, 1, 20);
+  const picks = coldPicks(n);
+  let avg = null, note = "在冷门度模型认得的特征上取最冷一侧（含 32/33、无尾 8、含尾 4、蓝球 01/14/15/16），其余随机并排除 3 连号与等差形态；中奖概率与任何号码完全相同。";
+  try {
+    const rep = ssqEVReport(await drawsOf(env, "ssq", 100));
+    if (!rep.error) {
+      avg = rep.next.avg;
+      for (const p of picks) p.ev = ssqEV({ sales: rep.next.salesEst, pool: rep.next.pool, ratio1: p.ratio, ratio2: p.ratio2 });
+    }
+  } catch {}
+  return json({ kind: "ssq", picks, avg, note, disclaimer: DISCLAIMER });
+}
 // 统一预测入口：/api/predict | analyze | kill | dan | backtest | kill-calibrated | kill-tune | ticket | trend
 for (const p of ["/api/predict", "/api/analyze", "/api/kill", "/api/dan", "/api/backtest", "/api/kill-calibrated", "/api/kill-tune", "/api/ticket", "/api/trend"]) {
   API_ROUTES[p] = (rq, env, ctx, url) => predictRoute(rq, env, url);
