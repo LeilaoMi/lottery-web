@@ -194,6 +194,11 @@ sel.onchange = load;
 async function load(){
   const id = sel.value;
   $('#st').textContent = '加载中…';
+  // 切彩种时先清掉上一个彩种的内容：新数据到达前（上游慢时可达十几秒）旧彩种的图表和统计
+  // 原样挂着、彩种下拉却已是新彩种，看起来就是「数据错了」
+  $('#p').innerHTML = '加载中…';
+  $('#stats').innerHTML = '<div class="muted">加载中…</div>';
+  Object.keys(__charts).forEach(k => { try { __charts[k].clear(); } catch {} });
   try {
     await loadPredict(id);
     if (id !== sel.value) return; // 已切到别的彩种：旧请求的结果作废
