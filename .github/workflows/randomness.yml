@@ -51,7 +51,8 @@ jobs:
         run: |
           set -euo pipefail
           base="${IN_BASE:-${WORKER_URL:-${VAR_BASE:-}}}"
-          base="${base%/}"
+          # 与 fetch-multi.mjs 同一规范化：去两端空白、去所有末尾斜杠
+          base="$(printf '%s' "$base" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#/*$##')"
           if [ -z "$base" ]; then
             echo "::warning::未提供交叉校验地址（api_base 输入 / secrets.WORKER_URL / vars.PUBLIC_API_BASE 都为空）—— 本轮所有彩种记为 UNVERIFIED，最后的 VERIFIED 闸门将失败。"
             echo "::warning::自建部署请配置其一（如 https://lottery-web.<你的子域>.workers.dev）；暂不需要这条审计链可直接停用本 workflow。"
@@ -60,7 +61,7 @@ jobs:
           if [ -n "${IN_BASE:-}" ]; then src="api_base 输入"; elif [ -n "${WORKER_URL:-}" ]; then src="secrets.WORKER_URL"; else src="vars.PUBLIC_API_BASE"; fi
           echo "交叉校验地址来源：$src"
           [ "$src" = "secrets.WORKER_URL" ] || echo "交叉校验目标：$base"
-          code=$(curl -sS -m 20 -o /tmp/health.json -w "%{http_code}" "$base/health" || true)
+          code=$(curl -sSL --max-redirs 5 -m 20 -o /tmp/health.json -w "%{http_code}" "$base/health" || true)
           if [ "$code" != "200" ]; then
             echo "::error::交叉校验地址（来源：$src）/health 返回 ${code:-连接失败} —— 地址可能已迁移或失效，请更新对应配置后重跑"
             exit 1
