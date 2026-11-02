@@ -9,7 +9,7 @@ Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 ![version](https://img.shields.io/badge/version-0.21.2-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
-![unit%20tests](https://img.shields.io/badge/unit%20tests-243-brightgreen)
+![unit%20tests](https://img.shields.io/badge/unit%20tests-244-brightgreen)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)
 
 *开奖查询 · 批量验奖 · 每注期望回报 · 反热门机选 · 冷门度 · 选号工作台 · 缩水过滤 · 统计分析 · 预测复盘记分牌 · 开奖偏差监测 · 站内审计*
@@ -131,7 +131,7 @@ GitHub Actions ──POST /api/admin/sync──▶ Worker ──▶ 500 / 17500�
 | 运行时 | Cloudflare Workers | 纯 JS 路由表，零 npm 依赖 |
 | 存储 | D1 | 6 张表（开奖×3 / 复盘 / 收藏 / 同步日志），迁移版本化 |
 | 前端 | 原生单页 + ECharts 5 | `frontend/` 是唯一事实源，构建时内联 |
-| 测试 | `node --test` | 243 项离线单元测试（225 worker + 13 统计内核 + 5 推送，零依赖离线可跑）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
+| 测试 | `node --test` | 244 项离线单元测试（226 worker + 13 统计内核 + 5 推送，零依赖离线可跑）+ 12 项真实数据源连通性测试（`npm run test:live`，需联网，默认不跑） |
 
 ## 🎫 支持彩种
 
@@ -236,7 +236,7 @@ npx wrangler secret put API_TOKEN
 ```bash
 cd worker
 npm run build:ui     # 从 frontend/ 生成 src/ui.js（ui.js 是构建产物，不进仓库）
-npm test             # 单元测试（243 项，零依赖，离线可跑）
+npm test             # 单元测试（244 项，零依赖，离线可跑）
 npm run test:live    # 真实数据源连通性测试（需联网，默认不跑）
 npm run dev          # wrangler dev 本地起服务
 ```
