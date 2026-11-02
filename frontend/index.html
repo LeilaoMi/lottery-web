@@ -679,7 +679,7 @@ async function loadAnalyze(id){
     const ks = Object.keys(an.freq || {}).sort();
     drawChart(LOT[id].name + ' 号码频次（近 ' + an.count + ' 期）', ks, ks.map(k => an.freq[k]));
     $('#stats').insertAdjacentHTML('beforeend', analyzePoolText(an));
-    await loadBacktest(id);
+    loadBacktest(id); // 不 await：回测在折叠研究区，双色球要算约 9 秒，不该卡住下方的遗漏走势与随机带两张图
     // 形态转移卡片（号码池型）：上一期形态 → 下期最可能形态
     if (an.shape && an.shape.sum) {
       const dims = [["sum", "和值"], ["odd", "奇偶"], ["big", "大小"], ["r012", "012路"]];
@@ -717,7 +717,7 @@ async function analyzeDigit(an, id){
   drawGroupedChart(LOT[id].name + ' 各位置数字频次（近 ' + an.count + ' 期）', cats,
     ps.map(p => ({ name: '第' + p.pos + '位', vals: cats.map(c => Number(p.freq[c]) || 0) })), 'chart');
   $('#stats').insertAdjacentHTML('beforeend', analyzeDigitText(an));
-  await loadBacktest(id);
+  loadBacktest(id); // 不 await：回测在折叠研究区，不该卡住下方图表
   // 形态转移只对号码池型有意义（shapeTrans 对数字型返回 note），把 note 显示出来而不是静默跳过
   if (an.shape && an.shape.note) {
     $('#stats').insertAdjacentHTML('beforeend',
