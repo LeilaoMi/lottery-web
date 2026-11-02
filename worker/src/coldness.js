@@ -40,6 +40,13 @@ const SSQ = {
 const DISC = '冷门度只影响中奖后与多少人分奖，不改变中奖概率；期望回报仍为负。';
 const pad = x => String(x).padStart(2, '0');
 const toNums = arr => (arr || []).map(x => (typeof x === 'number' ? x : parseInt(String(x).replace(/^0+(?=\d)/, ''), 10))).filter(Number.isFinite);
+function coldIndexOf(ratio) {
+  // 互斥特征（blueHot / blueCold）只能取其一：最热 = 所有 >1 的特征连乘，最冷 = 所有 <1 的特征连乘
+  const hi = SSQ.features.filter(f => f.m > 1).reduce((m, f) => m * f.m, 1);
+  const lo = SSQ.features.filter(f => f.m < 1).reduce((m, f) => m * f.m, 1);
+  const x = (Math.log(hi) - Math.log(ratio)) / (Math.log(hi) - Math.log(lo));
+  return Math.max(0, Math.min(100, Math.round(100 * x)));
+}
 // 主入口：main = 红球数组，aux = 蓝球数组（ssq 取第一个）。非法输入返回 { error }，由路由转 400。
 export function coldness(kind, main, aux) {
   if (!COLD_KINDS[kind]) return { supported: false, note: '当前仅双色球有拟合系数（数据源：3501 期真实一等奖注数）', disclaimer: DISC };
@@ -65,7 +72,9 @@ export function coldness(kind, main, aux) {
     kind, main: red.map(pad), aux: [pad(blue)],
     ratio,                                   // 预计一等奖同奖人数 / 平均同奖人数，<1 对你有利
     label: b.coldLabel(ratio),
-    coldIndex: Math.max(0, Math.min(100, Math.round(100 / ratio))), // 仅展示用的单调变换，越大越冷门
+    // 仅展示用：按模型可达的倍率区间（最热组合 → 最冷组合）在对数尺度上线性映射到 0-100。
+    // 旧式 100/ratio 在 ratio ≤1 时全部封顶 100，三注不同冷门程度的推荐都显示「100/100」，等于没说。
+    coldIndex: coldIndexOf(ratio),
     avgFirstWinners: b.avgFirstWinners,
     estWinners: +(b.avgFirstWinners * ratio).toFixed(1),
     factors,

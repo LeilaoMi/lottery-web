@@ -28,6 +28,11 @@ test("coldIndex 单调：ratio 越小越冷门，且恒在 0-100", () => {
   const b = coldness("ssq", ["04", "14", "24", "25", "32", "33"], ["01"]);
   assert.ok(a.ratio > b.ratio && a.coldIndex < b.coldIndex, "ratio 与 coldIndex 必须反向");
   for (const r of [a, b]) { assert.ok(r.coldIndex >= 0 && r.coldIndex <= 100); }
+  // 不再封顶：最冷组合 = 100，平均附近不是 100（旧式 100/ratio 在 ratio≤1 时全是 100）
+  const coldest = coldness("ssq", ["04", "11", "19", "25", "32", "33"], ["16"]);
+  assert.equal(coldest.coldIndex, 100);
+  const mid = coldness("ssq", ["01", "09", "13", "21", "26", "31"], ["03"]);
+  assert.ok(mid.coldIndex > 0 && mid.coldIndex < 100, "中性组合应落在中段，实得 " + mid.coldIndex);
 });
 test("输入校验：拒绝 5 个红球 / 重复号 / 越界号 / 非法蓝球 / 不支持彩种", () => {
   assert.ok(coldness("ssq", ["01", "02", "03", "04", "05"], ["03"]).error);

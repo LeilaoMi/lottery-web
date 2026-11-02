@@ -196,6 +196,7 @@ async function load(){
   $('#st').textContent = '加载中…';
   try {
     await loadPredict(id);
+    if (id !== sel.value) return; // 已切到别的彩种：旧请求的结果作废
     $('#st').textContent = '已加载：' + LOT[id].name + ' · ' + new Date().toLocaleString();
   } catch (e) {
     $('#st').textContent = '加载失败';
@@ -315,6 +316,8 @@ async function loadPredict(id){
     api('/api/' + id + '/latest'),
     api('/api/' + id + '/predict?win=30')
   ]);
+  // 快速切换彩种时，上一个彩种的慢请求可能后到并覆盖当前页面：每个 await 之后都核对一次
+  if (id !== sel.value) return;
   const isDigit = Array.isArray(latest.digits);
   let html = '<h3 style="margin:0 0 8px">' + esc(latest.code || '') + ' 期</h3>' + renderNums(latest);
   html += '<div class="muted">' + esc(latest.date || '') + ' · 源 ' + esc(((latest.sources || [latest.src]).join(',') || '-')) + '</div>';
@@ -372,9 +375,11 @@ async function loadPredict(id){
     '<button id="tkgo">生成胆拖单</button></div><div id="tkout" class="muted"></div></details>';
   if (rec.formHint) html += '<div class="muted">近 ' + esc(rec.count) + ' 期形态：组三 ' + esc(rec.formHint['组三']) +
     ' / 组六 ' + esc(rec.formHint['组六']) + ' / 豹子 ' + esc(rec.formHint['豹子']) + '</div>';
+  if (id !== sel.value) return;
   $('#p').innerHTML = html;
   // 每个策略的实时战绩：/api/review 的按策略汇总（命中率 vs 随机基线 + SPRT 判决），已证伪的标「娱乐」
   api('/api/review?kind=' + id).then(r => {
+    if (id !== sel.value) return;
     const s = (r.summary || {})[id] || {}, st = s.strategies || {};
     (rec.picks || []).forEach((p, i) => {
       const el = document.getElementById('perf-p' + i);
@@ -402,13 +407,9 @@ async function loadPredict(id){
       out.innerHTML =
         '<div>胆 ' + balls(r.dan) + '　拖 ' + balls(r.tuo) + (r.aux && r.aux.length ? '　副区 ' + balls(r.aux, 'b') : '') + '</div>' +
         '<div><b>' + esc(r.bets) + ' 注 / ' + esc(r.amount) + ' 元</b>　<span class="muted">已剔除 ' + esc(r.excluded) + ' 个杀号</span></div>' +
-        '<div id="tkcold" class="muted">本单冷门度（万一中了能独享多少，不改变中奖概率）加载中…</div>' +
+        '<div class="muted">冷门度只能逐注估计：胆拖单展开后是 ' + esc(r.bets) + ' 注不同组合，这里不给单一数值。</div>' +
         '<div class="muted">' + esc(r.note) + '</div>' +
         '<div class="row"><button id="tksave">保存到收藏</button><button id="tkcopy">复制文本</button><button id="tkdl">导出 TXT</button><button id="tkshare">分享图片</button></div>';
-      coldnessHtml(id, asArr(r.dan).concat(asArr(r.tuo)), r.aux).then(h => {
-        const ce = document.getElementById('tkcold');
-        if (ce) ce.innerHTML = '本单' + h + '<span class="muted">（衡量"万一中了能独享多少"，不改变中奖概率）</span>';
-      });
       document.getElementById('tksave').onclick = async () => {
         try {
           const resp = await fetch(base() + '/api/favs', {
@@ -441,7 +442,9 @@ async function loadPredict(id){
       };
     } catch (e) { errBox(e, out); }
   };
+  if (id !== sel.value) return;
   await loadAnalyze(id);
+  if (id !== sel.value) return;
   await loadHistory(id);
 }
 
@@ -660,6 +663,7 @@ function analyzeDigitText(an){
 async function loadAnalyze(id){
   try {
     const an = await api('/api/' + id + '/analyze?win=30');
+    if (id !== sel.value) return;
     const isDigit = !!an.perPos;
     $('#stats').innerHTML = sourceBanner(an);
     if (isDigit) return await analyzeDigit(an, id);
@@ -805,6 +809,7 @@ function verdictTag(verdict, n, p){
 async function loadBacktest(id, periods){
   try {
     const bt = await api('/api/backtest?kind=' + id + (periods ? '&periods=' + encodeURIComponent(periods) : ''));
+    if (id !== sel.value) return;
     const spanTxt = bt.stride > 1
       ? '近 ' + esc(bt.periods) + ' 期跨度 · 抽样 ' + esc(bt.tested) + ' 点 · 步长 ' + esc(bt.stride)
       : '近 ' + esc(bt.periods) + ' 期';
@@ -920,6 +925,7 @@ async function loadHoldout(id){
 async function loadHistory(id){
   try {
     const his = await api('/api/' + id + '/history?limit=30');
+    if (id !== sel.value) return;
     const fmt = (v) => v == null ? '—' : Number(v).toLocaleString('zh-CN');
     const hasDetail = his.some(d => d.detail);
     let h = '<h3 style="margin:0 0 8px">历史 30 期</h3><div class="tblwrap"><table><tr><th>期号</th><th>号码</th><th>日期</th>' +
@@ -1336,6 +1342,10 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
   // 期望回报：/api/ev 返回下一期估算 + 近 60 期赛前回放；反热门机选：/api/coldpick 逐注附带 EV
   const yuan = v => v == null ? '—' : (v >= 1e8 ? (v / 1e8).toFixed(2) + ' 亿' : v >= 1e4 ? (v / 1e4).toFixed(0) + ' 万' : String(v));
   const pctS = v => v == null ? '—' : (v * 100).toFixed(2) + '%';
+  // 500 源偶发不带奖池/销量（备源接管时）：这是数据暂缺而非服务故障，给可读说明而不是红色错误块
+  const evErr = e => /insufficient_detail/.test(String((e && e.message) || e))
+    ? ($('#evout').innerHTML = '<div class="muted">主数据源暂未返回奖池/销量（备源接管中），本期回报暂时无法估算，稍后再试。</div>')
+    : errBox(e, $('#evout'));
   $('#evg').onclick = async () => {
     try {
       const r = await api('/api/ev?kind=' + $('#evk').value);
@@ -1350,7 +1360,7 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
         (n.avg.tier ? '<div class="kv"><span>奖池档位</span><span>' + esc(n.avg.tier) + '</span></div>' : '') +
         (n.avg.addOn ? '<div class="kv"><span>追加 1 元的期望 / 3 元整注回报率</span><span>' + esc(n.avg.addOn.ev.toFixed(3)) + ' 元 / ' + pctS(n.avg.addOn.ticket3.returnRate) + '</span></div>' : '') +
         '<div class="muted">' + esc(r.note || '') + ' ' + esc(r.disclaimer || '') + '</div></div>';
-    } catch (e) { errBox(e, $('#evout')); }
+    } catch (e) { evErr(e); }
   };
   $('#cpg').onclick = async () => {
     try {
@@ -1361,7 +1371,7 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
         ps.map(p => '<div class="kv"><span>' + p.red.map(x => '<span class="ball">' + esc(x) + '</span>').join('') + '<span class="ball b">' + esc(p.blue) + '</span></span><span>同奖倍率 ' + esc(p.ratio) + (p.ev ? ' · 回报率 ' + pctS(p.ev.returnRate) : '') + '</span></div>').join('') +
         (r.avg ? '<div class="muted">同期普通号码回报率 ' + pctS(r.avg.returnRate) + '；差额全部来自「中了以后少分」。</div>' : '') +
         '<div class="muted">' + esc(r.note || '') + '</div></div>';
-    } catch (e) { errBox(e, $('#evout')); }
+    } catch (e) { evErr(e); }
   };
   $('#drg').onclick = async () => {
     try {

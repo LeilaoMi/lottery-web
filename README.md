@@ -6,7 +6,7 @@
 
 Cloudflare Workers + D1 · 零 npm 依赖 · 单页 PWA · GitHub Actions 驱动
 
-![version](https://img.shields.io/badge/version-0.21.0-blue)
+![version](https://img.shields.io/badge/version-0.21.1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![runtime%20deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
 ![unit%20tests](https://img.shields.io/badge/unit%20tests-243-brightgreen)
