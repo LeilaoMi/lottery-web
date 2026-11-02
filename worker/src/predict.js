@@ -451,7 +451,7 @@ export function analyzeAll(kind, draws, win = 30) {
   return {
     window: win, count: w.length,
     hot: byFreq.slice(0, pick), cold: byFreq.slice(-pick).reverse(),
-    freq: st.freq, omission: { cur: st.cur, avg: st.avg, max: st.max },
+    freq: st.freq, freqCount: draws.length, omission: { cur: st.cur, avg: st.avg, max: st.max },
     auxFreq: auxSt ? auxSt.freq : {}, auxOmission: auxSt ? { cur: auxSt.cur, avg: auxSt.avg, max: auxSt.max } : {},
     auxTransition,
     oddRatio: odd + ":" + (w.length * pick - odd),
@@ -481,7 +481,7 @@ function analyzeDigits(kind, draws, win) {
     ? { group3: w.filter(d => { const a = mainOf(d, kind); return new Set(a).size === 2; }).length, group6: w.filter(d => { const a = mainOf(d, kind); return new Set(a).size === 3; }).length, bail: w.filter(d => new Set(mainOf(d, kind)).size === 1).length }
     : null;
   return {
-    window: win, count: w.length, digits: s.digits, perPos,
+    window: win, count: w.length, freqCount: draws.length, digits: s.digits, perPos,
     avgSum: +(sum / Math.max(1, w.length)).toFixed(2),
     avgBigSmall: +(bigSmall.reduce((a, b) => a + b, 0) / Math.max(1, w.length)).toFixed(2),
     form: zu

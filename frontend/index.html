@@ -677,7 +677,7 @@ async function loadAnalyze(id){
     $('#stats').innerHTML = sourceBanner(an);
     if (isDigit) return await analyzeDigit(an, id);
     const ks = Object.keys(an.freq || {}).sort();
-    drawChart(LOT[id].name + ' 号码频次（近 ' + an.count + ' 期）', ks, ks.map(k => an.freq[k]));
+    drawChart(LOT[id].name + ' 号码频次（全部 ' + (an.freqCount || an.count) + ' 期）', ks, ks.map(k => an.freq[k]));
     $('#stats').insertAdjacentHTML('beforeend', analyzePoolText(an));
     loadBacktest(id); // 不 await：回测在折叠研究区，双色球要算约 9 秒，不该卡住下方的遗漏走势与随机带两张图
     // 形态转移卡片（号码池型）：上一期形态 → 下期最可能形态
@@ -714,7 +714,7 @@ async function loadAnalyze(id){
 async function analyzeDigit(an, id){
   const ps = an.perPos || [];
   const cats = [...new Set(ps.flatMap(p => Object.keys(p.freq || {})))].sort();
-  drawGroupedChart(LOT[id].name + ' 各位置数字频次（近 ' + an.count + ' 期）', cats,
+  drawGroupedChart(LOT[id].name + ' 各位置数字频次（全部 ' + (an.freqCount || an.count) + ' 期）', cats,
     ps.map(p => ({ name: '第' + p.pos + '位', vals: cats.map(c => Number(p.freq[c]) || 0) })), 'chart');
   $('#stats').insertAdjacentHTML('beforeend', analyzeDigitText(an));
   loadBacktest(id); // 不 await：回测在折叠研究区，不该卡住下方图表
@@ -728,7 +728,7 @@ async function analyzeDigit(an, id){
     '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>各位置当前遗漏</b> ' +
     '<span class="muted">（每位数字当期连续未出期数；数字型无号码池，故不提供号码维度的逐期遗漏走势）</span>' +
     '<div id="chart4" style="height:300px"></div></div>');
-  drawGroupedChart(LOT[id].name + ' 各位置当前遗漏（近 ' + an.count + ' 期）', cats,
+  drawGroupedChart(LOT[id].name + ' 各位置当前遗漏', cats,
     ps.map(p => {
       const cur = (p.omission || {}).cur || {};
       return { name: '第' + p.pos + '位', vals: cats.map(c => Number(cur[c]) || 0) };
@@ -769,19 +769,22 @@ async function drawTrend(id){
 function drawNoiseChart(id, an){
   const ks = Object.keys(an.freq || {}).sort();
   const pool = ks.length;
-  if (!pool || !an.count) return;
+  // 频次是全量历史（freqCount 期）上数的，不是 win 窗口：拿窗口期数算 σ 会把带压窄约 √(100/30) 倍，
+  // 双色球因此显示「12 个号码越界」——那是口径错配，不是信号
+  const nDraws = an.freqCount || an.count;
+  if (!pool || !nDraws) return;
   const vals = ks.map(k => Number(an.freq[k]) || 0);
   const totalPicks = vals.reduce((a, b) => a + b, 0);
-  const k = totalPicks / an.count;
+  const k = totalPicks / nDraws;
   if (k <= 0 || k >= pool) return;
   const mu = totalPicks / pool;
   const p0 = k / pool;
-  const sigma = Math.sqrt(Math.max(0, an.count * p0 * (1 - p0) * (pool - k) / Math.max(1, pool - 1)));
+  const sigma = Math.sqrt(Math.max(0, nDraws * p0 * (1 - p0) * (pool - k) / Math.max(1, pool - 1)));
   const lo = mu - 2 * sigma, hi = mu + 2 * sigma;
   const out = ks.filter((kk, i) => vals[i] < lo || vals[i] > hi);
   $('#stats').insertAdjacentHTML('beforeend',
     '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>这就是随机该有的样子</b>' +
-    ' <span class="muted">（近 ' + esc(an.count) + ' 期频次对照随机 ±2σ 带：带内波动＝噪声，不是规律）</span>' +
+    ' <span class="muted">（全部 ' + esc(nDraws) + ' 期频次对照随机 ±2σ 带：带内波动＝噪声，不是规律）</span>' +
     '<div id="chart3" style="height:260px"></div>' +
     '<div id="noiseout" class="muted">随机带 ' + mu.toFixed(1) + ' ± ' + (2 * sigma).toFixed(1) + ' 次；' +
     '落在带外的号码 ' + out.length + ' 个' + (out.length ? '（' + out.map(esc).join('、') + '）' : '（无）') +
