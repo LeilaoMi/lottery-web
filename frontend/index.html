@@ -792,7 +792,7 @@ function drawNoiseChart(id, an){
   const el = document.getElementById('chart3');
   if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载（离线或 CDN 被拦截），上方带外计数仍可读。</div>'; return; }
 regChart('chart3', el).setOption({
-    grid: { left: 40, right: 12, top: 14, bottom: 30 },
+    grid: { left: 40, right: 64, top: 14, bottom: 30 }, // 右侧留出「期望 x」标线标签，原 12px 会把字截掉
     xAxis: { type: 'category', data: ks, axisLabel: { fontSize: 12 } },
     yAxis: { type: 'value' },
     series: [{
