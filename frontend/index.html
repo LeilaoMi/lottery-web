@@ -563,6 +563,10 @@ const __charts = {};
 function regChart(key, el){
   if (typeof echarts === 'undefined') return null;
   if (!el) return null;
+  // 容器被 innerHTML 重建（切彩种、重点「加载」）后，旧实例还挂在已脱离 DOM 的节点上：
+  // 不换绑就会把新数据画进看不见的旧节点，新容器一片空白（v0.21.1 实测：遗漏走势、随机带空白）
+  const old = __charts[key];
+  if (old && (old.isDisposed() || old.getDom() !== el)) { try { old.dispose(); } catch {} delete __charts[key]; }
   if (!__charts[key]) { try { __charts[key] = echarts.init(el); } catch { return null; } }
   return __charts[key];
 }
@@ -1351,7 +1355,7 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
       const r = await api('/api/ev?kind=' + $('#evk').value);
       if (r.error) { $('#evout').innerHTML = '<div class="muted">' + esc(r.note || r.error) + '</div>'; return; }
       const n = r.next, h = r.history || [], rr = h.map(x => x.returnRate);
-      $('#evout').innerHTML = '<div class="card"><b>' + esc(n.afterCode) + ' 之后一期</b>：每注 2 元期望回报 <b>' + esc(n.avg.ev.toFixed(3)) + ' 元</b>（回报率 ' + pctS(n.avg.returnRate) + '）' +
+      $('#evout').innerHTML = '<div class="card">' + (n.lagging ? '<div class="muted">⚠ ' + esc(n.lagNote) + '</div>' : '') + '<b>' + esc(n.afterCode) + ' 之后一期</b>：每注 2 元期望回报 <b>' + esc(n.avg.ev.toFixed(3)) + ' 元</b>（回报率 ' + pctS(n.avg.returnRate) + '）' +
         '<div class="kv"><span>奖池滚存</span><span>' + yuan(n.pool) + '</span></div>' +
         '<div class="kv"><span>预计销量（近 6 期均值）</span><span>' + yuan(n.salesEst) + '</span></div>' +
         '<div class="kv"><span>构成：低等奖 / 一等奖 / 二等奖</span><span>' + [n.avg.breakdown.low, n.avg.breakdown.first, n.avg.breakdown.second].map(x => x.toFixed(3)).join(' / ') + ' 元</span></div>' +
@@ -1374,6 +1378,7 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
     } catch (e) { evErr(e); }
   };
   $('#drg').onclick = async () => {
+    $('#drout').innerHTML = '<div class="muted">计算中…（近 500 期逐号 CUSUM，约需 10 秒）</div>';
     try {
       const r = await api('/api/drift?kind=' + id);
       if (r.error) { $('#drout').innerHTML = '<div class="muted">' + esc(r.note || r.error) + '</div>'; return; }

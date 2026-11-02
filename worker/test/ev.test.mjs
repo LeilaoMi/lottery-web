@@ -60,3 +60,15 @@ test("反热门机选：含 32/33、无尾 8、含尾 4、蓝球冷门、无 3 �
     assert.ok(p.ratio < 1);
   }
 });
+
+test("EV：最新一期缺详情时标 lagging，不把已开奖的期当下一期", async () => {
+  const { ssqEVReport } = await import("../src/ev.js");
+  const mk = (code, pool) => ({ code, red: ["01","02","03","04","05","06"], blue: "07", detail: { sales: 350000000, pool, prizes: [] } });
+  const rows = [];
+  for (let i = 0; i < 10; i++) rows.push(mk(String(2026120 - i), 1000000000));
+  const r = ssqEVReport([{ code: "2026121", red: [], blue: "01" }, ...rows]);
+  assert.equal(r.next.afterCode, "2026120");
+  assert.equal(r.next.lagging, true);
+  assert.equal(r.next.latestCode, "2026121");
+  assert.equal(ssqEVReport(rows).next.lagging, undefined);
+});

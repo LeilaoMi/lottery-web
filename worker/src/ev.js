@@ -74,6 +74,8 @@ export function ssqEVReport(draws, opts = {}) {
   const poolNow = rows[0].detail.pool;
   const r = opts.ratio1 ? { ratio1: opts.ratio1, ratio2: opts.ratio2 || 1 } : {};
   const next = { afterCode: rows[0].code, pool: poolNow, salesEst, ...ssqEV({ sales: salesEst, pool: poolNow, ...r }), avg: ssqEV({ sales: salesEst, pool: poolNow }) };
+  // 最新一期已开但 500 还没挂出奖池/销量时，rows[0] 落后一期：如实标出，否则页面会把已开奖的那期当成「下一期」
+  if (draws[0] && draws[0].code !== rows[0].code) Object.assign(next, { latestCode: draws[0].code, lagging: true, lagNote: "最新一期 " + draws[0].code + " 已开奖，但奖池/销量详情尚未发布，暂按 " + rows[0].code + " 开奖后的奖池估算" });
   const history = [];
   for (let i = 0; i + 1 < rows.length && history.length < 60; i++) {
     const e = ssqEV({ sales: rows[i].detail.sales, pool: rows[i + 1].detail.pool });
@@ -201,6 +203,8 @@ export function dltEVReport(draws) {
   const salesEst = Math.round(recent.reduce((s, d) => s + d.detail.sales, 0) / recent.length);
   const poolNow = rows[0].detail.pool;
   const next = { afterCode: rows[0].code, pool: poolNow, salesEst, avg: dltEV({ sales: salesEst, pool: poolNow }) };
+  // 最新一期已开但 500 还没挂出奖池/销量时，rows[0] 落后一期：如实标出，否则页面会把已开奖的那期当成「下一期」
+  if (draws[0] && draws[0].code !== rows[0].code) Object.assign(next, { latestCode: draws[0].code, lagging: true, lagNote: "最新一期 " + draws[0].code + " 已开奖，但奖池/销量详情尚未发布，暂按 " + rows[0].code + " 开奖后的奖池估算" });
   const history = [];
   for (let i = 0; i + 1 < rows.length && history.length < 60; i++) {
     if (String(rows[i].code) < "26014") break;
