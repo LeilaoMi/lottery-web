@@ -222,44 +222,6 @@ export function blueScores(draws) {
   return { scores: out, ranked, top1: ranked[0][0], pool: ranked.slice(0, 6).map(x => x[0]), coldChase: Object.keys(miss).filter(k => miss[k] >= 20) };
 }
 
-export function recommend(draws) {
-  const st = analyze(draws, 30);
-  const bl = blueScores(draws);
-  const lastRed = new Set(draws[0] ? draws[0].red : []);
-  const pool = [...st.hotRed, ...Object.entries(st.redFreq).sort((a, b) => b[1] - a[1]).slice(0, 15).map(x => x[0])];
-  const uniq = [...new Set(pool)].filter(x => !lastRed.has(x));
-  const pick = (n, arr) => [...new Set(arr)].sort(() => Math.random() - 0.5).slice(0, n).sort();
-  const pickCover = () => {
-    const a = [...new Set([pick(1, range(1, 11))[0], pick(1, range(12, 22))[0], pick(1, range(23, 33))[0], ...uniq].filter(Boolean))];
-    const out = [...a.slice(0, 3)];
-    for (const x of [...uniq].sort(() => Math.random() - 0.5)) { if (out.length >= 6) break; if (!out.includes(x)) out.push(x); }
-    for (let i = 1; out.length < 6 && i <= 33; i++) { const k = String(i).padStart(2, "0"); if (!out.includes(k) && !lastRed.has(k)) out.push(k); }
-    return out.sort().slice(0, 6);
-  };
-  const r = [
-    { name: "稳健·热号", red: pick(6, uniq.slice(0, 15)), blue: bl.ranked.find(x => x[0] !== draws[0]?.blue)?.[0] || bl.top1 },
-    { name: "进取·遗漏", red: pick(6, uniq.slice().reverse().slice(0, 15)), blue: bl.coldChase[0] || bl.top1 },
-    { name: "均衡", red: pick(6, uniq), blue: bl.top1 },
-    { name: "区间覆盖", red: pickCover(), blue: bl.pool[1] || bl.top1 },
-    { name: "冷热加权", red: pick(6, uniq), blue: bl.pool[2] || bl.top1 },
-    { name: "随机基准", red: pick(6, Array.from({ length: 33 }, (_, i) => String(i + 1).padStart(2, "0"))), blue: String(1 + Math.floor(Math.random() * 16)).padStart(2, "0") }
-  ];
-  return { disclaimer: "随机游戏，统计仅供娱乐，不保证中奖", analysis: st, blue: { top1: bl.top1, pool: bl.pool }, picks: r.map(x => ({ ...x, score: structScore(x.red) })) };
-}
-function range(a, b) { const o = []; for (let i = a; i <= b; i++) o.push(String(i).padStart(2, "0")); return o; }
-export function structScore(red) {
-  const n = red.map(x => parseInt(x)), sum = n.reduce((a, b) => a + b, 0);
-  let s = 0;
-  if (sum >= 70 && sum <= 140) s += 3;
-  const odd = n.filter(x => x % 2).length;
-  if ([2, 3, 4].includes(odd)) s += 2;
-  if ([2, 3, 4].includes(n.filter(x => x > 16).length)) s += 2;
-  const z = [n.filter(x => x <= 11).length > 0, n.filter(x => x >= 12 && x <= 22).length > 0, n.filter(x => x >= 23).length > 0].filter(Boolean).length;
-  if (z === 3) s += 2;
-  const span = Math.max(...n) - Math.min(...n);
-  if (span >= 20 && span <= 30) s += 1;
-  return s;
-}
 export function trend(draws, win = 30) {
   const s = draws.slice(0, win).reverse(), miss = {};
   for (let i = 1; i <= 33; i++) miss[String(i).padStart(2, "0")] = 0;

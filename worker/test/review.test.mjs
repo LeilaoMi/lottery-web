@@ -104,7 +104,7 @@ test("快照必须带随机基准对照组（复盘要能把「策略≈随机�
   assert.ok(ins, "应写入新快照");
   const p = JSON.parse(ins.payload);
   const names = p.picks.map(x => x.name);
-  assert.ok(p.picks.length >= 4, "前 3 套策略 + 随机基准应至少 4 项，实得 " + JSON.stringify(names));
+  assert.deepEqual(names, ["稳健·热号", "进取·遗漏", "随机基准"], "快照应包含全部在用策略 + 随机基准");
   assert.ok(names.includes("随机基准"), "快照 picks 必须含随机基准，实得 " + JSON.stringify(names));
 });
 test("复盘汇总：随机基准与策略分开计账，不互相稀释", async () => {
@@ -316,4 +316,23 @@ test("audit：consistent=0 但 note 缺失（历史遗留/未知原因）→ 一
   const r = await worker.fetch(new Request("http://x/api/audit"), { DB: db }, {});
   const by = Object.fromEntries((await r.json()).checks.map(c => [c.id, c]));
   assert.equal(by.sync_health.status, "fail");
+});
+
+test("复盘记分牌按策略分账：已移除策略不进汇总，Holm 族 = 彩种 × 在用策略", async () => {
+  const db = makeDB(SEED);
+  const mk = (id, picks) => ({ id, kind: "fc3d", code: "20260" + id, checked: 1, payload: "{}",
+    hit: JSON.stringify({ picks, dan: [], danHit: 0, kill: [], killWrong: [], actual: "1 2 3" }) });
+  db.state.predlog.push(mk(601, [
+    { name: "稳健·热号", digits: ["1", "2", "3"], hit: 3 },
+    { name: "进取·遗漏", digits: ["4", "5", "6"], hit: 0 },
+    { name: "均衡", digits: ["1", "2", "3"], hit: 3 },
+    { name: "随机基准", digits: ["7", "8", "9"], hit: 0 }
+  ]));
+  const j = await (await worker.fetch(new Request("http://x/api/review?kind=fc3d"), { DB: db, API_TOKEN: API_T }, {})).json();
+  const s = j.summary.fc3d;
+  assert.deepEqual(Object.keys(s.strategies).sort(), ["稳健·热号", "进取·遗漏"].sort(), "已移除的「均衡」不得进汇总");
+  assert.equal(s.strategies["稳健·热号"].hitRate, 1);
+  assert.equal(s.pickHitRate, 0.5, "合计只算在用策略：(3+0)/6");
+  assert.equal(s.danHitRate, undefined, "胆码已移出复盘汇总");
+  assert.equal(j.scoreboard.tests, Object.values(j.summary).reduce((n, v) => n + Object.values(v.strategies).filter(x => x.p != null).length, 0));
 });

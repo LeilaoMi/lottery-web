@@ -295,7 +295,7 @@ async function loadDaily(){
         const s = summary[checkedRow.kind];
         e2.innerHTML = '<div class="kv"><span>' + esc(LOT[checkedRow.kind] ? LOT[checkedRow.kind].name : checkedRow.kind) + ' 期 ' + esc(checkedRow.code) + '</span><span>开奖 ' + esc(checkedRow.hit.actual) + '</span></div>' +
           '<div class="kv"><span>各策略命中</span><span>' + esc((checkedRow.hit.picks || []).map(p => p.name + ' ' + p.hit).join(' / ')) + '</span></div>' +
-          '<div class="kv"><span>胆 ' + esc(checkedRow.hit.danHit || 0) + ' · 杀错 ' + esc((checkedRow.hit.killWrong || []).join(' ') || '无') + '</span><span class="muted">滚动 ' + (s ? s.checked + ' 期' : '') + '</span></div>';
+          '<div class="kv"><span></span><span class="muted">滚动 ' + (s ? s.checked + ' 期' : '') + '</span></div>';
       } else e2.innerHTML = '<div class="muted">暂无已对账快照：每日同步后逐期累积。</div>';
     }
     const e3 = document.getElementById('dsnap');
@@ -303,9 +303,7 @@ async function loadDaily(){
       if (snapRow) {
         const p = snapRow.payload || {};
         e3.innerHTML = '<div class="kv"><span>' + esc(LOT[snapRow.kind] ? LOT[snapRow.kind].name : snapRow.kind) + ' 期 ' + esc(snapRow.code) + '（基于 ' + esc(p.basedOn || '') + '）</span><span></span></div>' +
-          '<div class="kv"><span>推荐</span><span>' + esc((p.picks || []).map(x => x.name + ' ' + (x.main || []).join(' ')).join(' / ') || '—') + '</span></div>' +
-          '<div class="kv"><span>胆</span><span>' + esc((p.dan || []).join(' ') || '—') + '</span></div>' +
-          '<div class="kv"><span>杀</span><span>' + esc((p.kill || []).join(' ') || '—') + '</span></div>';
+          '<div class="kv"><span>推荐</span><span>' + esc((p.picks || []).map(x => x.name + ' ' + (x.main || x.digits || []).join(' ')).join(' / ') || '—') + '</span></div>';
       } else e3.innerHTML = '<div class="muted">暂无待开奖快照：同步任务运行后自动生成。</div>';
     }
   }).catch(e => { const x2 = document.getElementById('drev'); if (x2) errBox(e, x2); const x3 = document.getElementById('dsnap'); if (x3) x3.innerHTML = '<span class="muted">复盘数据不可用</span>'; });
@@ -324,18 +322,27 @@ async function loadPredict(id){
   if (rec.insufficient || !(rec.picks || []).length) {
     html += '<div class="warn">' + esc(rec.note || '样本不足，暂无参考号码') + '</div>';
   } else {
-    html += '<h4 style="margin:14px 0 6px">6 组参考（含结构分）</h4>';
+    // 奖金结构先说清：选号改不了中奖概率，能动的只有分奖（浮动奖）与挑期（大乐透奖池）
+    const po = rec.payoff || {};
+    html += '<div class="card" style="margin-top:10px"><b>' + (po.type === 'fixed' ? '固定奖彩种' : '浮动奖彩种') + '</b>' +
+      (po.returnRate != null ? '　本期每注期望回报 ' + esc(po.ev.toFixed(3)) + ' 元（回报率 ' + (po.returnRate * 100).toFixed(1) + '%' + (po.tier ? '，奖池档 ' + esc(po.tier) : '') + '）' : '') +
+      (po.highReturnRate != null && !po.poolHigh ? '<div>奖池 ≥8 亿时回报率约 ' + (po.highReturnRate * 100).toFixed(1) + '%</div>' : '') +
+      '<div class="muted">' + esc(po.note || '') + '</div></div>';
+    html += '<h4 style="margin:14px 0 6px">参考号码 <span class="muted">（每个策略旁是它的实时战绩；中奖概率全部相同）</span></h4>';
   }
   (rec.picks || []).forEach((p, i) => {
-    html += '<div class="kv"><span>' + esc(p.name) + ' <span class="muted">分 ' + esc(p.score) + '</span></span><span>' +
+    html += '<div class="kv"><span>' + esc(p.name) + (p.primary ? ' <b style="color:#c0392b">主推荐</b>' : '') + ' <span id="perf-p' + i + '" class="muted"></span></span><span>' +
       (isDigit ? balls(p.digits) : balls(p.main) + balls(p.aux, 'b')) + '</span></div>';
-    if (!isDigit && asArr(p.main).length) html += '<div id="cold-p' + i + '" class="muted">冷门度加载中…</div>';
+    if (p.note) html += '<div class="muted">' + esc(p.note) + '</div>';
+    if (id === 'ssq' && asArr(p.main).length) html += '<div id="cold-p' + i + '" class="muted">冷门度加载中…</div>';
   });
-  if (!isDigit) html += '<div class="muted">冷门度衡量的是"万一中了能独享多少"（选号撞车度），<b>不改变中奖概率</b>，期望回报仍为负。</div>';
+  if (id === 'ssq') html += '<div class="muted">冷门度衡量的是"万一中了能独享多少"（选号撞车度），<b>不改变中奖概率</b>，期望回报仍为负。</div>';
   // 口径说明：6 套策略不是同一窗口的统计拼出来的（热/冷=全量历史，胆码=win 窗口），
   // 不写明的话「6 组参考」看起来像同一口径下的 6 个方案
   if (rec.caliber) html += '<div class="muted">口径：' + esc(rec.caliber) + '</div>';
   html += '<p class="muted">' + esc(rec.disclaimer || '') + '</p>';
+  // 杀号 / 胆码 / 胆拖单：复盘与回测均未跑赢随机，收进折叠的「研究（已证伪）」区，默认不展开
+  html += '<details class="research" style="margin-top:14px"><summary><b>研究（已证伪）：杀号 · 胆码 · 胆拖单</b> <span class="muted">复盘与回测都没有跑赢随机，仅供研究</span></summary>';
   const dl = rec.dan || {};
   let kl = rec.kill || {}, killTag = '', killCalNote = '';
   try {
@@ -362,10 +369,24 @@ async function loadPredict(id){
   html += '<h4 style="margin:14px 0 6px">胆拖投注单</h4><div class="row">' +
     '<label class="fld" for="tkd">胆数 <input id="tkd" style="width:70px" value="2"></label>' +
     '<label class="fld" for="tkt">拖数 <input id="tkt" style="width:70px" value="6"></label>' +
-    '<button id="tkgo">生成胆拖单</button></div><div id="tkout" class="muted"></div>';
+    '<button id="tkgo">生成胆拖单</button></div><div id="tkout" class="muted"></div></details>';
   if (rec.formHint) html += '<div class="muted">近 ' + esc(rec.count) + ' 期形态：组三 ' + esc(rec.formHint['组三']) +
     ' / 组六 ' + esc(rec.formHint['组六']) + ' / 豹子 ' + esc(rec.formHint['豹子']) + '</div>';
   $('#p').innerHTML = html;
+  // 每个策略的实时战绩：/api/review 的按策略汇总（命中率 vs 随机基线 + SPRT 判决），已证伪的标「娱乐」
+  api('/api/review?kind=' + id).then(r => {
+    const s = (r.summary || {})[id] || {}, st = s.strategies || {};
+    (rec.picks || []).forEach((p, i) => {
+      const el = document.getElementById('perf-p' + i);
+      if (!el) return;
+      if (p.name === '随机基准') { el.innerHTML = s.randHitRate != null ? '对照组 ' + (s.randHitRate * 100).toFixed(1) + '%' : '对照组'; return; }
+      const x = st[p.name];
+      if (!x || x.hitRate == null) { el.textContent = '战绩累积中'; return; }
+      const v = x.sprt && x.sprt.verdict;
+      el.innerHTML = '命中 ' + (x.hitRate * 100).toFixed(1) + '% / 基线 ' + (s.pickBaseline * 100).toFixed(1) + '%' +
+        (v === 'h0' ? ' <b style="color:#888">娱乐（已证伪）</b>' : v === 'h1' ? ' <b style="color:#1a7f37">检出提升</b>' : ' 观察中');
+    });
+  }).catch(() => {});
   // 冷门度逐组异步填充：后端接口未部署时各组自行显示"暂不可用"，不阻塞页面
   (rec.picks || []).forEach((p, i) => {
     const el = document.getElementById('cold-p' + i);
@@ -660,7 +681,7 @@ async function loadAnalyze(id){
     // 号码池型才有遗漏走势（数字型无号码池）；insertAdjacentHTML 不破坏已绑定的按钮事件
     if (an.freq && Object.keys(an.freq).length) {
       $('#stats').insertAdjacentHTML('beforeend',
-        '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>遗漏走势</b> <span class="muted">（各号码当期连续未出期数，回到 0 = 当期开出）</span>' +
+        '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #eee"><b>遗漏走势</b> <span class="muted">（各号码当期连续未出期数，回到 0 = 当期开出；只描述历史，不作预测依据——每期开奖相互独立）</span>' +
         '<div class="row"><label class="fld" for="trn">走势号码 <input id="trn" placeholder="逗号分隔；留空取当前遗漏最深 4 个" style="flex:1;min-width:200px"></label>' +
         '<button id="trgo">画走势</button></div><div id="chart2" style="height:340px"></div></div>');
       document.getElementById('trgo').onclick = () => drawTrend(id);
@@ -827,8 +848,12 @@ async function loadBacktest(id, periods){
       '<button id="btho">校准外推检验</button><button id="btkt">杀号阈值寻优</button><span id="hoout" class="muted"></span><span id="ktout" class="muted"></span></div>';
     // insertAdjacentHTML + 先移除旧块：重算时不会丢失走势图的按钮事件
     const old = document.getElementById('btout');
+    const wasOpen = !!(old && old.open);
     if (old) old.remove();
-    $('#stats').insertAdjacentHTML('beforeend', '<div id="btout" style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee" class="muted">' + extra + '</div>');
+    // 回测 / 杀号校准 / 阈值寻优同属「研究（已证伪）」：折叠展示，展开时重算图表尺寸（折叠态下 echarts 宽度为 0）
+    $('#stats').insertAdjacentHTML('beforeend', '<details id="btout" class="research"' + (wasOpen ? ' open' : '') + ' style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee"><summary><b>研究（已证伪）：策略回测 · 杀号校准 · 阈值寻优</b></summary><div class="muted">' + extra + '</div></details>');
+    const btd = document.getElementById('btout');
+    if (btd) btd.addEventListener('toggle', () => { if (btd.open) resizeCharts(); });
     // 分年柱图：热号/杀号命中率逐年对比 + 随机基线参考线（一眼看出策略是稳定还是靠某一年撑的）
     if (bt.eras && bt.eras.length > 1 && typeof echarts !== 'undefined') {
       const bcel = document.getElementById('btchart');
@@ -1275,10 +1300,10 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
         ? '<div class="card"><b>已对账 ' + esc(s.checked) + ' 期</b>' +
           (s.pickHitRate != null ? '<div>推荐号命中率 ' + (s.pickHitRate * 100).toFixed(1) + '%（随机基线 ' + (s.pickBaseline * 100).toFixed(1) + '%）' + pTag(s.pickP) + '</div>' : '') +
           (s.randHitRate != null ? '<div>随机基准命中率 ' + (s.randHitRate * 100).toFixed(1) + '%（同批期号对照组：与上面接近 = 策略无信息量）' + pTag(s.randP) + '</div>' : '') +
-          (s.danHitRate != null ? '<div>定胆命中率 ' + (s.danHitRate * 100).toFixed(1) + '%' + pTag(s.danP) + '</div>' : '') +
-          (s.killWrongRate != null ? '<div>杀号杀错率 ' + (s.killWrongRate * 100).toFixed(1) + '%（越低越好，低于基线才有价值）' + pTag(s.killP) + '</div>' : '') +
-          (s.pickHolm != null ? '<div class="muted">多重比较校正（Holm，' + esc((r.scoreboard || {}).tests) + ' 个检验）后：推荐 p=' + esc(s.pickHolm) + (s.danHolm != null ? '，定胆 p=' + esc(s.danHolm) : '') + (s.killHolm != null ? '，杀号 p=' + esc(s.killHolm) : '') + '</div>' : '') +
-          (s.sprt ? '<div><b>序贯检验（SPRT）：' + (s.sprt.verdict === 'h0' ? '已证伪</b>——已有足够证据说明推荐没有比随机高 20%' : s.sprt.verdict === 'h1' ? '检出提升</b>——命中显著高于随机 20%（仍需排除误报）' : '继续观察</b>——证据还不够下结论') + '（LLR ' + esc(s.sprt.llr) + '，判决线 ' + esc(s.sprt.lower) + ' / ' + esc(s.sprt.upper) + '）</div>' : '') +
+          Object.entries(s.strategies || {}).map(([nm, x]) => '<div>' + esc(nm) + '：命中 ' + (x.hitRate == null ? '—' : (x.hitRate * 100).toFixed(1) + '%') + pTag(x.p) +
+            (x.holm != null ? ' <span class="muted">Holm 校正 p=' + esc(x.holm) + '</span>' : '') +
+            (x.sprt ? ' · SPRT <b>' + (x.sprt.verdict === 'h0' ? '已证伪（娱乐）' : x.sprt.verdict === 'h1' ? '检出提升' : '继续观察') + '</b> <span class="muted">LLR ' + esc(x.sprt.llr) + '（判决线 ' + esc(x.sprt.lower) + ' / ' + esc(x.sprt.upper) + '）</span>' : '') + '</div>').join('') +
+          '<div class="muted">多重比较校正覆盖 8 彩种 × 在用策略共 ' + esc((r.scoreboard || {}).tests) + ' 个检验；SPRT 的备择假设是「比随机高 20%」。</div>' +
           '<div id="revchart" style="height:200px;margin-top:8px"></div>' + '</div>'
         : '<div class="muted">暂无已对账记录：同步任务运行后逐期累积。</div>';
       const rows = (r.rows || []).filter(x => x.checked && x.hit).slice(0, 8);
@@ -1286,10 +1311,10 @@ const cf = CALC_FIELDS[id] || [['pos', '直选:各位个数(几位填几个) / �
         h += '<div class="tblwrap"><table><tr><th>期号</th><th>推荐（各策略主区）</th><th>开奖</th><th>命中</th></tr>' +
           rows.map(x => '<tr><td>' + esc(x.code) + '</td><td>' +
             esc((x.payload.picks || []).map(p => (p.main || []).join(' ')).join(' / ')) + '</td><td>' + esc(x.hit.actual) + '</td><td>' +
-            esc((x.hit.picks || []).map(p => p.hit).join('/') + '，胆' + (x.hit.danHit || 0) + '，杀错' + (x.hit.killWrong || []).length) + '</td></tr>').join('') + '</table></div>';
+            esc((x.hit.picks || []).map(p => p.hit).join('/')) + '</td></tr>').join('') + '</table></div>';
       }
       $('#rout').innerHTML = h || '<div class="muted">暂无数据</div>';
-      // 复盘小图：推荐命中 / 杀号错杀 各自对照随机基线（p<0.05 的项标题栏标绿）
+      // 复盘小图：在用策略合计命中 / 随机基准 各自对照随机基线
       if (s && typeof echarts !== 'undefined') {
         const rc = document.getElementById('revchart');
         if (rc) {
@@ -1297,11 +1322,11 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
             grid: { left: 44, right: 12, top: 30, bottom: 24 },
             legend: { top: 0, textStyle: { fontSize: 11 } },
             tooltip: { trigger: 'axis', valueFormatter: v => v == null ? '-' : (v * 100).toFixed(1) + '%' },
-            xAxis: { type: 'category', data: ['推荐命中', '随机基准', '杀号错杀'], axisLabel: { fontSize: 11 } },
+            xAxis: { type: 'category', data: ['推荐命中', '随机基准'], axisLabel: { fontSize: 11 } },
             yAxis: { type: 'value', axisLabel: { fontSize: 12, formatter: v => (v * 100).toFixed(0) + '%' } },
             series: [
-              { name: '实际', type: 'bar', data: [s.pickHitRate, s.randHitRate, s.killWrongRate], itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 12, formatter: p => p.value == null ? '' : (p.value * 100).toFixed(1) + '%' } },
-              { name: '随机基线', type: 'bar', data: [s.pickBaseline, s.pickBaseline, s.pickBaseline], itemStyle: { color: '#bbb' } }
+              { name: '实际', type: 'bar', data: [s.pickHitRate, s.randHitRate], itemStyle: { color: '#c0392b' }, label: { show: true, position: 'top', fontSize: 12, formatter: p => p.value == null ? '' : (p.value * 100).toFixed(1) + '%' } },
+              { name: '随机基线', type: 'bar', data: [s.pickBaseline, s.pickBaseline], itemStyle: { color: '#bbb' } }
             ]
           });
         }
@@ -1344,7 +1369,19 @@ regChart('revchart', rc).clear(), regChart('revchart', rc).setOption({
       if (r.error) { $('#drout').innerHTML = '<div class="muted">' + esc(r.note || r.error) + '</div>'; return; }
       $('#drout').innerHTML = '<div class="card"><b>' + esc(r.from) + ' ~ ' + esc(r.to) + '（' + esc(r.window) + ' 期）</b>' +
         (r.zones || []).map(z => '<div class="kv"><span>' + esc(z.label) + '</span><span>峰值 ' + esc(z.peak) + ' / 阈值 ' + esc(z.threshold) + (z.alarm ? ' · 越界：' + esc(z.alarms.slice(0, 3).map(a => a.name + a.dir).join('、')) : ' · 正常') + '</span></div>').join('') +
+        '<div id="drchart" style="height:240px;margin-top:8px"></div>' +
         '<div>' + esc(r.verdict) + '</div><div class="muted">' + esc(r.method) + '</div></div>';
+      // CUSUM 曲线：第一个区峰值最高的 3 个号码的逐期轨迹 + 阈值虚线（越过虚线才算越界）
+      const z0 = (r.zones || [])[0], dc = document.getElementById('drchart');
+      if (z0 && z0.tracks && dc && typeof echarts !== 'undefined') {
+        regChart('drchart', dc).clear(), regChart('drchart', dc).setOption({
+          grid: { left: 40, right: 12, top: 30, bottom: 24 }, legend: { top: 0, textStyle: { fontSize: 11 } },
+          tooltip: { trigger: 'axis' }, xAxis: { type: 'category', data: r.codes || [], axisLabel: { fontSize: 10 } },
+          yAxis: { type: 'value', axisLabel: { fontSize: 11 } },
+          series: z0.tracks.map((t, k) => ({ name: z0.label + ' ' + t.name, type: 'line', showSymbol: false, data: t.values,
+            ...(k === 0 && z0.threshold ? { markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#c00' }, data: [{ yAxis: z0.threshold }], label: { formatter: '阈值 ' + z0.threshold, fontSize: 11 } } } : {}) }))
+        });
+      }
     } catch (e) { errBox(e, $('#drout')); }
   };
   // 冷门度观测 vs 预测：五分位双轴柱线图。数据由 ssq-fit 烘焙进 Worker，D1 里没有历史注数。

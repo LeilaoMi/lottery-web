@@ -108,11 +108,14 @@ test("定胆：分数降序且不重复", () => {
   }
 });
 
-test("recommendAll：8 彩种均为 6 套策略，号码合法不重复", () => {
+test("recommendAll（v0.21 精简）：热号/遗漏/随机基准，双色球另有反热门主推荐；号码合法不重复", () => {
   for (const k of KINDS) {
     const d = synth(k), r = recommendAll(k, d, { win: 30 });
     assert.equal(r.kind, k);
-    assert.equal(r.picks.length, 6, k + " 策略数量");
+    const want = k === "ssq" ? ["稳健·热号", "进取·遗漏", "反热门", "随机基准"] : ["稳健·热号", "进取·遗漏", "随机基准"];
+    assert.deepEqual(r.picks.map(p => p.name), want, k + " 策略集合");
+    assert.ok(r.payoff && /^(fixed|floating)$/.test(r.payoff.type), k + " 缺奖金结构说明");
+    assert.equal(r.payoff.type, ["kl8", "fc3d", "pl3", "pl5"].includes(k) ? "fixed" : "floating", k + " 奖金类型");
     assert.ok(r.disclaimer, k + " 缺免责声明");
     assert.ok(r.analysis && r.kill && r.dan, k + " 缺模块");
     for (const p of r.picks) {
@@ -137,13 +140,16 @@ test("recommendAll：8 彩种均为 6 套策略，号码合法不重复", () => 
   }
 });
 
-test("杀号缩水策略确实剔除了高票杀号", () => {
+test("双色球反热门层：热号/遗漏在候选内取最冷组合，主推荐同奖倍率不高于平均", () => {
   const d = synth("ssq");
-  const r = recommendAll("ssq", d, { win: 30 });
-  const kl = r.kill, th = kl.threshold;
-  const killed = new Set(kl.main.filter(x => x.votes >= th).map(x => x.n));
-  const shrunk = r.picks.find(p => p.name === "杀号缩水");
-  for (const x of shrunk.main) assert.ok(!killed.has(x), "缩水后仍含杀号 " + x);
+  for (let t = 0; t < 5; t++) {
+    const r = recommendAll("ssq", d, { win: 30 });
+    const hot = r.picks.find(p => p.name === "稳健·热号"), ap = r.picks.find(p => p.name === "反热门");
+    assert.ok(hot.coldness && hot.coldness.ratio > 0, "热号应带冷门度");
+    assert.ok(ap.primary && ap.coldness.ratio < 1, "反热门同奖倍率应 <1，实得 " + ap.coldness.ratio);
+    const top = new Set(Object.keys(r.analysis.freq).sort((a, b) => r.analysis.freq[b] - r.analysis.freq[a] || Number(a) - Number(b)).slice(0, 10));
+    for (const x of hot.main) assert.ok(top.has(x), "热号必须仍取自高频候选：" + x);
+  }
 });
 
 test("structScore 对结构合理的组合给更高分", () => {

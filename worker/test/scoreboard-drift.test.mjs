@@ -27,6 +27,10 @@ test("CUSUM：均匀随机不越界，人为偏置的号码越界并被点名", 
   const rep = driftReport("ssq", mk(biased));
   assert.equal(rep.zones[0].alarm, true);
   assert.ok(rep.zones[0].alarms.some(a => a.name === "07" && a.dir === "偏多"));
+  // 曲线：峰值最高的序列排第一、逐期长度与窗口一致
+  assert.equal(rep.zones[0].tracks[0].name, "07");
+  assert.equal(rep.zones[0].tracks[0].values.length, 500);
+  assert.equal(Math.max(...rep.zones[0].tracks[0].values), rep.zones[0].peak);
 });
 
 test("CUSUM 区划：七星彩第 7 位单列 15 格；七乐彩不监测特别号", () => {

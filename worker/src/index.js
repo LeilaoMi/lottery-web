@@ -34,7 +34,7 @@ const STATIC_ROUTES = {
   "/licenses": () => htmlLicenses(),
 };
 const API_ROUTES = {
-  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.20.0", lotteries: LOTS.map(x => x.id) }),
+  "/health": (rq, env) => json({ status: "ok", version: env.VERSION || "0.21.0", lotteries: LOTS.map(x => x.id) }),
   "/api/meta": (rq, env) => metaRoute(env),
   "/api/audit": (rq, env) => auditRoute(env),
   "/api/records": (rq, env) => recordsRoute(env),
@@ -787,11 +787,9 @@ async function reviewJob(request, env) {
       if (rec.insufficient) { out[k] = { snapshot: null, reconciled: checkedN, skipped: rec.note }; continue; }
       const kl = rec.kill || {};
       const th = kl.threshold ?? 99;
-      // 快照 = 前 3 套策略 + 随机基准（第 6 套对照组）。只存前 3 套就永远没有对照，
+      // 快照 = 全部策略（v0.21 起只剩热号 / 遗漏 / [双色球]反热门 / 随机基准）。随机基准是对照组，
       // 复盘页必须能把「策略 ≈ 随机」摆出来——这是本项目诚实性的核心展示，不能省。
-      const top3 = (rec.picks || []).slice(0, 3);
-      const randPick = (rec.picks || []).find(x => x.name === "随机基准");
-      const snapPicks = randPick && !top3.some(x => x.name === randPick.name) ? [...top3, randPick] : top3;
+      const snapPicks = (rec.picks || []).slice();
       const payload = isDigit ? {
         picks: snapPicks.map(x => ({ name: x.name, digits: (x.digits || []).map(String), number: x.number || null })),
         dan: ((rec.dan && rec.dan.perPos) || []).map(pp => (pp.dan || []).slice(0, 2).map(x => String(x.n))),
@@ -819,6 +817,7 @@ async function reviewJob(request, env) {
   }
   return json({ ok: true, results: out });
 }
+const ACTIVE_STRATS = new Set(["稳健·热号", "进取·遗漏", "反热门", "随机基准"]);
 // reviewRoute：复盘查询（公开读；汇总各彩种滚动命中率 + 明细）
 async function reviewRoute(request, env, url) {
   if (!env.DB) return json({ error: "no db" }, 501);
@@ -840,15 +839,22 @@ async function reviewRoute(request, env, url) {
     const agg = {};
     for (const r of all) {
       if (!r.checked || !r.hit) continue;
-      const a = agg[r.kind] || (agg[r.kind] = { checked: 0, picksTotal: 0, picksHit: 0, randTotal: 0, randHit: 0, danTotal: 0, danHit: 0, killTotal: 0, killWrong: 0 });
+      const a = agg[r.kind] || (agg[r.kind] = { checked: 0, picksTotal: 0, picksHit: 0, randTotal: 0, randHit: 0, danTotal: 0, danHit: 0, killTotal: 0, killWrong: 0, by: {} });
       a.checked++;
+      // 按策略分账（v0.21）：只统计仍在用的策略；已移除策略的旧记录保留在库里，但不再进汇总
+      for (const p of (r.hit.picks || [])) {
+        if (!ACTIVE_STRATS.has(p.name) || p.name === "随机基准") continue;
+        const u = p.main || p.digits || [];
+        const b = a.by[p.name] || (a.by[p.name] = { total: 0, hit: 0 });
+        b.total += u.length; b.hit += p.hit || 0;
+      }
       // 数字型对账存的是 digits（逐位），号码池型存 main；两者都要计入总数分母，
       // 否则数字型 picksTotal=0 → pickHitRate 恒 null，复盘页对 4 个数字彩种永远是空白。
       // 随机基准单独计账：混进 pickHitRate 会把策略命中率往随机稀释，对照组失去对照意义。
       for (const p of (r.hit.picks || [])) {
         const u = p.main || p.digits || [];
         if (p.name === "随机基准") { a.randTotal += u.length; a.randHit += p.hit || 0; }
-        else { a.picksTotal += u.length; a.picksHit += p.hit || 0; }
+        else if (ACTIVE_STRATS.has(p.name)) { a.picksTotal += u.length; a.picksHit += p.hit || 0; }
       }
       a.danTotal += (r.hit.dan || []).length; a.danHit += r.hit.danHit || 0;
       a.killTotal += (r.hit.kill || []).length; a.killWrong += (r.hit.killWrong || []).length;
@@ -874,28 +880,31 @@ async function reviewRoute(request, env, url) {
         // 对照组：同一批期号里随机基准策略的滚动命中率。策略值 ≈ 随机值 = 策略无信息量的直接证据
         randHitRate,
         randP: base != null && a.randTotal ? binomP(a.randHit, a.randTotal, base) : null,
-        danHitRate: a.danTotal ? +(a.danHit / a.danTotal).toFixed(3) : null,
-        danP: base != null ? binomP(a.danHit, a.danTotal, base) : null,
-        killWrongRate: a.killTotal ? +(a.killWrong / a.killTotal).toFixed(3) : null,
-        killP: base != null ? binomP(a.killWrong, a.killTotal, base) : null
+        // 每个策略单独对照基线（胆码 / 杀号已移到「研究（已证伪）」区，不再进复盘汇总）
+        strategies: Object.fromEntries(Object.entries(a.by).map(([name, b]) => [name, {
+          total: b.total, hitRate: b.total ? +(b.hit / b.total).toFixed(3) : null,
+          p: base != null ? binomP(b.hit, b.total, base) : null,
+          sprt: base != null ? sprt(b.hit, b.total, base, 1.2) : null
+        }]))
       };
     }
     // 记分牌：①跨 8 彩种 × 3 指标的 Holm 多重比较校正（随机基准是对照组，不参与）；
     // ②推荐命中的序贯概率比检验（SPRT，H0 = 基线，H1 = 相对提升 20%，α=β=0.05）——
     // 预先写死的终止规则：判 H0 即「已证伪」，不再靠人眼盯 p 值（盯得越久越容易撞上假阳性）
+    // Holm 族 = 8 彩种 × 在用策略（随机基准是对照组，不参与）
     const tests = [];
-    for (const [k, v] of Object.entries(summary)) for (const m of ["pickP", "danP", "killP"]) if (v[m] != null) tests.push({ kind: k, metric: m, p: v[m] });
+    for (const [k, v] of Object.entries(summary)) for (const [name, st] of Object.entries(v.strategies || {})) if (st.p != null) tests.push({ kind: k, name, p: st.p });
     const adj = holm(tests.map(t => t.p));
-    tests.forEach((t, i) => { summary[t.kind][t.metric.replace(/P$/, "Holm")] = adj[i]; });
+    tests.forEach((t, i) => { summary[t.kind].strategies[t.name].holm = adj[i]; });
     for (const [k, a] of Object.entries(agg)) {
       const v = summary[k];
       v.sprt = v.pickBaseline != null ? sprt(a.picksHit, a.picksTotal, v.pickBaseline, 1.2) : null;
     }
     const scoreboard = {
       tests: tests.length,
-      significantAfterHolm: tests.filter((t, i) => adj[i] != null && adj[i] < 0.05).map(t => t.kind + "." + t.metric),
-      falsified: Object.entries(summary).filter(([, v]) => v.sprt && v.sprt.verdict === "h0").map(([k]) => k),
-      note: "Holm 校正后仍 <0.05 才算显著；SPRT 判 h0 = 已有足够证据说明推荐没有比随机高 20% 的效果（同一期内各号相关，SPRT 为近似）。"
+      significantAfterHolm: tests.filter((t, i) => adj[i] != null && adj[i] < 0.05).map(t => t.kind + "." + t.name),
+      falsified: tests.filter(t => (summary[t.kind].strategies[t.name].sprt || {}).verdict === "h0").map(t => t.kind + "." + t.name),
+      note: "Holm 校正后仍 <0.05 才算显著；SPRT 判 h0 = 已有足够证据说明该策略没有比随机高 20% 的效果，标为「娱乐」（同一期内各号相关，SPRT 为近似）。"
     };
     const unreconciled = list.filter(r => !r.checked).length;
     return json({ summary, scoreboard, rows: list.slice(0, 50), meta: { total: list.length, unreconciled, hint: Object.keys(summary).length ? null : "复盘尚未产生任何已对账样本：summary 为空表示「没能力判断」，不表示「已验证无效果」" } });

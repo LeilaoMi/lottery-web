@@ -153,13 +153,9 @@ test("推荐结果带口径说明：几套策略不是同一窗口的统计", as
   assert.ok(rec.caliber, "推荐结果必须带 caliber 说明");
   assert.match(rec.caliber, /全量历史/, "须写明热/冷是全量口径");
   assert.match(rec.caliber, /win=30/, "须写明胆码是 win 窗口");
-  assert.match(rec.caliber, /并非同一窗口/, "须点明同一组内几套策略口径不同");
-  // 混用了两种窗口的策略，note 本身也要说清
-  const mix = rec.picks.find(x => x.name === "均衡");
-  assert.ok(mix, "应有「均衡」策略");
-  assert.match(mix.note, /全量/, "「均衡」note 须点出它混了全量与 win 窗口");
-  // 数字型同样带 caliber，且「胆码优先」注明窗口
+  assert.match(rec.caliber, /并非同一窗口/, "须点明几块数据口径不同");
+  // 数字型同样带 caliber
   const dg = recommendAll("qxc", draws.map((d, i) => ({ code: d.code, digits: Array.from({ length: 7 }, () => String(Math.floor(rnd() * 10))) })), { win: 30 });
   assert.ok(dg.caliber, "数字型推荐也要带 caliber");
-  assert.match(dg.picks.find(x => x.name === "胆码优先").note, /win 窗口/);
+  assert.match(dg.caliber, /研究区/);
 });

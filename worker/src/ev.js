@@ -114,6 +114,50 @@ export function coldPicks(n = 5, rnd = Math.random) {
   return out;
 }
 
+// 在给定候选号里挑「最冷门」的一注（双色球）：同样的候选、同样的中奖概率，只换成中奖后少分的组合。
+// 抽样 tries 个组合，排除人工形态（≥3 连号 / 等差），取一等奖同奖倍率最低者（并列取二等奖倍率低者）。
+export function coldestFrom(redCand, blueCand, tries = 80, rnd = Math.random, accept = null) {
+  const reds = [...new Set((redCand || []).map(Number))].filter(x => x >= 1 && x <= 33);
+  const blues = [...new Set((blueCand || []).map(Number))].filter(x => x >= 1 && x <= 16);
+  if (reds.length < 6 || !blues.length) return null;
+  const humanish = r => { let run = 1, best = 1; for (let i = 1; i < r.length; i++) { run = r[i] === r[i - 1] + 1 ? run + 1 : 1; best = Math.max(best, run); } const d = r[1] - r[0]; return best >= 3 || r.every((x, i) => i === 0 || x - r[i - 1] === d); };
+  let best = null;
+  for (let t = 0; t < tries; t++) {
+    const a = reds.slice();
+    for (let k = 0; k < 6; k++) { const j = k + Math.floor(rnd() * (a.length - k)); [a[k], a[j]] = [a[j], a[k]]; }
+    const red = a.slice(0, 6).sort((x, y) => x - y);
+    if (humanish(red) && t < tries - 1) continue;
+    if (accept && !accept(red.map(x => String(x).padStart(2, "0"))) && (best || t < tries - 1)) continue;
+    // 蓝球：候选里同奖倍率最低的（蓝球只影响一等奖倍率）
+    let b0 = null;
+    for (const b of blues) { const r = ratiosOf(red, b); if (!b0 || r.ratio1 < b0.r.ratio1) b0 = { b, r }; }
+    if (!best || b0.r.ratio1 < best.r.ratio1 || (b0.r.ratio1 === best.r.ratio1 && b0.r.ratio2 < best.r.ratio2)) best = { red, b: b0.b, r: b0.r };
+  }
+  if (!best) return null;
+  return { red: best.red.map(x => String(x).padStart(2, "0")), blue: String(best.b).padStart(2, "0"), ratio: best.r.ratio1, ratio2: best.r.ratio2, label: best.r.coldness.label };
+}
+
+// 预测页用的「本期奖金结构」说明：浮动奖彩种给期望回报，固定奖彩种明说选哪注都一样
+export function payoffOf(kind, draws) {
+  if (kind === "ssq") {
+    const r = ssqEVReport(draws);
+    return { type: "floating", ...(r.error ? {} : { pool: r.next.pool, ev: r.next.avg.ev, returnRate: r.next.avg.returnRate, salesEst: r.next.salesEst }),
+      note: "选号改变不了中奖概率；反热门只降低中奖后的同奖人数。双色球奖池常年远超封顶区间，各期回报率几乎相同，不必挑期。" };
+  }
+  if (kind === "dlt") {
+    const r = dltEVReport(draws);
+    if (r.error) return { type: "floating", note: "大乐透奖池/销量详情暂缺，无法估算本期回报。" };
+    const cur = r.next.avg, high = r.next.pool >= 8e8;
+    const atHigh = dltEV({ sales: r.next.salesEst, pool: Math.max(8e8, r.next.pool) });
+    return { type: "floating", pool: r.next.pool, ev: cur.ev, returnRate: cur.returnRate, tier: cur.tier, poolHigh: high,
+      highReturnRate: atHigh ? atHigh.returnRate : null,
+      note: high ? "本期奖池 ≥8 亿：三~七等固定奖上调、二等奖分配提高，回报率处于高位。"
+        : "本期奖池未到 8 亿；奖池 ≥8 亿的期回报率明显更高，想买可以等那时。冷门度模型未通过验证，大乐透不做反热门筛选。" };
+  }
+  if (kind === "qlc" || kind === "qxc") return { type: "floating", note: "有浮动奖，但没有经过验证的冷门度模型，本站不估计这注中奖后的分奖人数。" };
+  return { type: "fixed", note: "奖金固定、不与他人分奖：选哪注期望回报都一样，下面的号码只是不同选号风格。" };
+}
+
 // ---------------- 大乐透（2026 新规，第 26014 期起） ----------------
 // 规则（财综〔2025〕51 号）：当期奖金 = 销售额 × 49%；R = 当期奖金 − 固定奖总额
 //   一等奖：奖池 <1 亿 → 78%R + 奖池；1~8 亿 → (58%R + 奖池) 与 20%R 两段；≥8 亿 → (20%R + 奖池) 与 40%R 两段；各段单注封顶 500 万

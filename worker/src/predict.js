@@ -2,6 +2,7 @@
 // 纯函数、无网络依赖，便于单测。所有输出统一为：
 //   { kind, name, type, window, count, analysis, kill, dan, picks, disclaimer }
 import { pad2 } from "./small.js";
+import { coldPicks, coldestFrom, payoffOf } from "./ev.js";
 
 export const SPECS = {
   ssq: { name: "双色球", type: "pool", main: { min: 1, max: 33, pick: 6, label: "红球" }, aux: { min: 1, max: 16, pick: 1, label: "蓝球" }, suggest: 6, fMain: "red", fAux: "blue" },
@@ -520,13 +521,14 @@ export function structScore(nums, zone) {
   return +s.toFixed(2);
 }
 
-// ---------- 统一推荐：6 套策略，与双色球原有 6 套一一对应 ----------
+// ---------- 统一推荐（v0.21 精简）：热号 / 遗漏 / [双色球]反热门 / 随机基准 ----------
+// 均衡、区间覆盖、杀号缩水、胆码优先、杀号规避、均值回归已移除：复盘与回测都未跑赢随机，留着只会稀释多重比较。
 // 口径说明：这几套策略**不是同一个窗口**的统计拼出来的，必须写明，否则「6 组参考」看起来
 // 像同一口径下的 6 个方案。热号/冷号/副区走 analyzeAll 的 freqStats(draws, …)＝全量历史；
 // 胆码走 danList(kind, draws, win)＝显式 win 窗口（/api/dan?win= 可调）；杀号走 killList(kind, draws)
 // ＝全部可用历史。所以「均衡」这一套号本身就是「全量热号 + 全量冷号 + win 窗口胆码」的混合。
 const CALIBER = win =>
-  `热号/冷号/副区按全量历史统计（与 /api/analyze 同口径）；胆码按 win=${win} 窗口（与 /api/dan 同口径，该窗口是显式可调的）；杀号按全部可用历史。同一组里的几套策略并非同一窗口`;
+  `参考号码：热号/遗漏/副区按全量历史统计（与 /api/analyze 同口径），反热门与随机基准不吃任何历史统计；研究区的胆码按 win=${win} 窗口、杀号按全部可用历史——几块数据并非同一窗口`;
 export function recommendAll(kind, draws, opts = {}) {
   const s = specOf(kind);
   const win = Math.min(100, Math.max(5, opts.win || 30));
@@ -544,70 +546,69 @@ export function recommendAll(kind, draws, opts = {}) {
   };
   const kl = killList(kind, draws), dl = danList(kind, draws, win);
   const pool = poolOf(s.main);
-  const killed = new Set((kl.main || []).filter(x => x.votes >= (kl.threshold ?? 99)).map(x => x.n));
-  const lastN = new Set(mainOf(draws[0] || {}, kind));
   const byFreqDesc = pool.slice().sort((a, b) => an.freq[b] - an.freq[a] || Number(a) - Number(b));
   const byColdDesc = pool.slice().sort((a, b) => an.omission.cur[b] - an.omission.cur[a] || Number(a) - Number(b));
   const auxN = s.aux ? s.aux.pick : 0;
   const auxTop = (dl.aux || []).slice(0, Math.max(auxN, 3)).map(x => x.n);
-  const auxCold = s.aux ? poolOf(s.aux).slice().sort((a, b) => an.auxOmission.cur[b] - an.auxOmission.cur[a]).slice(0, auxN) : [];
+  const auxCold = s.aux ? poolOf(s.aux).slice().sort((a, b) => an.auxOmission.cur[b] - an.auxOmission.cur[a]).slice(0, Math.max(auxN, 3)) : [];
   const auxPoolAll = s.aux ? poolOf(s.aux) : [];
   // 副区与主区同池时（七乐彩基本号 / 特别号），特别号不得与基本号重复
-  const auxPick = (i, excl = []) => {
+  const auxFrom = (cand, excl = []) => {
     if (!s.aux) return [];
-    const cand = [...auxTop, ...auxPoolAll].filter(x => !excl.includes(x));
-    const p = cand.slice(i, i + auxN);
-    while (p.length < auxN && p.length < auxPoolAll.length) {
-      const c = auxPoolAll[Math.floor(Math.random() * auxPoolAll.length)];
-      if (!p.includes(c) && !excl.includes(c)) p.push(c);
-    }
+    const c = [...cand, ...auxPoolAll].filter(x => !excl.includes(x));
+    const p = [...new Set(c)].slice(0, auxN);
     return p.sort();
   };
-  const mk = (name, arr, note, auxIdx = 0, auxOverride = null) => {
-    // filter=1 时做形态过滤（和值落理想区、跨度合理），最多重抽 12 次
-    let main = [];
-    for (let t = 0; t < 12; t++) {
-      main = pickN(arr.filter(x => !isNaN(Number(x))), n).slice(0, n);
-      if (!filter || shapeOk(main, s.main)) break;
+  // 双色球：同一套候选号里挑同奖倍率最低的一注（反热门层）。中奖概率不变，只减少中奖后的分奖人数。
+  const antiPop = kind === "ssq" && n === 6;
+  const mk = (name, arr, note, auxCand) => {
+    const cand = arr.filter(x => !isNaN(Number(x)));
+    let main = [], aux = [], cold = null;
+    if (antiPop) cold = coldestFrom(cand, auxCand && auxCand.length ? auxCand : auxPoolAll, filter ? 200 : 80, Math.random, filter ? (m => shapeOk(m, s.main)) : null);
+    if (cold) { main = cold.red; aux = [cold.blue]; }
+    else {
+      // filter=1 时做形态过滤（和值落理想区、跨度合理），最多重抽 12 次
+      for (let t = 0; t < 12; t++) {
+        main = pickN(cand, n).slice(0, n);
+        if (!filter || shapeOk(main, s.main)) break;
+      }
+      aux = auxFrom(auxCand || [], main);
     }
-    // 结构分按「实际选号个数」评估：快乐8 选 8 个时不能用开奖 20 个号的基准
-    const aux = (auxOverride && !auxOverride.some(x => main.includes(x))) ? auxOverride : auxPick(auxIdx, main);
     const nums = main.map(Number);
     return {
       name, main, aux,
       score: structScore(main, { ...s.main, pick: main.length }),
       sum: nums.reduce((a, b) => a + b, 0), span: Math.max(...nums) - Math.min(...nums),
-      note
+      note: cold ? note + "；候选内取最冷门组合（同奖倍率 " + cold.ratio + "）" : note,
+      ...(cold ? { coldness: { ratio: cold.ratio, ratio2: cold.ratio2, label: cold.label } } : {})
     };
   };
+  const randAux = () => { const a = auxPoolAll.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const picks = [
     // 注意：an.freq 来自 freqStats(draws, …)——按全部期数统计，win 只截断 road/odd/tail 那部分，
     // 所以这里不能写死"近 30 期"，否则 draws 多于 win 时标签就是假的
-    mk("稳健·热号", byFreqDesc.slice(0, Math.max(n + 4, 10)), "全部 " + draws.length + " 期高频号为主", 0),
-    mk("进取·遗漏", byColdDesc.slice(0, Math.max(n + 4, 10)), "优先回补长遗漏号", 0, auxCold.length ? auxCold : null),
-    mk("均衡", [...byFreqDesc.slice(0, 8), ...byColdDesc.slice(0, 6), ...(dl.main || []).slice(0, 3).map(x => x.n)], "冷热混合（全量）+ 胆码（win 窗口）", 1),
-    mk("区间覆盖", zoneCover(kind, pool, byFreqDesc, n, s), "三区均匀覆盖", 1),
-    mk("杀号缩水", pool.filter(x => !killed.has(x)).sort((a, b) => (dl.main || []).findIndex(y => y.n === b) - (dl.main || []).findIndex(y => y.n === a)), "剔除 " + killed.size + " 个杀号后按胆码排序", 2),
-    mk("随机基准", pool, "纯随机对照", 2)
+    mk("稳健·热号", byFreqDesc.slice(0, Math.max(n + 4, 10)), "全部 " + draws.length + " 期高频号为主", auxTop),
+    mk("进取·遗漏", byColdDesc.slice(0, Math.max(n + 4, 10)), "优先回补长遗漏号", auxCold)
   ];
+  if (antiPop) {
+    let c = coldPicks(1)[0];
+    for (let t = 0; filter && c && t < 40 && !shapeOk(c.red, s.main); t++) c = coldPicks(1)[0];
+    if (c) picks.push({ name: "反热门", main: c.red, aux: [c.blue], score: structScore(c.red, s.main),
+      sum: c.red.reduce((a, b) => a + Number(b), 0), span: Number(c.red[5]) - Number(c.red[0]),
+      note: "主推荐：在冷门度模型认得的特征上取最冷一侧（同奖倍率 " + c.ratio + "）", coldness: { ratio: c.ratio, ratio2: c.ratio2, label: c.label }, primary: true });
+  }
+  // 随机基准：主区、副区都从全池均匀抽样（对照组不能吃任何统计）
+  picks.push((() => { let main = pickN(pool, n).slice(0, n).sort();
+    for (let t = 0; filter && t < 12 && !shapeOk(main, s.main); t++) main = pickN(pool, n).slice(0, n).sort();
+    const nums = main.map(Number);
+    return { name: "随机基准", main, aux: s.aux ? randAux().filter(x => !main.includes(x)).slice(0, auxN).sort() : [],
+      score: structScore(main, { ...s.main, pick: main.length }), sum: nums.reduce((a, b) => a + b, 0), span: Math.max(...nums) - Math.min(...nums), note: "纯随机对照" }; })());
   return {
     kind, name: s.name, type: s.type, window: win, count: an.count,
-    analysis: an, kill: kl, dan: dl, picks, caliber: CALIBER(win),
+    analysis: an, kill: kl, dan: dl, picks, caliber: CALIBER(win), payoff: payoffOf(kind, draws),
     last: draws[0] ? { code: draws[0].code, main: mainOf(draws[0], kind), aux: auxOf(draws[0], kind) } : null,
     disclaimer: DISCLAIMER
   };
-}
-function zoneCover(kind, pool, byFreqDesc, n, s) {
-  const zones = zonesOf(s.main), out = [];
-  const order = [...byFreqDesc];
-  for (let r = 0; r < Math.ceil(n / 2) + 2; r++) {
-    for (const z of zones) {
-      const cand = order.find(k => !out.includes(k) && Number(k) >= z.from && Number(k) <= z.to);
-      if (cand) { out.push(cand); if (out.length >= n) break; }
-    }
-    if (out.length >= n) break;
-  }
-  return out.slice(0, n);
 }
 function recommendDigits(kind, draws, win) {
   const s = specOf(kind);
@@ -628,22 +629,12 @@ function recommendDigits(kind, draws, win) {
   const picks = [
     mk("稳健·热号", p => (an.perPos[p].hot[0]), "各位取最热号"),
     mk("进取·遗漏", p => (an.perPos[p].cold[0]), "各位取最冷号"),
-    mk("胆码优先", p => (dl.perPos[p].dan[0].n), "各位取胆码第一名（win 窗口）"),
-    mk("杀号规避", p => {
-      const killed = new Set((kl.perPos[p].kill || []).filter(x => x.votes >= 1).map(x => x.n));
-      const cand = an.perPos[p].hot.find(x => !killed.has(x));
-      return cand !== undefined ? cand : an.perPos[p].hot[0];
-    }, "剔除各位杀号后取最热"),
-    mk("均值回归", p => {
-      const om = an.perPos[p].omission, digits = posPool(kind, p);
-      return digits.slice().sort((a, b) => Math.abs(om.cur[a] - om.avg[a]) - Math.abs(om.cur[b] - om.avg[b]))[0];
-    }, "遗漏最接近历史均值"),
     // 对照组必须从该位真实号池均匀抽样：七星彩第 7 位抽 0-9 会让随机基线整体偏高（见 posPool 注释）
     mk("随机基准", p => { const pool = posPool(kind, p); return pool[Math.floor(Math.random() * pool.length)]; }, "纯随机对照")
   ];
   return {
     kind, name: s.name, type: s.type, window: win, count: an.count,
-    analysis: an, kill: kl, dan: dl, picks, caliber: CALIBER(win),
+    analysis: an, kill: kl, dan: dl, picks, caliber: CALIBER(win), payoff: payoffOf(kind, draws),
     last: draws[0] ? { code: draws[0].code, digits: mainOf(draws[0], kind) } : null,
     formHint: s.digits === 3 ? { 组三: an.form.group3, 组六: an.form.group6, 豹子: an.form.bail } : null,
     disclaimer: DISCLAIMER

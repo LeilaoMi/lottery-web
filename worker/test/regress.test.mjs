@@ -133,7 +133,7 @@ test("#4 分析/推荐逐位只用真实号池，不再统一按 10 格", () => 
   assert.ok(an.perPos[6].freq["14"] !== undefined, "第 7 位频次表必须覆盖 14");
   assert.equal(an.perPos[6].freq["15"], undefined, "第 7 位不应出现 15");
   const r = recommendAll("qxc", draws, { win: 30 });
-  assert.equal(r.picks.length, 6, "样本充足时仍应给 6 套");
+  assert.equal(r.picks.length, 3, "样本充足时应给 3 套（热号 / 遗漏 / 随机基准）");
   for (const pk of r.picks) {
     assert.equal(pk.digits.length, 7);
     pk.digits.forEach((d, i) => assert.ok(posPool("qxc", i).includes(d),
@@ -210,14 +210,14 @@ test("#6 数字型：同样有门槛", () => {
   assert.equal(r.picks.length, 0);
   assert.equal(r.insufficient, true);
 });
-test("#6 样本够时正常给 6 套（门槛不能设过头）", () => {
+test("#6 样本够时正常给出全部策略（门槛不能设过头）", () => {
   const draws = Array.from({ length: 30 }, (_, i) => ({
     code: "2026" + String(100 + i),
     red: Array.from({ length: 6 }, (_, j) => String(((i + j) % 33) + 1).padStart(2, "0")),
     blue: String((i % 16) + 1).padStart(2, "0"), date: ""
   }));
   const r = recommendAll("ssq", draws, { win: 30 });
-  assert.equal(r.picks.length, 6);
+  assert.equal(r.picks.length, 4);
   assert.equal(r.insufficient, undefined);
   const hot = r.picks.find(x => x.name === "稳健·热号");
   assert.match(hot.note, /全部 30 期/, "高频号标签必须按真实统计期数写，不能写死「近 30 期」");

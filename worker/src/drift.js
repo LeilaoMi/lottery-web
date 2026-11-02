@@ -52,6 +52,23 @@ export function cusumZone(zone, rows) {
   return { up, dn, mu, md, maxAll };
 }
 
+// 指定几条序列的逐期 CUSUM 轨迹（取上 / 下两侧较大者），给前端画曲线用
+export function cusumTrack(zone, rows, idxs) {
+  const off = zone.key.startsWith("digit") ? 0 : 1;
+  const p = zone.pick / zone.size, sd = Math.sqrt(p * (1 - p));
+  const up = idxs.map(() => 0), dn = idxs.map(() => 0), out = idxs.map(() => []);
+  for (const r of rows) {
+    const hit = new Set();
+    if (zone.slots > 1) r.forEach((v, pos) => hit.add(pos * zone.size + v)); else for (const v of r) hit.add(v - off);
+    idxs.forEach((i, k) => {
+      const z = ((hit.has(i) ? 1 : 0) - p) / sd;
+      up[k] = Math.max(0, up[k] + z - K); dn[k] = Math.max(0, dn[k] - z - K);
+      out[k].push(+Math.max(up[k], dn[k]).toFixed(2));
+    });
+  }
+  return out;
+}
+
 // 蒙特卡洛：随机开奖（不放回）下全区 maxAll 的 q 分位
 export function simulateH(zone, window = WINDOW, sims = 2000, q = 0.95, rnd = Math.random) {
   const vals = [];
@@ -87,11 +104,14 @@ export function driftReport(kind, draws, window = WINDOW) {
     const peak = Math.max(...series.map(x => Math.max(x.maxHigh, x.maxLow)));
     const alarms = H ? series.filter(x => Math.max(x.maxHigh, x.maxLow) > H).map(x => ({ name: x.name, dir: x.maxHigh >= x.maxLow ? "偏多" : "偏少", peak: Math.max(x.maxHigh, x.maxLow), ongoing: Math.max(x.curHigh, x.curLow) > H })) : [];
     const top = series.slice().sort((a, b) => Math.max(b.curHigh, b.curLow) - Math.max(a.curHigh, a.curLow)).slice(0, 5);
-    return { id: z.id, label: z.label, draws: rows.length, threshold: H, peak: +peak.toFixed(2), alarm: alarms.length > 0, alarms, top };
+    // 曲线：峰值最高的 3 条序列的逐期轨迹（与阈值线同图，一眼看出离越界还有多远）
+    const peakIdx = series.map((x, i) => [Math.max(x.maxHigh, x.maxLow), i]).sort((a, b) => b[0] - a[0]).slice(0, 3).map(x => x[1]);
+    const tracks = cusumTrack(z, rows, peakIdx).map((v, k) => ({ name: series[peakIdx[k]].name, values: v }));
+    return { id: z.id, label: z.label, draws: rows.length, threshold: H, peak: +peak.toFixed(2), alarm: alarms.length > 0, alarms, top, tracks };
   });
   const any = zones.some(z => z.alarm);
   return {
-    kind, window: recent.length, from: recent[recent.length - 1]?.code, to: recent[0]?.code, zones,
+    kind, window: recent.length, codes: rows0.map(d => String(d.code)), from: recent[recent.length - 1]?.code, to: recent[0]?.code, zones,
     verdict: any ? "有区越界：出现随机难以解释的偏离（也可能是 5% 的误报），可持续观察，但开奖机常换球换机，不宜据此下注" : "全部在阈值内：近期开奖与均匀随机一致，没有可利用的偏差",
     method: `标准化伯努利 CUSUM（双侧，k=${K}），阈值为随机开奖蒙特卡洛 95% 分位（每区全部号码 × ${WINDOW} 期内任一时刻越界的概率 ≤5%）`,
     disclaimer: "随机游戏，统计仅供娱乐，不保证中奖"
