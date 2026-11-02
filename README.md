@@ -223,7 +223,7 @@ npx wrangler secret put API_TOKEN
 
 | Variable | 值 |
 |---|---|
-| `PUBLIC_API_BASE` | 你的公共接口地址（同 `WORKER_URL`）。不配 → 该闸门被显式跳过并在报告里标注原因，VERIFIED 闸门会如实失败而不是放水通过 |
+| `PUBLIC_API_BASE` | 你的公共接口地址（月度审计优先用 `secrets.WORKER_URL`，都没有时才用它）。都不配 → 该闸门被显式跳过并在报告里标注原因，VERIFIED 闸门会如实失败而不是放水通过 |
 
 ## 💻 本地开发
 
