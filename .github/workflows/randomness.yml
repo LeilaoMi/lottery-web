@@ -50,9 +50,11 @@ jobs:
           VAR_BASE: ${{ vars.PUBLIC_API_BASE }}
         run: |
           set -euo pipefail
+          # 与 fetch-multi.mjs 同一规范化：去两端空白、去所有末尾斜杠。
+          # 三个来源各自先规范化再按优先级选：先选后去空白时，只含空格的 api_base 会抢走优先级、规范化后变空
+          norm() { printf '%s' "${1:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#/*$##'; }
+          IN_BASE="$(norm "${IN_BASE:-}")"; WORKER_URL="$(norm "${WORKER_URL:-}")"; VAR_BASE="$(norm "${VAR_BASE:-}")"
           base="${IN_BASE:-${WORKER_URL:-${VAR_BASE:-}}}"
-          # 与 fetch-multi.mjs 同一规范化：去两端空白、去所有末尾斜杠
-          base="$(printf '%s' "$base" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#/*$##')"
           if [ -z "$base" ]; then
             echo "::warning::未提供交叉校验地址（api_base 输入 / secrets.WORKER_URL / vars.PUBLIC_API_BASE 都为空）—— 本轮所有彩种记为 UNVERIFIED，最后的 VERIFIED 闸门将失败。"
             echo "::warning::自建部署请配置其一（如 https://lottery-web.<你的子域>.workers.dev）；暂不需要这条审计链可直接停用本 workflow。"
