@@ -28,8 +28,8 @@ jobs:
     name: 单元测试
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
       - name: 构建前端产物（worker/src/ui.js 是 gitignore 的构建输出）
@@ -77,8 +77,8 @@ jobs:
       WORKER_ROUTE_PATTERN: ${{ vars.WORKER_ROUTE_PATTERN }}
       WORKER_ROUTE_ZONE: ${{ vars.WORKER_ROUTE_ZONE }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       - name: 未配置凭证则跳过（fork 友好）
@@ -341,7 +341,7 @@ jobs:
       NOTIFY_FORMAT: ${{ vars.NOTIFY_FORMAT }}
       NEEDS_JSON: ${{ toJSON(needs) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: 取今日开奖并推送（未配置 webhook 时如实跳过）
         run: |
           set -euo pipefail
