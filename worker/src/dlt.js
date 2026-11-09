@@ -62,7 +62,7 @@ export function verifyDLT(draws, code, front, back) {
   return { hit: true, actual: d, hitFront: hf, hitBack: hb, input: { front: F, back: B } };
 }
 export async function fetch17500DLT() {
-  const r = await fetchT("http://data.17500.cn/dlt_asc.txt", { headers: { "User-Agent": UA } }, BULK_MS);
+  const r = await fetchT("https://data.17500.cn/dlt_asc.txt", { headers: { "User-Agent": UA } }, BULK_MS);
   if (!r.ok) throw new Error("17500dlt http " + r.status);
   const t = await r.text(), out = [];
   for (const ln of t.split(/\r?\n/)) {

@@ -20,7 +20,7 @@ node --test scripts/randomness/stats.test.mjs   # 统计内核单元测试
 不需要任何 secrets，只需一个**仓库变量** `PUBLIC_API_BASE`（普通变量，不是密钥）指向某个已部署实例的公共接口，
 并把生成的 markdown 存成 artifact。不配这个变量时，多彩种交叉校验会跳过、VERIFIED 闸门如实失败。
 
-数据源：`http://data.17500.cn/{ssq,dlt,3d,pl3,pl5,7lc,7xc,kl8}_asc.txt`（各自 2002~2026 年全量）。
+数据源：`https://data.17500.cn/{ssq,dlt,3d,pl3,pl5,7lc,7xc,kl8}_asc.txt`（各自 2002~2026 年全量）。
 双色球额外配 `cwl.gov.cn` 官方接口做逐字段交叉校验；其余彩种的公共 API 内部也读 17500，
 **与备源同源**，所以那几项验的是「列映射解析是否正确（独立实现）」而不是「数据源是否独立」——
 报告里逐条标注了这一点，不冒充双源。

@@ -3,7 +3,7 @@
 这是 `scripts/randomness/` 首次入库时锁定的基线结论。此后每月 1 日由
 `.github/workflows/randomness.yml` 自动重跑，产物是 `docs/randomness-latest.md`。
 
-数据：`http://data.17500.cn/ssq_asc.txt` 全量 **3501 期（2003001 → 2026104）**，
+数据：`https://data.17500.cn/ssq_asc.txt` 全量 **3501 期（2003001 → 2026104）**，
 含销量、奖池与一~六等中奖注数；拉取时用 `cwl.gov.cn` 官方 `findDrawNotice` 接口逐字段交叉校验
 （号码必全对，销量/奖池/注数在有官方值的期上必全对，见 `fetch-ssq.mjs`）。
 零分布：3000 次模拟 × 3501 期，固定种子 20260909；真实数据与模拟数据共用同一个 `statsOf`。
