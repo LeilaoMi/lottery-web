@@ -29,7 +29,7 @@ export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const rel = p => (p.startsWith(ROOT + "/") || p.startsWith(ROOT + "\\")) ? p.slice(ROOT.length + 1).replace(/\\/g, "/") : p;
 export const DATA_FILE = join(ROOT, "scripts", "randomness", "data", "ssq.json");
 export const REPORT_FILE = join(ROOT, "docs", "randomness-latest.md");
-export const SOURCE_FILE = "http://data.17500.cn/ssq_asc.txt";
+export const SOURCE_FILE = "https://data.17500.cn/ssq_asc.txt";
 export const CWL_INDEX = "https://www.cwl.gov.cn/ygkj/wqkjgg/ssq/";
 export const CWL_API =
   "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&issueCount=30&pageNo=1&pageSize=30&systemType=PC";

@@ -4,7 +4,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const CWL_INDEX = "https://www.cwl.gov.cn/ygkj/wqkjgg/ssq/";
 const CWL_API = "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&issueCount=100&pageNo=1&pageSize=100&systemType=PC";
 const T500 = (n) => `https://datachart.500.com/ssq/history/newinc/history.php?limit=${n}`;
-const T17500 = "http://data.17500.cn/ssq_asc.txt";
+const T17500 = "https://data.17500.cn/ssq_asc.txt";
 
 // 500 历史页同一行还带开奖详情（奖池/一二等奖注数与奖金/总投注额）：列序 9=快乐星期天(常空),
 // 10=奖池、11/12=一等注数/奖金、13/14=二等注数/奖金、15=总投注额、16=日期。

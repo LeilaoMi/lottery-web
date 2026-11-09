@@ -400,7 +400,7 @@ console.log(`跨时代同号 ${nAgree}/${KEY.length}；姊妹套件报告 2015 �
 const coef = {}; keep.forEach(k => coef[k] = +A.Mtr[k].m.toFixed(4));
 const payload = {
   meta: {
-    game: '大乐透', source: 'http://data.17500.cn/dlt_asc.txt', generated: new Date().toISOString(),
+    game: '大乐透', source: 'https://data.17500.cn/dlt_asc.txt', generated: new Date().toISOString(),
     target: 'log1p(一等奖注数 / (销量/亿元))', meaning: '>1 = 该特征组合被超买，中奖后与人分享更多；不改变中奖概率',
     dataWindow: '2015-01-03 → ' + POST[POST.length - 1].date + '（2015 前因回填缺陷排除）',
     fixedTierRowDropped: defect.map(r => r.code),

@@ -1,7 +1,7 @@
 {
   "meta": {
     "game": "大乐透",
-    "source": "http://data.17500.cn/dlt_asc.txt",
+    "source": "https://data.17500.cn/dlt_asc.txt",
     "generated": "2026-09-09T19:59:52.567Z",
     "target": "log1p(一等奖注数 / (销量/亿元))",
     "meaning": ">1 = 该特征组合被超买，中奖后与人分享更多；不改变中奖概率",

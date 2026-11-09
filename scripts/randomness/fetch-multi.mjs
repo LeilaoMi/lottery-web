@@ -21,7 +21,7 @@ const pad2 = x => String(x).padStart(2, "0");
 // ---------------------------------------------------------------- 彩种规格（列映射是【待验证的假设】，用结构+交叉校验双闸门）
 const num = s => Number(s);
 const SPEC = {
-  dlt: { url: "http://data.17500.cn/dlt_asc.txt", tokens: 45, type: "pool", code: y => /^\d{5}$/.test(y),
+  dlt: { url: "https://data.17500.cn/dlt_asc.txt", tokens: 45, type: "pool", code: y => /^\d{5}$/.test(y),
     // front=col2-6(升序), back=col7-8(升序); frontOrd=col9-13, backOrd=col14-15 为开奖顺序，
     // 2007~2008 早期行的顺序列与奖级列都是 "-" 占位 → 那批期次无原始顺序（parse 里置 null），号码本身始终有效。
     parse: t => { const front = t.slice(2, 7).map(num), back = t.slice(7, 9).map(num);
@@ -41,7 +41,7 @@ const SPEC = {
     api: { path: "dlt/history?limit=100", compare: (a, o) =>
       eqSet(a.front, o.front) && eqSet(a.back, o.back) } },
 
-  qlc: { url: "http://data.17500.cn/7lc_asc.txt", tokens: 26, type: "pool", code: y => /^\d{7}$/.test(y),
+  qlc: { url: "https://data.17500.cn/7lc_asc.txt", tokens: 26, type: "pool", code: y => /^\d{7}$/.test(y),
     // 奖级配对起点：col10=sales, col11=pool, (n,m) 从 col12 起 7 对（四/五/六/七等固定奖金 200/50/10/5 恒定 → 已核对）
     parse: t => { const main = t.slice(2, 9).map(num), special = num(t[9]);
       return { code: t[0], date: t[1], main, special, sales: num(t[10]) || 0, pool: num(t[11]) || 0,
@@ -55,7 +55,7 @@ const SPEC = {
     api: { path: "qlc/history?limit=100", compare: (a, o) =>
       eqSet(a.main, o.main) && pad2(a.special) === pad2(o.special) } },
 
-  kl8: { url: "http://data.17500.cn/kl8_asc.txt", tokens: 102, minTokens: 101, type: "pool", code: y => /^\d{7}$/.test(y),
+  kl8: { url: "https://data.17500.cn/kl8_asc.txt", tokens: 102, minTokens: 101, type: "pool", code: y => /^\d{7}$/.test(y),
     // 奖级/选号玩法列结构复杂且 col22-23 含千分位逗号；随机性只用 20 个开奖号，prize 列标 UNRESOLVED、不参与经济性检验
     parse: t => { const main = t.slice(2, 22).map(num);
       return { code: t[0], date: t[1], main, sales: num((t[22] || "").replace(/,/g, "")) || 0, pool: num((t[23] || "").replace(/,/g, "")) || 0,
@@ -66,23 +66,23 @@ const SPEC = {
       return null; },
     api: { path: "kl8/history?limit=100", compare: (a, o) => eqSet(a.main, o.nums) } },
 
-  fc3d: { url: "http://data.17500.cn/3d_asc.txt", tokens: 17, type: "digit", code: y => /^\d{7}$/.test(y),
+  fc3d: { url: "https://data.17500.cn/3d_asc.txt", tokens: 17, type: "digit", code: y => /^\d{7}$/.test(y),
     // col2-4=开奖号(独立于 col5-7 的试机号)；API fc3d 的 digits 也取 2-4，实测逐位一致
     parse: t => ({ code: t[0], date: t[1], digits: t.slice(2, 5).map(num), sales: num(t[10]) || 0 }),
     validate: r => r.digits.length === 3 && r.digits.every(x => x >= 0 && x <= 9) ? null : "开奖号非 0-9 三位",
     api: { path: "fc3d/history?limit=100", compare: (a, o) => join(a.digits.map(String)) === join(o.digits.map(String)) } },
 
-  pl3: { url: "http://data.17500.cn/pl3_asc.txt", tokens: 12, type: "digit", code: y => /^\d{7}$/.test(y),
+  pl3: { url: "https://data.17500.cn/pl3_asc.txt", tokens: 12, type: "digit", code: y => /^\d{7}$/.test(y),
     parse: t => ({ code: t[0], date: t[1], digits: t.slice(2, 5).map(num), sales: num(t[5]) || 0 }),
     validate: r => r.digits.length === 3 && r.digits.every(x => x >= 0 && x <= 9) ? null : "开奖号非 0-9 三位",
     api: { path: "pl3/history?limit=100", compare: (a, o) => join(a.digits.map(String)) === join(o.digits.map(String)) } },
 
-  pl5: { url: "http://data.17500.cn/pl5_asc.txt", tokens: 10, type: "digit", code: y => /^\d{7}$/.test(y),
+  pl5: { url: "https://data.17500.cn/pl5_asc.txt", tokens: 10, type: "digit", code: y => /^\d{7}$/.test(y),
     parse: t => ({ code: t[0], date: t[1], digits: t.slice(2, 7).map(num), sales: num(t[7]) || 0 }),
     validate: r => r.digits.length === 5 && r.digits.every(x => x >= 0 && x <= 9) ? null : "开奖号非 0-9 五位",
     api: { path: "pl5/history?limit=100", compare: (a, o) => join(a.digits.map(String)) === join(o.digits.map(String)) } },
 
-  qxc: { url: "http://data.17500.cn/7xc_asc.txt", tokens: 23, type: "digit", code: y => /^\d{5}$/.test(y),
+  qxc: { url: "https://data.17500.cn/7xc_asc.txt", tokens: 23, type: "digit", code: y => /^\d{5}$/.test(y),
     // col2-7=前6位(0-9)，col8=第7位特别号(0-14)。API qxc 把第7位也限制成 0-9，special>9 的行被 API 丢弃 →
     // 交叉校验时前 6 位全比，第 7 位只在 API 有该行时比（这是 API 的限制，不是备源的问题）
     parse: t => ({ code: t[0], date: t[1], digits: t.slice(2, 9).map(num), sales: num(t[9]) || 0 }),

@@ -2,12 +2,12 @@ import { fetchT, BULK_MS } from "./net.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
 export const SRC = {
-  fc3d: "http://data.17500.cn/3d_asc.txt",
-  pl3: "http://data.17500.cn/pl3_asc.txt",
-  pl5: "http://data.17500.cn/pl5_asc.txt",
-  qlc: "http://data.17500.cn/7lc_asc.txt",
-  qxc: "http://data.17500.cn/7xc_asc.txt",
-  kl8: "http://data.17500.cn/kl8_asc.txt"
+  fc3d: "https://data.17500.cn/3d_asc.txt",
+  pl3: "https://data.17500.cn/pl3_asc.txt",
+  pl5: "https://data.17500.cn/pl5_asc.txt",
+  qlc: "https://data.17500.cn/7lc_asc.txt",
+  qxc: "https://data.17500.cn/7xc_asc.txt",
+  kl8: "https://data.17500.cn/kl8_asc.txt"
 };
 
 // 期号格式（2026-09 实测 17500 各行，qxc 为 5 位，其余为 7 位）
