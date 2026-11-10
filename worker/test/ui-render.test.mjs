@@ -15,7 +15,7 @@ const ROOT = path.resolve(HERE, "..", "..");
 
 // 只暴露前端脚本真正会碰到的全局；缺一个就在加载阶段立刻抛 ReferenceError，而不是静默少测
 function stubEl() {
-  return new Proxy(function () {}, {
+  return new Proxy(() => {}, {
     get: (t, p) => (p === "value" ? "" : p === "toString" ? () => "" : stubEl()),
     apply: () => stubEl(),
     set: () => true,

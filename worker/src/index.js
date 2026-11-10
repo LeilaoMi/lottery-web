@@ -202,7 +202,6 @@ async function dltRoute(request, env, url) {
     if (!degraded && (url.pathname.endsWith("/history") || url.pathname.endsWith("/latest"))) { const c = res.clone(); c.headers.set("Cache-Control", "public, max-age=600"); try { await cache.put(ck, c); } catch {} }
     return res;
   } catch (e) { return json({ error: String(e.message || e) }, 502); }
-  return json({ error: "not_found" }, 404);
 }
 async function smallRoute(request, env, url) {
   const m = url.pathname.match(/^\/api\/(fc3d|pl3|pl5|qlc|qxc|kl8)\/(latest|history|verify|analyze|kill|dan|predict|trend)$/);
@@ -758,11 +757,11 @@ async function reviewJob(request, env) {
           const posHit = dg => dg.reduce((c, v, i) => c + (String(v) === actMain[i] ? 1 : 0), 0);
           const hit = isDigit ? {
             picks: (p.picks || []).map(x => { const dg = (x.digits || x.main || []).map(String); return { name: x.name, digits: dg, hit: posHit(dg) }; }),
-            dan: (p.dan || []).map(a => a.map(String)).flat(),
+            dan: (p.dan || []).flatMap(a => a.map(String)),
             // 位置下标必须取外层数组的下标：内层 filter((v,i)=>...) 的 i 是「候选内的序号」，
             // 直接拿来索引 actMain 会让每个位置都只与第 1 位比较，danHit 恒为 0（已写回归测试锁定）
             danHit: (p.dan || []).reduce((s, a, pos) => s + a.map(String).filter(v => v === actMain[pos]).length, 0),
-            kill: (p.kill || []).map(a => a.map(String)).flat(),
+            kill: (p.kill || []).flatMap(a => a.map(String)),
             killWrong: (p.kill || []).flatMap((a, i) => a.map(String).filter(v => v === actMain[i]).map(v => (i + 1) + ":" + v)),
             actual: actMain.join(" ")
           } : {

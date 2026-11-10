@@ -38,9 +38,11 @@ export const UA =
 
 // ---------------------------------------------------------------- 分布与检验
 const lg = x => { // log Gamma（Lanczos）
+  // biome-ignore lint/correctness/noPrecisionLoss: 数值算法常量，精度损失可忽略
   const c = [76.18009172947146, -86.50532032941677, 24.0144412145769, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
   let y = x, tmp = x + 5.5; tmp -= (x + 0.5) * Math.log(tmp); let ser = 1.000000000190015;
   for (let j = 0; j < 6; j++) ser += c[j] / ++y;
+  // biome-ignore lint/correctness/noPrecisionLoss: 数值算法常量，精度损失可忽略
   return -tmp + Math.log(2.5066282746310005 * ser / x);
 };
 function gser(a, x) { let ap = a, sum = 1 / a, del = sum; for (let n = 0; n < 500; n++) { ap++; del *= x / ap; sum += del; if (Math.abs(del) < Math.abs(sum) * 1e-15) break; } return sum * Math.exp(-x + a * Math.log(x) - lg(a)); }
@@ -100,7 +102,7 @@ export const pHyper = (N, K, n, h) => comb(n, h) * comb(N - n, K - h) / comb(N, 
 // 非中心超几何（球不等权 ω，仍是不放回）。验收：ω=1 必须逐位等于 pHyper（见教训 6）。
 export function pNCHG(N, K, n, w) {
   let zs = 0; const raw = [];
-  for (let h = Math.max(0, K - (N - n)); h <= Math.min(n, K); h++) { const t = comb(n, h) * comb(N - n, K - h) * Math.pow(w, h); raw[h] = t; zs += t; }
+  for (let h = Math.max(0, K - (N - n)); h <= Math.min(n, K); h++) { const t = comb(n, h) * comb(N - n, K - h) * w ** h; raw[h] = t; zs += t; }
   const out = []; for (let h = 0; h <= n; h++) out[h] = (raw[h] || 0) / zs;
   out._expect = out.reduce((a, p, h) => a + p * h, 0);
   return out;

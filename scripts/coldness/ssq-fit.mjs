@@ -74,7 +74,7 @@ const Mtr = multipliers(train), Mte = multipliers(test);
 
 // ---------------------------------------------------------------- 组合指数（只用训练段系数）
 const idx = f => KEY.reduce((p, k) =>
-  p * Math.pow(Math.max(0.2, Mtr[k]), f[k] === 0 ? (k === "consec" ? f.consec : 0) : 1), 1) * (1 + 0.12 * f.consec);
+  p * Math.max(0.2, Mtr[k]) ** (f[k] === 0 ? (k === "consec" ? f.consec : 0) : 1), 1) * (1 + 0.12 * f.consec);
 const te = test.map(idx), tr = train.map(idx);
 const actual = test.map(f => f.n1 / (f.sales / 1e8));
 const ord = te.map((v, i) => [v, actual[i]]).sort((a, b) => a[0] - b[0]);
