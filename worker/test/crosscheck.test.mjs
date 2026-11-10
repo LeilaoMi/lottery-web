@@ -37,7 +37,7 @@ test("crossCheck ≡ 暴力逐期比对（随机数据，冲突集必须逐项�
       if (rnd() < 0.6) b[i] = { ...b[i], red: a[i].red.slice(), blue: a[i].blue }; // 改成一致
       else b[i] = { ...b[i], blue: String(1 + Math.floor(rnd() * 16)).padStart(2, "0") }; // 改成冲突
     }
-    for (let n of [5, 30]) {
+    for (const n of [5, 30]) {
       const got = crossCheck(a, b, n).mismatch;
       const want = brute(a, b, n);
       assert.deepEqual(got, want, `n=${n} 第 ${trial} 组不一致：crossCheck=${JSON.stringify(got)} 暴力=${JSON.stringify(want)}`);

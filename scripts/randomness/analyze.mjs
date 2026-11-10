@@ -262,7 +262,7 @@ out("");
 out("## D. 投注侧：别人的选号是可预测的（每条效应都配一个安慰剂）");
 out("");
 const placebos = [];
-let D = {};
+const D = {};
 {
   const sub = rows.filter(r => r.sales > 0 && r.n2 > 0);
   const M = sub.length;

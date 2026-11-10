@@ -28,7 +28,7 @@ const out = (r.stdout || "") + (r.stderr || "");
 const m = /# tests (\d+)/.exec(out) || /ℹ tests (\d+)/.exec(out);
 if (!m) { console.error("无法从 node --test 输出解析用例总数：\n" + out.slice(-1500)); process.exit(2); }
 const total = Number(m[1]);
-const failed = Number((/# fail (\d+)/.exec(out) || /ℹ fail (\d+)/.exec(out) || [, "0"])[1]);
+const failed = Number((/# fail (\d+)/.exec(out) || /ℹ fail (\d+)/.exec(out) || [undefined, "0"])[1]);
 console.log(`  权威总数 = ${total}${failed ? `（其中失败 ${failed}）` : ""}`);
 
 // ---- 2. README 里声明的件数 ----

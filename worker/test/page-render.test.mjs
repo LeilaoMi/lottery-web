@@ -20,7 +20,7 @@ const POOL = KINDS.filter(k => SPECS[k].type === "pool");
 const DIGIT = KINDS.filter(k => SPECS[k].type === "digit");
 
 function stubEl() {
-  return new Proxy(function () {}, {
+  return new Proxy(() => {}, {
     get: (t, p) => (p === "value" ? "" : p === "toString" ? () => "" : stubEl()),
     apply: () => stubEl(), set: () => true,
   });

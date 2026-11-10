@@ -26,7 +26,7 @@ export function filterPool(kind, opts = {}) {
   const norm = a => [...new Set((Array.isArray(a) ? a : []).map(x => String(x).padStart(2, "0")))];
   const dan = norm(opts.dan);
   const exclude = new Set(norm(opts.exclude));
-  let pool = norm(opts.pool && opts.pool.length ? opts.pool : poolOf(s.main)).filter(x => !exclude.has(x));
+  const pool = norm(opts.pool && opts.pool.length ? opts.pool : poolOf(s.main)).filter(x => !exclude.has(x));
   for (const d of dan) if (!pool.includes(d)) pool.push(d);
   pool.sort();
   if (dan.length >= pick) return { error: "胆码个数必须小于每注号码个数" };

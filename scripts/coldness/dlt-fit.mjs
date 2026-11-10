@@ -22,6 +22,7 @@ const OUT = path.join(HERE, 'out', 'dlt.json');
 if (!fs.existsSync(DATA)) { console.error('!! 找不到 ' + DATA + '，先跑 node scripts/randomness/fetch-multi.mjs dlt'); process.exit(1); }
 
 /* ---------------- 0. 统计工具（内联，无依赖） ---------------- */
+// biome-ignore lint/correctness/noPrecisionLoss: 数值算法常量，精度损失可忽略
 const lg = x => { const c = [76.18009172947146, -86.50532032941677, 24.0144412145769, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5]; let y = x, t = x + 5.5; t -= (x + 0.5) * Math.log(t); let s = 1.000000000190015; for (let j = 0; j < 6; j++) s += c[j] / ++y; return -t + Math.log(2.5066282746310005 * s / x); };
 function gser(a, x) { let ap = a, sum = 1 / a, del = sum; for (let n = 0; n < 500; n++) { ap++; del *= x / ap; sum += del; if (Math.abs(del) < Math.abs(sum) * 1e-15) break; } return sum * Math.exp(-x + a * Math.log(x) - lg(a)); }
 function gcf(a, x) { const F = 1e-300; let b = x + 1 - a, c = 1 / F, d = 1 / b, h = d; for (let i = 1; i <= 500; i++) { const an = -i * (i - a); b += 2; d = an * d + b; if (Math.abs(d) < F) d = F; c = b + an / c; if (Math.abs(c) < F) c = F; d = 1 / d; const del = d * c; h *= del; if (Math.abs(del - 1) < 1e-15) break; } return Math.exp(-x + a * Math.log(x) - lg(a)) * h; }
@@ -242,7 +243,7 @@ function ols(y, cols) {
   const s2 = rss / (n - p);
   return { b, se: b.map((_, j) => Math.sqrt(s2 * Inv[j][j])) };
 }
-const idxOf = (f, M, keys) => keys.reduce((p, k) => p * Math.pow(Math.min(3, Math.max(0.3, M[k].m)), f[k]), 1);
+const idxOf = (f, M, keys) => keys.reduce((p, k) => p * Math.min(3, Math.max(0.3, M[k].m)) ** f[k], 1);
 const quintiles = (vals, actual, q = 5) => {
   const ord = vals.map((v, i) => [v, actual[i]]).sort((a, b) => a[0] - b[0]);
   const per = Math.floor(ord.length / q), segs = [];

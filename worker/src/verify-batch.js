@@ -132,7 +132,7 @@ export function verifyBatch(kind, draws, tickets, codes, mult = 1) {
     kind, name: ({ ssq: "双色球", dlt: "大乐透", qlc: "七乐彩", kl8: "快乐8", fc3d: "福彩3D", pl3: "排列3", pl5: "排列5", qxc: "七星彩" })[kind],
     tickets: parsed.length, parsed: parsed.length - errors.length, errors,
     // 该彩种仍有未校验金额的奖级（浮动奖；大乐透固定奖已按版本给出）→ 见 AMOUNT_NOTE 的理由
-    amountUnverified: Object.prototype.hasOwnProperty.call(AMOUNT_NOTE, kind) ? [kind] : [],
+    amountUnverified: Object.hasOwn(AMOUNT_NOTE, kind) ? [kind] : [],
     rounds,
     note: "注数按每注 2 元计。金额只在本站有把握的奖级给出（null = 未给出而非 0）；奖级判定复用与 /api/prize、/api/{kind}/verify 相同的函数。",
     disclaimer: "验奖只回答「中没中」，不改变中奖概率；长期期望回报为负。"
